@@ -62,8 +62,8 @@ public static class FlowDocumentBuilder
                     currentList = new Wpf.List
                     {
                         MarkerStyle = marker.Kind == ListKind.Bullet
-                            ? Wpf.TextMarkerStyle.Disc
-                            : Wpf.TextMarkerStyle.Decimal,
+                            ? TextMarkerStyle.Disc
+                            : TextMarkerStyle.Decimal,
                     };
                     if (marker.Kind != ListKind.Bullet && marker.OrderedNumber is { } start && start >= 1)
                     {

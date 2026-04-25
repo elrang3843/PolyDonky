@@ -80,12 +80,12 @@ public static class FlowDocumentParser
         }
     }
 
-    private static bool IsBulletMarker(Wpf.TextMarkerStyle style)
-        => style is Wpf.TextMarkerStyle.Disc
-            or Wpf.TextMarkerStyle.Circle
-            or Wpf.TextMarkerStyle.Square
-            or Wpf.TextMarkerStyle.Box
-            or Wpf.TextMarkerStyle.None;
+    private static bool IsBulletMarker(TextMarkerStyle style)
+        => style is TextMarkerStyle.Disc
+            or TextMarkerStyle.Circle
+            or TextMarkerStyle.Square
+            or TextMarkerStyle.Box
+            or TextMarkerStyle.None;
 
     private static Paragraph ParseParagraph(Wpf.Paragraph wpfPara, ListMarker? listMarker)
     {

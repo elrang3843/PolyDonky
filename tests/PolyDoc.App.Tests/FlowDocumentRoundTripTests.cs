@@ -116,7 +116,7 @@ public class FlowDocumentRoundTripTests
         var fd = FlowDocumentBuilder.Build(doc);
         var list = (Wpf.List)fd.Blocks.First();
 
-        Assert.Equal(Wpf.TextMarkerStyle.Disc, list.MarkerStyle);
+        Assert.Equal(TextMarkerStyle.Disc, list.MarkerStyle);
         Assert.Equal(2, list.ListItems.Count);
     }
 
