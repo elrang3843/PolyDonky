@@ -60,6 +60,12 @@ public sealed class HwpxReader : IDocumentReader
                 sectionPaths[idx] = ResolveEntryPath(archive, sectionPaths[idx]);
             }
 
+            // header.xml — 한컴 / 우리 자체 codec 모두 charPr/paraPr/style 정의를 여기 둔다.
+            // 못 찾거나 비어 있으면 빈 컨텍스트로 graceful degradation (paragraph 텍스트는 여전히 회수).
+            var headerPath = ResolveEntryPath(archive, HwpxPaths.HeaderXml);
+            var headerDoc = LoadXml(archive, headerPath, parseErrors);
+            var header = HwpxHeaderReader.Parse(headerDoc);
+
             var document = new PolyDocument { Metadata = metadata };
             int totalParagraphs = 0;
             int totalTextRuns = 0;
@@ -70,7 +76,7 @@ public sealed class HwpxReader : IDocumentReader
             {
                 var path = sectionPaths[i];
                 var sectionDoc = LoadXml(archive, path, parseErrors);
-                var section = ReadSectionFromDoc(sectionDoc);
+                var section = ReadSectionFromDoc(sectionDoc, header);
                 document.Sections.Add(section);
 
                 if (i == 0 && sectionDoc?.Root is { } root)
@@ -313,9 +319,9 @@ public sealed class HwpxReader : IDocumentReader
     }
 
     private static Section ReadSection(ZipArchive archive, string path)
-        => ReadSectionFromDoc(LoadXml(archive, path));
+        => ReadSectionFromDoc(LoadXml(archive, path), new HwpxHeader());
 
-    private static Section ReadSectionFromDoc(XDocument? doc)
+    private static Section ReadSectionFromDoc(XDocument? doc, HwpxHeader header)
     {
         var section = new Section();
         if (doc?.Root is null)
@@ -330,23 +336,47 @@ public sealed class HwpxReader : IDocumentReader
         {
             if (elem.Name.LocalName == "p")
             {
-                section.Blocks.Add(ReadParagraph(elem));
+                section.Blocks.Add(ReadParagraph(elem, header));
             }
         }
         return section;
     }
 
-    private static Paragraph ReadParagraph(XElement wp)
+    private static Paragraph ReadParagraph(XElement wp, HwpxHeader header)
     {
         var paragraph = new Paragraph();
-        if (int.TryParse(wp.Attribute("paraPrIDRef")?.Value, out var paraPrId))
+
+        // 1) styleIDRef 의 정의를 우선 적용 — outline + style 기본 paraPr/charPr 베이스로 둔다.
+        var styleDef = header.GetStyle(TryParseInt(wp.Attribute("styleIDRef")?.Value));
+        int? defaultCharPrId = null;
+        if (styleDef is not null)
         {
-            paragraph.Style.Alignment = ParaPrIdToAlignment(paraPrId);
+            paragraph.Style.Outline = styleDef.Outline;
+            var styleParaStyle = header.GetParagraphStyle(styleDef.ParaPrIdRef);
+            if (styleParaStyle is not null)
+            {
+                CopyParagraphStyle(styleParaStyle, paragraph.Style);
+            }
+            defaultCharPrId = styleDef.CharPrIdRef;
         }
-        if (int.TryParse(wp.Attribute("styleIDRef")?.Value, out var styleId)
-            && styleId is >= 1 and <= 6)
+
+        // 2) paragraph 자신의 paraPrIDRef 가 있으면 그 위에 override.
+        var directParaPrId = TryParseInt(wp.Attribute("paraPrIDRef")?.Value);
+        var directParaStyle = header.GetParagraphStyle(directParaPrId);
+        if (directParaStyle is not null)
         {
-            paragraph.Style.Outline = (OutlineLevel)styleId;
+            CopyParagraphStyle(directParaStyle, paragraph.Style);
+        }
+        // header 가 비었거나 매핑이 없을 때 — 우리 자체 codec 의 0~3 약속을 fallback 으로 쓴다.
+        if (directParaStyle is null && directParaPrId is { } pp)
+        {
+            paragraph.Style.Alignment = ParaPrIdToAlignment(pp);
+        }
+        // styleIDRef 직접 매핑(우리 자체 codec 의 1~6 = Heading) 도 보조로 유지.
+        if (paragraph.Style.Outline == OutlineLevel.Body
+            && TryParseInt(wp.Attribute("styleIDRef")?.Value) is { } sid && sid is >= 1 and <= 6)
+        {
+            paragraph.Style.Outline = (OutlineLevel)sid;
         }
 
         // <hp:p> 는 직속 자식으로 <hp:run> 들을 갖는 것이 표준이지만, 한컴 변종에선
@@ -355,7 +385,7 @@ public sealed class HwpxReader : IDocumentReader
         {
             if (elem.Name.LocalName == "run")
             {
-                ReadRun(paragraph, elem);
+                ReadRun(paragraph, elem, header, defaultCharPrId);
             }
         }
 
@@ -366,12 +396,24 @@ public sealed class HwpxReader : IDocumentReader
         return paragraph;
     }
 
-    private static void ReadRun(Paragraph paragraph, XElement run)
+    private static void ReadRun(Paragraph paragraph, XElement run, HwpxHeader header, int? defaultCharPrId)
     {
-        var style = new RunStyle();
-        if (int.TryParse(run.Attribute("charPrIDRef")?.Value, out var charPrId))
+        var directCharPrId = TryParseInt(run.Attribute("charPrIDRef")?.Value);
+        // 우선순위: run 의 charPrIDRef → style 의 charPrIDRef → 빈 RunStyle.
+        var resolvedId = directCharPrId ?? defaultCharPrId;
+        RunStyle style;
+        if (resolvedId is { } id)
         {
-            ApplyCharPrIdToStyle(charPrId, style);
+            style = header.GetRunStyle(id);
+            // header 에 charPr 정의가 없으면 — 우리 자체 codec 의 0~5 약속을 fallback 으로.
+            if (!header.CharProperties.ContainsKey(id))
+            {
+                ApplyCharPrIdToStyle(id, style);
+            }
+        }
+        else
+        {
+            style = new RunStyle();
         }
 
         // <hp:t> 는 보통 직속 자식이지만, 한컴 변종에선 <hp:t> 가 더 깊은 위치에 있을 수도 있고
@@ -396,6 +438,21 @@ public sealed class HwpxReader : IDocumentReader
         {
             paragraph.AddText(sb.ToString(), style);
         }
+    }
+
+    private static int? TryParseInt(string? raw)
+        => int.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    private static void CopyParagraphStyle(ParagraphStyle src, ParagraphStyle dst)
+    {
+        dst.Alignment = src.Alignment;
+        dst.LineHeightFactor = src.LineHeightFactor;
+        dst.SpaceBeforePt = src.SpaceBeforePt;
+        dst.SpaceAfterPt = src.SpaceAfterPt;
+        dst.IndentFirstLineMm = src.IndentFirstLineMm;
+        dst.IndentLeftMm = src.IndentLeftMm;
+        dst.IndentRightMm = src.IndentRightMm;
+        // Outline / ListMarker 는 styleDef 또는 별도 신호로 결정하므로 여기서는 덮지 않는다.
     }
 
     private static void ApplyCharPrIdToStyle(int id, RunStyle style)

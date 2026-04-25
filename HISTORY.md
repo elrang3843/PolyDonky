@@ -45,6 +45,11 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **Added** — HWPX 한컴 서식 회수 — `HwpxHeader` / `HwpxHeaderReader` 신설. header.xml 의 `fontfaces` / `charPr` / `paraPr` / `style` 정의를 PolyDoc 모델로 매핑해 한컴이 만든 hwpx 의 임의 ID(0~5 약속과 다른) 도 본문 서식이 살아남는다.
+  - charPr: height(0.01pt 단위) / textColor / shadeColor / `<bold>` / `<italic>` / `<underline>` / `<strikeout>` / `<sup·subscript>` / `<fontRef hangul/latin/hanja...>` → `RunStyle`.
+  - paraPr: `<align horizontal>` / `<margin left/right/intent/prev/next>` (hwpunit → mm) / `<lineSpacing PERCENT>` → `ParagraphStyle`.
+  - style: name/engName 이 "Heading{N}" 또는 한국어 "개요{N}" 일 때 `OutlineLevel.H1~H6` 추정. paraPrIDRef + charPrIDRef 보존.
+  - HwpxReader: header context 를 ReadSectionFromDoc → ReadParagraph → ReadRun 로 전달. 우선순위는 「style 의 paraPr/charPr → paragraph 직접 paraPrIDRef → run 직접 charPrIDRef」 로 override. header 가 매핑을 못 가진 ID 는 우리 자체 codec 의 0~5 약속을 fallback 으로 사용 (자체 라운드트립 호환 유지). 자체 라운드트립 6/6 + 스모크 6/6 변동 없이 그린.
 - **Added** — `PolyDoc.Core/DocumentMeasurement` — PolyDocument 가 차지하는 데이터 크기(텍스트 byte + ImageBlock.Data + OpaqueBlock 바이트/XML, 표는 셀 재귀)를 근사 계산하는 헬퍼. 단위 자동 (B / KB / MB / GB).
 - **Added** — `MainWindow` 상태 표시줄 우측에 5칸 그룹: **파일 경로 · 문서 메모리 · 삽입/수정 · CapsLock · NumLock**. ItemsPanel 을 `DockPanel(LastChildFill=True)` 로 교체해 좌측 상태 메시지가 가변 너비를 차지하고 우측 5칸은 한 묶음으로 우측에 고정. 상태 메시지 길이가 변해도 우측 칸 위치가 흔들리지 않는다. 메모리 표시는 **앱 전체 워킹셋이 아닌 문서 콘텐츠 크기** 만 보여주도록 변경 (`DocumentMeasurement.EstimateBytes` 사용) — 새 만들기 직후엔 자연스럽게 0 가까이 떨어지고, HWPX 처럼 본문 인식이 0건이면 작은 값으로 표시되어 진단 신호가 됨.
 - **Added** — HWPX reader 진단 정보 — 읽은 section 파일 수 / 인식된 paragraph 수 / 비어있지 않은 run 수 / 첫 section 경로를 `DocumentMetadata.Custom["hwpx.*"]` 에 박는다. 본문 인식이 0건이면 MainViewModel 의 상태 메시지에 "HWPX 본문 인식 0건, 섹션 파일 N개. 한컴 변종 가능 — 진단 정보를 메인테이너에게 공유 부탁" 안내. FallbackSectionPaths 검색 범위를 `Contents/section*.xml` → 폴더 무관 + 파일명 contains "section" + 대소문자 무시로 확장.
