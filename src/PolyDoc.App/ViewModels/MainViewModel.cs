@@ -160,12 +160,15 @@ public partial class MainViewModel : ObservableObject
     private static string BuildOpenStatusMessage(string path, PolyDocument doc)
     {
         var name = Path.GetFileName(path);
-        // HWPX reader 가 metadata.Custom 에 진단을 박았으면 본문 인식이 0건일 때 사용자에게 경고.
+        // HWPX reader 가 metadata.Custom 에 진단을 박았으면 본문 인식이 0건일 때 사용자에게 경고 + 자가 진단 데이터 노출.
         if (doc.Metadata.Custom.TryGetValue("hwpx.paragraphCount", out var pCount)
             && int.TryParse(pCount, out var pc) && pc == 0)
         {
             doc.Metadata.Custom.TryGetValue("hwpx.sectionFilesFound", out var sCount);
-            return $"열기 완료 — {name} (HWPX 본문 인식 0건, 섹션 파일 {sCount ?? "?"}개. 한컴 변종 가능 — 진단 정보를 메인테이너에게 공유 부탁)";
+            doc.Metadata.Custom.TryGetValue("hwpx.firstSectionRoot", out var rootName);
+            doc.Metadata.Custom.TryGetValue("hwpx.firstSectionTags", out var tags);
+            // 진단을 한 줄로 합쳐 사용자가 그대로 메인테이너에게 공유 가능.
+            return $"열기 완료 — {name} | 본문 0건, 섹션 {sCount ?? "?"}개 | root=<{rootName ?? "?"}> | 자식: {tags ?? "(없음)"}";
         }
         return $"열기 완료 — {name}";
     }

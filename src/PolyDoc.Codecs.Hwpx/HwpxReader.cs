@@ -55,10 +55,26 @@ public sealed class HwpxReader : IDocumentReader
             var document = new PolyDocument { Metadata = metadata };
             int totalParagraphs = 0;
             int totalTextRuns = 0;
-            foreach (var path in sectionPaths)
+            string? firstSectionRoot = null;
+            var firstSectionTagCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            for (int i = 0; i < sectionPaths.Count; i++)
             {
-                var section = ReadSection(archive, path);
+                var path = sectionPaths[i];
+                var sectionDoc = LoadXml(archive, path);
+                var section = ReadSectionFromDoc(sectionDoc);
                 document.Sections.Add(section);
+
+                if (i == 0 && sectionDoc?.Root is { } root)
+                {
+                    firstSectionRoot = root.Name.LocalName;
+                    foreach (var d in root.DescendantsAndSelf())
+                    {
+                        var name = d.Name.LocalName;
+                        firstSectionTagCounts[name] = firstSectionTagCounts.GetValueOrDefault(name, 0) + 1;
+                    }
+                }
+
                 foreach (var block in section.Blocks)
                 {
                     if (block is Paragraph p)
@@ -86,6 +102,21 @@ public sealed class HwpxReader : IDocumentReader
             if (sectionPaths.Count > 0)
             {
                 document.Metadata.Custom["hwpx.firstSectionPath"] = sectionPaths[0];
+            }
+            if (firstSectionRoot is not null)
+            {
+                document.Metadata.Custom["hwpx.firstSectionRoot"] = firstSectionRoot;
+            }
+            if (firstSectionTagCounts.Count > 0)
+            {
+                // 가장 많이 등장한 element 이름 top 8 — paragraph 후보를 사용자/메인테이너가 즉시 식별.
+                var top = firstSectionTagCounts
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Take(8)
+                    .Select(kv => $"{kv.Key}={kv.Value}")
+                    .ToList();
+                document.Metadata.Custom["hwpx.firstSectionTags"] = string.Join(", ", top);
             }
 
             return document;
@@ -207,9 +238,11 @@ public sealed class HwpxReader : IDocumentReader
     }
 
     private static Section ReadSection(ZipArchive archive, string path)
+        => ReadSectionFromDoc(LoadXml(archive, path));
+
+    private static Section ReadSectionFromDoc(XDocument? doc)
     {
         var section = new Section();
-        var doc = LoadXml(archive, path);
         if (doc?.Root is null)
         {
             return section;
