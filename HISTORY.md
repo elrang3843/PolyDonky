@@ -45,13 +45,26 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
-- *(아직 없음)*
+- **Internal** — Phase A 솔루션 골격: `PolyDoc.slnx` + `src/PolyDoc.Core` + `src/PolyDoc.Iwpf` + `src/PolyDoc.Codecs.Text` + `src/PolyDoc.Codecs.Markdown` + 대응 `tests/*` xUnit 프로젝트 + `tools/PolyDoc.SmokeTest` 콘솔 러너. .NET 10 + Central Package Management.
+- **Added** — `PolyDoc.Core` 공통 문서 모델 1차: `PolyDocument`, `DocumentMetadata`, `Section`/`PageSettings`, `Block`/`NodeStatus`, `Paragraph`/`ParagraphStyle`/`Alignment`/`OutlineLevel`/`ListMarker`/`ListKind`, `Run`/`RunStyle`/`Color`, `StyleSheet`, `Provenance`/`SourceAnchor`, `IDocumentReader`/`IDocumentWriter`/`IDocumentCodec`. 한글 조판용 `WidthPercent`(장평) / `LetterSpacingPx`(자간) 포함.
+- **Added** — `PolyDoc.Iwpf` 1차 codec (writer/reader). ZIP+JSON 패키지(`manifest.json`, `content/document.json`, `content/styles.json`, 선택적 `provenance/source-map.json`). 매니페스트 SHA-256 해시 검증, packageType 검사, 위변조 거부.
+- **Added** — `PolyDoc.Codecs.Text` (TXT in/out, BOM 자동 감지).
+- **Added** — `PolyDoc.Codecs.Markdown` 1차 codec — Markdig 의존 없이 BCL 만으로 ATX 헤더(#~######), 순서/비순서 리스트, `**굵게**`, `*기울임*` 인라인을 처리하는 실용 서브셋. 추후 Markdig 도입 시 교체 예정.
+- **Added** — `PolyDoc.SmokeTest` BCL-only 콘솔 스모크 러너 (`tools/PolyDoc.SmokeTest`). 라운드트립 + 위변조 검출까지 4건 통과.
+- **Added** — xUnit 테스트 1차 (Core·Iwpf·Text·Markdown). 본 환경에서 NuGet 차단으로 미실행, Windows 에서 `dotnet test` 시 검증.
+- **Internal** — `Directory.Build.props` (TreatWarningsAsErrors, LangVersion=latest, Company=HANDTECH, Authors=Noh JinMoon, Version=1.0.0-test.1), `Directory.Packages.props` (xUnit 2.9.3 / Test.Sdk 17.14.1 / Markdig 0.42.0), `global.json` (SDK 10.0.107 핀), .NET 표준 `.gitignore`.
 
 ### Changed
 - **Docs** — 버전 정책 명시: 사용자 명시 지시 전까지 모든 빌드는 테스트 버전(`1.0.0-test.<n>`)으로 관리하고, 최초 정식 릴리스는 `1.0.0` 으로 한다는 규칙을 `HISTORY.md` / `CLAUDE.md` / `README.md` 에 일관되게 반영.
+- **Docs** — `README.md` 헤더에 핸텍 회사 로고(GitHub 아바타) + 핸텍/노진문 표기, "만든 사람들" 섹션, .NET 10 배지 추가, UI 를 WPF 로 확정.
+- **Docs** — `CLAUDE.md` 프로젝트 개요에 회사·메인테이너 정보 반영, WORK_PLAN.md 참조 추가.
 
-### Fixed
-- *(아직 없음)*
+### Added (docs)
+- **Docs** — `WORK_PLAN.md` 신설. 다단계 작업 계획서, 환경 사실관계, 기술 스택, Phase A~H 진행표, 사용자 게이트 G0~G5, 다음 세션 인수인계 체크리스트.
+- **Docs** — `NOTICE` 신설. Apache 2.0 저작권 고지(© 2026 HANDTECH — Noh JinMoon) + 향후 의존성 attribution 사전 기록.
+
+### Known Limitations
+- 본 개발 환경에서 NuGet.org(`api.nuget.org`)이 503 으로 차단되어 xUnit / Markdig 등 패키지 복원 불가. xUnit 테스트와 Markdig 도입은 Windows 환경(또는 NuGet 접근 가능한 환경)에서 검증·전환 필요. **사용자 게이트 G2** 에서 `dotnet test` 정상 동작 확인 예정.
 
 ---
 

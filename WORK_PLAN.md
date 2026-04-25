@@ -20,9 +20,13 @@
 | GUI/Display | 없음 — WPF UI 빌드·실행·스크린샷 불가 |
 | 타겟 OS | Windows 10/11 x64 |
 | Git remote | `elrang3843/PolyDoc` |
+| **NuGet.org** | **503 으로 차단** — `api.nuget.org` 응답 안 함 (curl/dotnet restore 모두). BCL 만 사용하는 src 프로젝트는 복원/빌드 정상. xUnit/Markdig 같은 외부 패키지는 본 환경에서 복원 불가 |
 
-**핵심 제약**: WPF 앱(`Microsoft.NET.Sdk.WindowsDesktop`)은 Windows에서만 빌드 가능.
-이 환경에서는 **순수 라이브러리·코덱·테스트** 만 검증 가능. UI 검증은 사용자 책임.
+**핵심 제약**:
+- WPF 앱(`Microsoft.NET.Sdk.WindowsDesktop`)은 Windows 에서만 빌드 가능.
+- 이 환경에서는 **순수 라이브러리·코덱** 만 검증 가능. UI 검증은 사용자 책임.
+- xUnit 테스트는 **코드는 작성하되 본 환경에서 실행 불가**. Windows(또는 NuGet 가능 환경)에서 `dotnet restore && dotnet test` 로 검증한다.
+- Markdig 같은 외부 의존이 필요한 코덱은 NuGet 회복 시점에 도입한다 (현재는 BCL 서브셋 구현으로 대체).
 
 ---
 
@@ -78,13 +82,14 @@ PolyDoc/
 체크박스: ☐ 미진행 / ◑ 진행중 / ✅ 완료
 
 ### Phase A — Core 라이브러리 (Linux 전수 가능)
-- ◑ A1 솔루션 스캐폴딩
-- ☐ A2 PolyDoc.Core (공통 문서 모델)
-- ☐ A3 PolyDoc.Iwpf (reader/writer + manifest/document 직렬화)
-- ☐ A4 PolyDoc.Codecs.Text
-- ☐ A5 PolyDoc.Codecs.Markdown
-- ☐ A6 단위 테스트 그린
-- ☐ A7 첫 커밋·푸시
+- ✅ A1 솔루션 스캐폴딩 (PolyDoc.slnx, .NET 10, CPM, 4 src + 4 tests + tools/SmokeTest)
+- ✅ A2 PolyDoc.Core (공통 문서 모델)
+- ✅ A3 PolyDoc.Iwpf (reader/writer, ZIP+JSON, SHA-256 검증, 위변조 거부)
+- ✅ A4 PolyDoc.Codecs.Text (TXT in/out, BOM 감지)
+- ✅ A5 PolyDoc.Codecs.Markdown (Markdig 없이 BCL 서브셋: 헤더·리스트·강조)
+- ◑ A6 단위 테스트 — xUnit 코드 작성 완료, **NuGet 차단으로 본 환경 미실행**. Windows 에서 G2 시 `dotnet test` 로 검증.
+- ✅ A6b 콘솔 스모크 러너 4/4 통과 (라운드트립 3종 + 위변조 검출)
+- ✅ A7 커밋·푸시
 
 ### Phase B — WPF UI 셸 (Windows 필수)
 - ☐ B1 PolyDoc.App 스캐폴딩 (WPF + MVVM)
@@ -147,3 +152,34 @@ PolyDoc/
 - [ ] 미해결 이슈 / 알려진 버그 목록
 - [ ] 다음 세션 첫 작업 후보 (구체적 파일/함수명)
 - [ ] 사용자 답을 기다리는 게이트 (있다면 어떤 게이트인지)
+
+---
+
+## 현재 인수인계 (Phase A 종료 시점)
+
+### 완료
+- 솔루션 골격 및 4개 src 라이브러리 빌드 그린
+- 콘솔 스모크 러너 4/4 통과
+- xUnit 테스트 코드 작성 완료 (실행은 Windows 에서)
+
+### 사용자(노진문) 작업이 필요한 항목 — G1 직전
+- [ ] Windows 머신에서 저장소 클론, `dotnet --info` 로 SDK 10.0.x 확인
+- [ ] `dotnet restore PolyDoc.slnx` — NuGet 정상이면 xUnit 자동 복원
+- [ ] `dotnet build PolyDoc.slnx` — 0 warning / 0 error 확인
+- [ ] `dotnet test PolyDoc.slnx` — 모든 xUnit 테스트 그린 확인
+- [ ] (옵션) `dotnet run --project tools/PolyDoc.SmokeTest` — 콘솔 스모크 4/4 통과 재확인
+- [ ] PR 리뷰 후 머지 결정 (G1)
+
+### Phase B 진입 전 정해야 할 것
+- 정식 회사 로고 파일이 별도로 있다면 `assets/logo.png` 로 추가하고 README 의 GitHub 아바타 참조를 교체할지 (현재는 `https://github.com/elrang3843.png` 사용)
+- WPF 앱의 .NET TFM: `net10.0-windows`(권장) vs `net10.0-windows10.0.19041.0`(WinRT API 사용 시) — 사인 만들기·인쇄 미리보기 같은 기능에서 결정
+
+### 다음 세션 첫 작업 후보
+1. `src/PolyDoc.App/` WPF 프로젝트 스캐폴딩 (Phase B1)
+2. MVVM 골격 + 메인 윈도우 + 메뉴 리소스 한·영 분리
+3. IWPF 파일 드래그&드롭 → Core 모델 → 단순 본문 표시 (TextBlock 수준) 까지
+
+### 알려진 한계
+- Markdown 코덱이 Markdig 의 풀 CommonMark 가 아닌 **실용 서브셋**. 코드블록·인용·표·이미지·링크 미지원. Phase C 진입 전 Markdig 로 교체하거나 서브셋 확장.
+- Block 다형성을 `JsonDerivedType` 로 처리 — 현재 `Paragraph` 만 등록. `Table`, `Image`, `TextBox` 등 추가 시 같은 위치에 등록해야 한다 (`src/PolyDoc.Core/Block.cs`).
+- IWPF document.json 본문은 Phase A 에서 JSON. 후속 단계에서 IWPF 사양에 맞춰 일부를 XML 로 전환할 수 있다 (`document.xml`, `styles.xml`).
