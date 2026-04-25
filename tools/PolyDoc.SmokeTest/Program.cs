@@ -1,5 +1,6 @@
 using System.Text;
 using PolyDoc.Codecs.Docx;
+using PolyDoc.Codecs.Hwpx;
 using PolyDoc.Codecs.Markdown;
 using PolyDoc.Codecs.Text;
 using PolyDoc.Core;
@@ -16,6 +17,7 @@ harness.Run("Markdown round-trip (headers + emphasis + lists)", MarkdownRoundTri
 harness.Run("IWPF round-trip (manifest + integrity)", IwpfRoundTrip);
 harness.Run("IWPF tampering detection", IwpfTamperingDetection);
 harness.Run("DOCX round-trip (headings + emphasis)", DocxRoundTrip);
+harness.Run("HWPX round-trip (KS X 6101 self interop)", HwpxRoundTrip);
 
 return harness.Finish();
 
@@ -164,6 +166,41 @@ static void DocxRoundTrip()
     SmokeHarness.Equal(2, paragraphs.Count, "DOCX paragraph count");
     SmokeHarness.Equal(OutlineLevel.H1, paragraphs[0].Style.Outline, "DOCX heading outline");
     SmokeHarness.True(paragraphs[1].Runs.Any(r => r.Style.Bold && r.Text == "DOCX"), "DOCX bold run preserved");
+}
+
+static void HwpxRoundTrip()
+{
+    var doc = new PolyDocument();
+    doc.Metadata.Title = "HWPX 스모크";
+    doc.Metadata.Author = "Noh JinMoon";
+    var section = new Section();
+    doc.Sections.Add(section);
+
+    var heading = new Paragraph { Style = { Outline = OutlineLevel.H2 } };
+    heading.AddText("KS X 6101 자체 라운드트립");
+    section.Blocks.Add(heading);
+
+    var body = new Paragraph { Style = { Alignment = Alignment.Center } };
+    body.AddText("한글 ");
+    body.AddText("굵게", new RunStyle { Bold = true });
+    body.AddText(" 가운데 정렬.");
+    section.Blocks.Add(body);
+
+    using var ms = new MemoryStream();
+    new HwpxWriter().Write(doc, ms);
+    SmokeHarness.True(ms.Length > 500, $"HWPX size > 500 bytes (got {ms.Length})");
+
+    ms.Position = 0;
+    var read = new HwpxReader().Read(ms);
+
+    SmokeHarness.Equal("HWPX 스모크", read.Metadata.Title!, "HWPX metadata.title");
+    SmokeHarness.Equal("Noh JinMoon", read.Metadata.Author!, "HWPX metadata.author");
+
+    var paragraphs = read.EnumerateParagraphs().ToList();
+    SmokeHarness.Equal(2, paragraphs.Count, "HWPX paragraph count");
+    SmokeHarness.Equal(OutlineLevel.H2, paragraphs[0].Style.Outline, "HWPX heading outline");
+    SmokeHarness.Equal(Alignment.Center, paragraphs[1].Style.Alignment, "HWPX center alignment");
+    SmokeHarness.True(paragraphs[1].Runs.Any(r => r.Style.Bold && r.Text == "굵게"), "HWPX bold run preserved");
 }
 
 static byte[] TamperDocumentJson(byte[] original)

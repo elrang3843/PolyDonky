@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using PolyDoc.Codecs.Docx;
+using PolyDoc.Codecs.Hwpx;
 using PolyDoc.Codecs.Markdown;
 using PolyDoc.Codecs.Text;
 using PolyDoc.Core;
@@ -27,6 +28,7 @@ public static class KnownFormats
             "md" or "markdown" => new MarkdownReader(),
             "txt" => new PlainTextReader(),
             "docx" => new DocxReader(),
+            "hwpx" => new HwpxReader(),
             _ => null,
         };
     }
@@ -39,6 +41,7 @@ public static class KnownFormats
             "md" or "markdown" => new MarkdownWriter(),
             "txt" => new PlainTextWriter(),
             "docx" => new DocxWriter(),
+            "hwpx" => new HwpxWriter(),
             _ => null,
         };
     }
@@ -48,28 +51,27 @@ public static class KnownFormats
 
     /// <summary>"외부 컨버터 위탁" 대상 — Phase D 에서 외부 CLI 호출로 연결.</summary>
     /// <remarks>
-    /// Phase C 에서 DOCX 는 OpenXml SDK 로 직접 처리하므로 목록에서 제외.
-    /// HWPX 는 Phase C 후반에 자체 구현으로 처리될 예정 (KS X 6101).
-    /// 레거시 바이너리(HWP/DOC)와 HTML 만 외부 컨버터 위탁이 유지된다.
+    /// Phase C 에서 DOCX·HWPX 모두 직접 처리되므로 목록에서 제외.
+    /// 레거시 바이너리(HWP/DOC)와 HTML 만 외부 컨버터 위탁이 유지된다 (Phase D 에서 LibreOffice 등 연결).
     /// </remarks>
     public static bool RequiresExternalConverter(string path)
     {
         return GetExtensionId(path) switch
         {
-            "hwp" or "hwpx" or "doc" or "html" or "htm" => true,
+            "hwp" or "doc" or "html" or "htm" => true,
             _ => false,
         };
     }
 
     public const string OpenFilter =
         // 직접 처리 (Phase A·C)
-        "PolyDoc 직접 지원 (IWPF·DOCX·MD·TXT)|*.iwpf;*.docx;*.md;*.markdown;*.txt|" +
+        "PolyDoc 직접 지원 (IWPF·DOCX·HWPX·MD·TXT)|*.iwpf;*.docx;*.hwpx;*.md;*.markdown;*.txt|" +
         "PolyDoc 문서 (*.iwpf)|*.iwpf|" +
         "Word DOCX (*.docx)|*.docx|" +
+        "한글 HWPX (*.hwpx)|*.hwpx|" +
         "Markdown (*.md;*.markdown)|*.md;*.markdown|" +
         "텍스트 (*.txt)|*.txt|" +
         // 외부 컨버터 위탁 (Phase D 이후)
-        "한글 HWPX (*.hwpx) — 외부 컨버터 필요|*.hwpx|" +
         "한글 HWP (*.hwp) — 외부 컨버터 필요|*.hwp|" +
         "Word 레거시 (*.doc) — 외부 컨버터 필요|*.doc|" +
         "HTML (*.html;*.htm) — 외부 컨버터 필요|*.html;*.htm|" +
@@ -79,10 +81,10 @@ public static class KnownFormats
         // 직접 처리 (Phase A·C)
         "PolyDoc 문서 (*.iwpf)|*.iwpf|" +
         "Word DOCX (*.docx)|*.docx|" +
+        "한글 HWPX (*.hwpx)|*.hwpx|" +
         "Markdown (*.md)|*.md|" +
         "텍스트 (*.txt)|*.txt|" +
         // 외부 컨버터 위탁 (Phase D 이후)
-        "한글 HWPX (*.hwpx) — 외부 컨버터 필요|*.hwpx|" +
         "HTML (*.html) — 외부 컨버터 필요|*.html";
 
     private static string GetExtensionId(string path)

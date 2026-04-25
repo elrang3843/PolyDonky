@@ -45,6 +45,14 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **Added** — Phase C C3·C4 HWPX 1급 시민 codec 1차 — `src/PolyDoc.Codecs.Hwpx`. KS X 6101 사양 기반 자체 구현 (BCL + System.Xml.Linq + System.IO.Compression, 외부 의존 0).
+  - 패키지 구조: `mimetype`(STORED, "application/hwp+zip") + `META-INF/container.xml` + `Contents/content.hpf` (OPF) + `Contents/header.xml` + `Contents/section{N}.xml` + `version.xml`.
+  - HwpxWriter: 단락(`hp:p`), 런(`hp:run`+`hp:t`), 정렬(LEFT/CENTER/RIGHT/JUSTIFY → paraPr 0~3), 굵게/기울임/밑줄/취소선 (charPr 0~5), 헤더 H1~H6 (style 1~6). header.xml 의 charPr/paraPr/style 정의를 codec 내부 ID 약속으로 고정해 라운드트립 호환성 보장.
+  - HwpxReader: container.xml → content.hpf → spine 으로 section{N}.xml 들 순회. 각 섹션의 `hp:p` 와 `hp:run` 을 PolyDoc 모델로 복원. 잘못된 mimetype 거부.
+  - `tests/PolyDoc.Codecs.Hwpx.Tests` xUnit 라운드트립 6건 (단락·헤더·정렬·강조·mimetype STORED·필수 파트 존재).
+  - `PolyDoc.SmokeTest` 에 HWPX 라운드트립 추가 → 6/6 그린.
+  - `PolyDoc.App` 의 `KnownFormats`: `.hwpx` 가 외부 컨버터 위탁 목록에서 제거되고 직접 처리. OpenFilter/SaveFilter 의 「PolyDoc 직접 지원」 그룹에 .hwpx 포함, 「외부 컨버터 필요」 그룹에서 제외. 이제 외부 위탁은 HWP/DOC/HTML 만 남는다.
+  - 한컴 오피스 호환은 G3 검증 후 다음 사이클에서 fine-tune (현재는 PolyDoc 자체 라운드트립만 보장).
 - **Added** — 비텍스트 객체(표·이미지·미인식 도형) 1차 모델링 + 라운드트립. IWPF.md 의 「opaque island」 정책 본격 적용.
   - `PolyDoc.Core` 블록 추가: `Table` / `TableRow` / `TableCell` / `TableColumn`, `ImageBlock`, `OpaqueBlock` (Block 의 `JsonDerivedType` 디스크리미네이터 4종 등록).
   - `PolyDoc.Iwpf`: ImageBlock 의 binary 를 `resources/images/img-NNNN.<ext>` 로 분리 저장하고 SHA-256 dedupe. 매니페스트에 별도 part 로 기록되어 무결성 검증. 다형성 디스크리미네이터를 `kind` → `$type` 으로 변경 (`OpaqueBlock.Kind` 속성과의 충돌 회피).

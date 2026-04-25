@@ -102,10 +102,12 @@ PolyDoc/
 - ✅ C1 DOCX reader (OpenXml SDK 3.5.1) — 단락·헤더·정렬·강조·폰트·색상·리스트
 - ✅ C2 DOCX writer + xUnit 라운드트립 6건 + 스모크 1건
 - ✅ C2b Markdown reader 를 Markdig 로 교체 (CommonMark 풀 파싱)
-- ✅ C2.5 비텍스트 객체 (표·이미지·OpaqueBlock) 1차 — Core 모델 + DOCX/IWPF 라운드트립 + WPF 시각화. xUnit 36 → 43.
-- ☐ C3 HWPX reader (KS X 6101) — 자체 구현 시작
-- ☐ C4 HWPX writer + 라운드트립 테스트
-- ☐ G3: 사용자가 Word/한컴에서 결과 시각 검증 — Phase C 후반에 도달
+- ✅ C2.5 비텍스트 객체 (표·이미지·OpaqueBlock) 1차 — Core 모델 + DOCX/IWPF 라운드트립 + WPF 시각화
+- ✅ C3 HWPX reader (KS X 6101) — 자체 구현 1차 (단락·런·정렬·강조·헤더 H1~H6)
+- ✅ C4 HWPX writer + 라운드트립 테스트 (xUnit 6건 + 스모크 1건)
+- ◑ C5 HWPX 표·이미지·OpaqueBlock 매핑 — 다음 사이클
+- ☐ G3 (DOCX 부분): 사용자가 Word 에서 시각 검증 — 이미 통과
+- ☐ G3 (HWPX 부분): 사용자가 한컴 오피스에서 시각 검증 — 호환성 fine-tune 필요
 
 ### Phase D — 외부 CLI 컨버터 분리
 - ☐ D1 PolyDoc.Cli.Docx 분리
@@ -173,8 +175,9 @@ PolyDoc/
 | PolyDoc.Codecs.Text.Tests | 5 | ✅ |
 | PolyDoc.Codecs.Markdown.Tests | 11 | ✅ |
 | PolyDoc.Codecs.Docx.Tests | 9 | ✅ |
-| **합계** | **43** | **All green** |
-| PolyDoc.SmokeTest 콘솔 | 5 | ✅ |
+| PolyDoc.Codecs.Hwpx.Tests | 6 | ✅ |
+| **합계** | **49** | **All green** |
+| PolyDoc.SmokeTest 콘솔 | 6 | ✅ |
 
 ### 사용자(노진문) 작업이 필요한 항목 — RichTextBox 업그레이드 검증 (G2.5)
 - [ ] Windows 에서 `git pull` 후 `dotnet restore`
