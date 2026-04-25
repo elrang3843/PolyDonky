@@ -45,6 +45,8 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **Added** — `MainWindow` 상태 표시줄 우측에 4칸 추가: **메모리 사용량(MB) · 삽입/수정 모드 · CapsLock · NumLock**. 1초 간격 `DispatcherTimer` 가 메모리(`Environment.WorkingSet`)와 키 토글 상태(`Keyboard.IsKeyToggled`) 갱신. Insert 키 누름 시 모드 토글, CapsLock/NumLock 키 입력 시 다음 dispatcher cycle 에서 재계산. 파일 경로는 우측 끝 대신 그 4칸 왼쪽으로 이동(`MaxWidth=600 + ellipsis`)되어 길어도 다른 칸을 가리지 않는다.
+- **Changed** — `HwpxReader` 를 한컴 오피스가 만든 hwpx 변종에 robust 하게 매칭하도록 보강. `content.hpf` 와 `container.xml` 모두 LocalName 기반(namespace 무시) descendants 검색. section 파일은 manifest의 id 또는 href 파일명이 "section" 접두인 것으로 fallback. 그래도 못 찾으면 ZIP 의 `Contents/section*.xml` 직접 스캔. paragraph/run/text 모두 깊이 어디든 `Descendants` 로 흡수, `<hp:tab>` / `<hp:lineBreak>` 추가 인식. 자체 라운드트립 6/6 + 스모크 6/6 그대로 그린.
 - **Added** — Phase C C3·C4 HWPX 1급 시민 codec 1차 — `src/PolyDoc.Codecs.Hwpx`. KS X 6101 사양 기반 자체 구현 (BCL + System.Xml.Linq + System.IO.Compression, 외부 의존 0).
   - 패키지 구조: `mimetype`(STORED, "application/hwp+zip") + `META-INF/container.xml` + `Contents/content.hpf` (OPF) + `Contents/header.xml` + `Contents/section{N}.xml` + `version.xml`.
   - HwpxWriter: 단락(`hp:p`), 런(`hp:run`+`hp:t`), 정렬(LEFT/CENTER/RIGHT/JUSTIFY → paraPr 0~3), 굵게/기울임/밑줄/취소선 (charPr 0~5), 헤더 H1~H6 (style 1~6). header.xml 의 charPr/paraPr/style 정의를 codec 내부 ID 약속으로 고정해 라운드트립 호환성 보장.

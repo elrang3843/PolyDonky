@@ -1,6 +1,8 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -30,6 +32,45 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _hasUnsavedChanges;
+
+    // 상태 표시줄 우측 4칸: 메모리·Insert/Overwrite·CapsLock·NumLock.
+    // MainWindow code-behind 가 DispatcherTimer 로 1초마다 RefreshSystemKeys/Memory 를 호출한다.
+    [ObservableProperty]
+    private string _memoryUsage = "0.0 MB";
+
+    [ObservableProperty]
+    private string _insertModeText = "삽입";
+
+    [ObservableProperty]
+    private string _capsLockText = "    ";
+
+    [ObservableProperty]
+    private string _numLockText = "Num";
+
+    /// <summary>true 면 Overwrite (수정) 모드. 표시 외 실제 overwrite 동작은 후속 사이클.</summary>
+    public bool IsOverwriteMode { get; private set; }
+
+    public void ToggleInsertMode()
+    {
+        IsOverwriteMode = !IsOverwriteMode;
+        InsertModeText = IsOverwriteMode ? "수정" : "삽입";
+    }
+
+    public void RefreshSystemKeys()
+    {
+        var caps = Keyboard.IsKeyToggled(Key.CapsLock);
+        var num = Keyboard.IsKeyToggled(Key.NumLock);
+        CapsLockText = caps ? "Caps" : "    ";
+        NumLockText = num ? "Num " : "    ";
+    }
+
+    public void RefreshMemoryUsage()
+    {
+        // 프로세스 작업 집합 기준 — 사용자가 체감하는 "이 앱이 차지하는 메모리".
+        // PolyDocument 단독 메모리는 측정이 까다로우므로 현실적인 근사치로 프로세스 메모리를 노출.
+        var bytes = Environment.WorkingSet;
+        MemoryUsage = $"{bytes / 1024.0 / 1024.0:F1} MB";
+    }
 
     public string WindowTitle
         => HasUnsavedChanges
