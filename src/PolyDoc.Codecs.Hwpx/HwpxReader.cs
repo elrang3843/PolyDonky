@@ -52,6 +52,13 @@ public sealed class HwpxReader : IDocumentReader
                 sectionPaths.AddRange(FallbackSectionPaths(archive));
             }
 
+            // OPF manifest href 가 절대/상대 어느 쪽이든 우리 추정 경로가 실제 ZIP entry 와 안 맞을 수 있다.
+            // basename + case-insensitive fallback 으로 정규화한다.
+            for (int idx = 0; idx < sectionPaths.Count; idx++)
+            {
+                sectionPaths[idx] = ResolveEntryPath(archive, sectionPaths[idx]);
+            }
+
             var document = new PolyDocument { Metadata = metadata };
             int totalParagraphs = 0;
             int totalTextRuns = 0;
@@ -102,6 +109,9 @@ public sealed class HwpxReader : IDocumentReader
             if (sectionPaths.Count > 0)
             {
                 document.Metadata.Custom["hwpx.firstSectionPath"] = sectionPaths[0];
+                // section 파일이 실제로 archive 에서 매치되는지 (LoadXml 성공 여부의 선결 조건).
+                var firstHit = archive.GetEntry(sectionPaths[0]) is not null;
+                document.Metadata.Custom["hwpx.firstSectionEntryHit"] = firstHit ? "yes" : "no";
             }
             if (firstSectionRoot is not null)
             {
@@ -117,6 +127,18 @@ public sealed class HwpxReader : IDocumentReader
                     .Select(kv => $"{kv.Key}={kv.Value}")
                     .ToList();
                 document.Metadata.Custom["hwpx.firstSectionTags"] = string.Join(", ", top);
+            }
+
+            // 본문 못 찾은 케이스의 마지막 단서: ZIP 내부의 모든 .xml entry 목록 (top 10).
+            if (totalParagraphs == 0)
+            {
+                var xmlEntries = archive.Entries
+                    .Where(e => e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                    .Select(e => e.FullName)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                    .Take(10)
+                    .ToList();
+                document.Metadata.Custom["hwpx.xmlEntries"] = string.Join("; ", xmlEntries);
             }
 
             return document;
@@ -139,6 +161,40 @@ public sealed class HwpxReader : IDocumentReader
             .Where(p => p.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
                      && System.IO.Path.GetFileName(p).Contains("section", StringComparison.OrdinalIgnoreCase))
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 추정 경로(예: OPF manifest 의 href + content.hpf 의 dirname 합산)가 실제 ZIP entry 와 안 맞을 때
+    /// basename + case-insensitive 매칭으로 보정한다.
+    /// </summary>
+    private static string ResolveEntryPath(ZipArchive archive, string proposed)
+    {
+        if (string.IsNullOrEmpty(proposed))
+        {
+            return proposed;
+        }
+        if (archive.GetEntry(proposed) is not null)
+        {
+            return proposed;
+        }
+        // ZIP 표준은 forward slash 만 쓰지만 일부 변환 도구가 backslash 를 남길 수 있다.
+        var normalized = proposed.Replace('\\', '/').TrimStart('/');
+        if (archive.GetEntry(normalized) is not null)
+        {
+            return normalized;
+        }
+        // case-insensitive 정확 매치
+        var ciMatch = archive.Entries
+            .FirstOrDefault(e => string.Equals(e.FullName, normalized, StringComparison.OrdinalIgnoreCase));
+        if (ciMatch is not null)
+        {
+            return ciMatch.FullName;
+        }
+        // basename 매치 (마지막 fallback)
+        var basename = System.IO.Path.GetFileName(normalized);
+        var byBasename = archive.Entries
+            .FirstOrDefault(e => string.Equals(System.IO.Path.GetFileName(e.FullName), basename, StringComparison.OrdinalIgnoreCase));
+        return byBasename?.FullName ?? proposed;
     }
 
     private static void ValidateMimetype(ZipArchive archive)

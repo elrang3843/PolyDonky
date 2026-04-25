@@ -165,10 +165,13 @@ public partial class MainViewModel : ObservableObject
             && int.TryParse(pCount, out var pc) && pc == 0)
         {
             doc.Metadata.Custom.TryGetValue("hwpx.sectionFilesFound", out var sCount);
+            doc.Metadata.Custom.TryGetValue("hwpx.firstSectionEntryHit", out var hit);
+            doc.Metadata.Custom.TryGetValue("hwpx.firstSectionPath", out var firstPath);
             doc.Metadata.Custom.TryGetValue("hwpx.firstSectionRoot", out var rootName);
             doc.Metadata.Custom.TryGetValue("hwpx.firstSectionTags", out var tags);
-            // 진단을 한 줄로 합쳐 사용자가 그대로 메인테이너에게 공유 가능.
-            return $"열기 완료 — {name} | 본문 0건, 섹션 {sCount ?? "?"}개 | root=<{rootName ?? "?"}> | 자식: {tags ?? "(없음)"}";
+            doc.Metadata.Custom.TryGetValue("hwpx.xmlEntries", out var xmlEntries);
+            // 한 줄로 합쳐 ToolTip 으로도 풀 텍스트 공유 가능.
+            return $"열기 완료 — {name} | 본문 0건, 섹션 {sCount ?? "?"}개 (entry-hit={hit ?? "?"}) | path={firstPath ?? "?"} | root=<{rootName ?? "?"}> | 자식: {tags ?? "(없음)"} | xml: {xmlEntries ?? "(없음)"}";
         }
         return $"열기 완료 — {name}";
     }

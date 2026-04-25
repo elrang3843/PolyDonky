@@ -140,6 +140,7 @@
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}"
                            Foreground="{StaticResource OnSurfaceMuted}"
+                           ToolTip="{Binding StatusMessage}"
                            TextTrimming="CharacterEllipsis" />
             </StatusBarItem>
         </StatusBar>
