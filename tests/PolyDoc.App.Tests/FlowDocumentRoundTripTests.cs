@@ -1,9 +1,9 @@
 using System.Linq;
 using System.Windows;
-using System.Windows.Media;
 using PolyDoc.App.Services;
 using PolyDoc.Core;
 using Wpf = System.Windows.Documents;
+using WpfMedia = System.Windows.Media;
 
 namespace PolyDoc.App.Tests;
 
@@ -55,8 +55,8 @@ public class FlowDocumentRoundTripTests
 
         var run = FirstWpfRun(FlowDocumentBuilder.Build(doc));
 
-        Assert.IsType<SolidColorBrush>(run.Foreground);
-        var brush = (SolidColorBrush)run.Foreground!;
+        Assert.IsType<WpfMedia.SolidColorBrush>(run.Foreground);
+        var brush = (WpfMedia.SolidColorBrush)run.Foreground!;
         Assert.Equal(0xFF, brush.Color.R);
         Assert.Equal(0x33, brush.Color.G);
         Assert.Equal(0x00, brush.Color.B);
