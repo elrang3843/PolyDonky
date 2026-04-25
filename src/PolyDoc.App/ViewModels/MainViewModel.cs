@@ -86,14 +86,14 @@ public partial class MainViewModel : ObservableObject
 
         var dlg = new OpenFileDialog
         {
-            Filter = DocumentFormat.OpenFilter,
+            Filter = KnownFormats.OpenFilter,
             Title = "문서 열기",
         };
         if (dlg.ShowDialog() != true) return;
 
         var path = dlg.FileName;
 
-        if (DocumentFormat.RequiresExternalConverter(path) && !DocumentFormat.IsSupportedNatively(path))
+        if (KnownFormats.RequiresExternalConverter(path) && !KnownFormats.IsSupportedNatively(path))
         {
             var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
             MessageBox.Show(
@@ -104,7 +104,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var reader = DocumentFormat.PickReader(path);
+        var reader = KnownFormats.PickReader(path);
         if (reader is null)
         {
             MessageBox.Show("알 수 없는 파일 형식입니다.", "열기 실패",
@@ -144,14 +144,14 @@ public partial class MainViewModel : ObservableObject
     {
         var dlg = new SaveFileDialog
         {
-            Filter = DocumentFormat.SaveFilter,
+            Filter = KnownFormats.SaveFilter,
             Title = "다른 이름으로 저장",
             FileName = string.IsNullOrEmpty(CurrentFilePath) ? "문서.iwpf" : Path.GetFileName(CurrentFilePath),
         };
         if (dlg.ShowDialog() != true) return;
 
         // 외부 포맷 저장 시 한 번 더 확인.
-        if (DocumentFormat.RequiresExternalConverter(dlg.FileName) && !DocumentFormat.IsSupportedNatively(dlg.FileName))
+        if (KnownFormats.RequiresExternalConverter(dlg.FileName) && !KnownFormats.IsSupportedNatively(dlg.FileName))
         {
             var ext = Path.GetExtension(dlg.FileName).TrimStart('.').ToLowerInvariant();
             MessageBox.Show(
@@ -184,7 +184,7 @@ public partial class MainViewModel : ObservableObject
 
     private void SaveTo(string path)
     {
-        var writer = DocumentFormat.PickWriter(path);
+        var writer = KnownFormats.PickWriter(path);
         if (writer is null)
         {
             MessageBox.Show("이 형식은 PolyDoc 이 직접 저장할 수 없습니다.",

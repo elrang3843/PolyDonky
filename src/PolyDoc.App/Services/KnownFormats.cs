@@ -10,9 +10,14 @@ namespace PolyDoc.App.Services;
 
 /// <summary>
 /// 파일 확장자에서 적절한 codec 을 선택해 read/write 를 수행한다.
-/// IWPF / MD / TXT 만 메인 앱이 직접 처리하고, 다른 포맷은 추후 외부 CLI 컨버터를 통해 처리한다.
+/// IWPF / DOCX / MD / TXT 는 메인 앱이 직접 처리하고, 다른 포맷은 추후 외부 CLI 컨버터를 통해 처리한다.
 /// </summary>
-public static class DocumentFormat
+/// <remarks>
+/// 클래스 이름은 <c>DocumentFormat.OpenXml</c> 패키지 네임스페이스(<c>DocumentFormat</c>)와의
+/// 단순 이름 충돌을 피하기 위해 <c>KnownFormats</c> 로 둔다. 컴파일러는 단순 이름 <c>DocumentFormat</c>
+/// 을 namespace 로 우선 해석할 수 있어, 같은 이름의 정적 클래스를 두면 CS0234 가 발생한다.
+/// </remarks>
+public static class KnownFormats
 {
     public static IDocumentReader? PickReader(string path)
     {
