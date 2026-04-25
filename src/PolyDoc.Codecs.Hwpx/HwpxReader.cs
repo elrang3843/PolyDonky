@@ -46,8 +46,11 @@ public sealed class HwpxReader : IDocumentReader
             var rootHpfPath = ResolveContentHpf(archive);
             var (sectionPaths, metadata) = ReadOpfManifest(archive, rootHpfPath);
 
-            // 의도적으로 header.xml 은 1차 사이클에서 깊이 파싱하지 않는다.
-            // (writer 가 만든 charPr/paraPr ID 매핑을 약속으로 사용)
+            // OPF 가 변종 namespace 또는 빠진 spine 으로 비어 있을 수 있어 ZIP 직접 스캔으로 fallback.
+            if (sectionPaths.Count == 0)
+            {
+                sectionPaths.AddRange(FallbackSectionPaths(archive));
+            }
 
             var document = new PolyDocument { Metadata = metadata };
             foreach (var path in sectionPaths)
@@ -66,6 +69,20 @@ public sealed class HwpxReader : IDocumentReader
         }
     }
 
+    /// <summary>
+    /// content.hpf 가 못 풀렸거나 spine 이 비었을 때, ZIP 안의 'Contents/section*.xml' 들을
+    /// 인덱스 순으로 모아 fallback 으로 사용한다.
+    /// </summary>
+    private static IEnumerable<string> FallbackSectionPaths(ZipArchive archive)
+    {
+        return archive.Entries
+            .Select(e => e.FullName)
+            .Where(p => p.StartsWith(HwpxPaths.ContentDir, StringComparison.OrdinalIgnoreCase)
+                     && System.IO.Path.GetFileName(p).StartsWith("section", StringComparison.OrdinalIgnoreCase)
+                     && p.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase);
+    }
+
     private static void ValidateMimetype(ZipArchive archive)
     {
         var entry = archive.GetEntry(HwpxPaths.Mimetype)
@@ -82,15 +99,17 @@ public sealed class HwpxReader : IDocumentReader
 
     private static string ResolveContentHpf(ZipArchive archive)
     {
-        var container = LoadXml(archive, HwpxPaths.ContainerXml)
-            ?? throw new InvalidDataException("HWPX package is missing META-INF/container.xml.");
+        var container = LoadXml(archive, HwpxPaths.ContainerXml);
+        if (container?.Root is null)
+        {
+            return HwpxPaths.ContentHpf;
+        }
 
-        var rootfile = container.Root
-            ?.Element(OpfContainer + "rootfiles")
-            ?.Element(OpfContainer + "rootfile");
-
+        // 한컴 변종/EPUB 호환 모두를 받아내기 위해 LocalName 매칭으로 rootfile 검색.
+        var rootfile = container.Root.Descendants()
+            .FirstOrDefault(e => e.Name.LocalName == "rootfile");
         var fullPath = rootfile?.Attribute("full-path")?.Value;
-        return string.IsNullOrEmpty(fullPath) ? HwpxPaths.ContentHpf : fullPath;
+        return string.IsNullOrEmpty(fullPath) ? HwpxPaths.ContentHpf : fullPath!;
     }
 
     private static (List<string> sectionPaths, DocumentMetadata metadata) ReadOpfManifest(ZipArchive archive, string rootHpfPath)
@@ -104,27 +123,31 @@ public sealed class HwpxReader : IDocumentReader
         }
 
         var packageElem = doc.Root;
-        var meta = packageElem.Element(Opf + "metadata");
-        if (meta is not null)
+
+        // metadata 는 dc namespace 가 다르거나 default namespace 일 수도 있어 LocalName 매칭.
+        var metaContainer = packageElem.Descendants().FirstOrDefault(e => e.Name.LocalName == "metadata");
+        if (metaContainer is not null)
         {
-            metadata.Title = meta.Element(Dc + "title")?.Value;
-            metadata.Author = meta.Element(Dc + "creator")?.Value;
-            var lang = meta.Element(Dc + "language")?.Value;
+            metadata.Title = metaContainer.Descendants().FirstOrDefault(e => e.Name.LocalName == "title")?.Value;
+            metadata.Author = metaContainer.Descendants().FirstOrDefault(e => e.Name.LocalName == "creator")?.Value;
+            var lang = metaContainer.Descendants().FirstOrDefault(e => e.Name.LocalName == "language")?.Value;
             if (!string.IsNullOrEmpty(lang)) metadata.Language = lang;
         }
 
-        // manifest 의 item 중 section{N}.xml 패턴을 spine 순서대로 모은다.
-        var manifestItems = packageElem.Element(Opf + "manifest")?.Elements(Opf + "item")
+        var manifestContainer = packageElem.Descendants().FirstOrDefault(e => e.Name.LocalName == "manifest");
+        var manifestItems = manifestContainer?.Descendants()
+            .Where(e => e.Name.LocalName == "item")
             .ToDictionary(
                 e => e.Attribute("id")?.Value ?? string.Empty,
                 e => e.Attribute("href")?.Value ?? string.Empty,
                 StringComparer.Ordinal)
             ?? new Dictionary<string, string>(StringComparer.Ordinal);
 
-        var spine = packageElem.Element(Opf + "spine")?.Elements(Opf + "itemref");
-        if (spine is not null)
+        var spineContainer = packageElem.Descendants().FirstOrDefault(e => e.Name.LocalName == "spine");
+        var spineRefs = spineContainer?.Descendants().Where(e => e.Name.LocalName == "itemref");
+        if (spineRefs is not null)
         {
-            foreach (var itemref in spine)
+            foreach (var itemref in spineRefs)
             {
                 var idref = itemref.Attribute("idref")?.Value;
                 if (!string.IsNullOrEmpty(idref) && manifestItems.TryGetValue(idref!, out var href))
@@ -134,12 +157,12 @@ public sealed class HwpxReader : IDocumentReader
             }
         }
 
-        // spine 이 비어 있으면 manifest 의 section* 추정.
         if (sectionPaths.Count == 0)
         {
             foreach (var (id, href) in manifestItems)
             {
-                if (id.StartsWith("section", StringComparison.OrdinalIgnoreCase))
+                if (id.StartsWith("section", StringComparison.OrdinalIgnoreCase)
+                    || (href is { Length: > 0 } && System.IO.Path.GetFileName(href).StartsWith("section", StringComparison.OrdinalIgnoreCase)))
                 {
                     sectionPaths.Add(CombineRoot(rootHpfPath, href));
                 }
@@ -165,8 +188,10 @@ public sealed class HwpxReader : IDocumentReader
             return section;
         }
 
-        // 어떤 namespace 든 paragraph 요소만 정확히 추리려고 LocalName 비교.
-        foreach (var elem in doc.Root.Elements())
+        // 한컴 오피스가 만든 HWPX 는 sec 안에 추가 wrapper(예: subList) 를 둘 수도 있어
+        // root 직속이 아닌 깊이의 hp:p 도 찾아야 한다. 표 안의 셀 paragraph 까지 모두 평탄화로
+        // 흡수해 사용자가 본문 텍스트는 잃지 않도록 한다 (1차 사이클의 의도적 단순화).
+        foreach (var elem in doc.Root.Descendants())
         {
             if (elem.Name.LocalName == "p")
             {
@@ -189,7 +214,9 @@ public sealed class HwpxReader : IDocumentReader
             paragraph.Style.Outline = (OutlineLevel)styleId;
         }
 
-        foreach (var elem in wp.Elements())
+        // <hp:p> 는 직속 자식으로 <hp:run> 들을 갖는 것이 표준이지만, 한컴 변종에선
+        // 중간 wrapper(예: <hp:linesegarray> 다음 위치 등) 를 둘 수 있어 descendants 로 안전 매칭.
+        foreach (var elem in wp.Descendants())
         {
             if (elem.Name.LocalName == "run")
             {
@@ -212,12 +239,22 @@ public sealed class HwpxReader : IDocumentReader
             ApplyCharPrIdToStyle(charPrId, style);
         }
 
+        // <hp:t> 는 보통 직속 자식이지만, 한컴 변종에선 <hp:t> 가 더 깊은 위치에 있을 수도 있고
+        // <hp:tab>·<hp:lineBreak> 같은 형제와 섞일 수도 있어 descendants 로 텍스트 노드만 모음.
         var sb = new StringBuilder();
-        foreach (var elem in run.Elements())
+        foreach (var elem in run.Descendants())
         {
-            if (elem.Name.LocalName == "t")
+            switch (elem.Name.LocalName)
             {
-                sb.Append(elem.Value);
+                case "t":
+                    sb.Append(elem.Value);
+                    break;
+                case "tab":
+                    sb.Append('\t');
+                    break;
+                case "lineBreak":
+                    sb.Append('\n');
+                    break;
             }
         }
         if (sb.Length > 0)
