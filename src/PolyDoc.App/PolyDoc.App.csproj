@@ -30,13 +30,14 @@
     </Resource>
   </ItemGroup>
 
-  <!-- i18n: Properties/Resources.resx + en-US satellite -->
+  <!-- i18n: Properties/Resources.resx + en-US satellite
+       Update (not Include) to avoid duplicate with SDK default glob. -->
   <ItemGroup>
-    <EmbeddedResource Include="Properties\Resources.resx">
+    <EmbeddedResource Update="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
-    <EmbeddedResource Include="Properties\Resources.en-US.resx" />
+    <EmbeddedResource Update="Properties\Resources.en-US.resx" />
   </ItemGroup>
 
 </Project>

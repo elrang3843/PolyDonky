@@ -60,17 +60,16 @@
         <!-- 버튼 -->
         <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
                     Orientation="Horizontal"
-                    HorizontalAlignment="Right"
-                    Spacing="8">
+                    HorizontalAlignment="Right">
             <Button Content="다음 찾기(_N)"
                     Padding="12,5"
                     IsDefault="True"
                     Click="OnFindNext" />
             <Button Content="모두 바꾸기(_A)"
-                    Padding="12,5"
+                    Padding="12,5" Margin="8,0,0,0"
                     Click="OnReplaceAll" />
             <Button Content="닫기"
-                    Padding="12,5"
+                    Padding="12,5" Margin="8,0,0,0"
                     IsCancel="True"
                     Click="OnClose" />
         </StackPanel>

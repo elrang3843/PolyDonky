@@ -24,7 +24,7 @@
         <Separator Margin="0,16,0,12" />
 
         <!-- 버튼 -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="닫기" Padding="12,5" IsCancel="True" Click="OnClose" />
         </StackPanel>
     </StackPanel>
