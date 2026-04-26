@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using PolyDoc.App.ViewModels;
 using PolyDoc.Core;
 using SR = PolyDoc.App.Properties.Resources;
+using WpfMedia = System.Windows.Media;
 
 namespace PolyDoc.App.Views;
 
@@ -174,7 +175,8 @@ public partial class MainWindow : Window
         {
             try
             {
-                var c = (Color)ColorConverter.ConvertFromString(page.PaperColor)!;
+                // PolyDoc.Core.Color 와 충돌하므로 WpfMedia alias 로 명시.
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(page.PaperColor)!;
                 PaperBorder.Background = new SolidColorBrush(c);
             }
             catch

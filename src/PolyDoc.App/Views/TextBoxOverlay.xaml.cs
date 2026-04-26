@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using PolyDoc.Core;
+using WpfMedia = System.Windows.Media;
 
 namespace PolyDoc.App.Views;
 
@@ -98,13 +99,14 @@ public partial class TextBoxOverlay : UserControl
         // null/빈 = 흰색 기본 유지
     }
 
-    private static bool TryParseColor(string? hex, out Color color)
+    // PolyDoc.Core.Color 와 충돌하므로 WpfMedia alias 로 명시.
+    private static bool TryParseColor(string? hex, out WpfMedia.Color color)
     {
         color = default;
         if (string.IsNullOrWhiteSpace(hex)) return false;
         var s = hex.Trim();
         if (!s.StartsWith('#')) s = '#' + s;
-        try { color = (Color)ColorConverter.ConvertFromString(s)!; return true; }
+        try { color = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(s)!; return true; }
         catch { return false; }
     }
 
