@@ -693,10 +693,10 @@ public partial class MainViewModel : ObservableObject
     public double ZoomScale => _zoomPercent / 100.0;
 
     [RelayCommand]
-    private void ZoomIn()  => ZoomPercent += 10;
+    private void ZoomIn()  => ZoomPercent += 5;
 
     [RelayCommand]
-    private void ZoomOut() => ZoomPercent -= 10;
+    private void ZoomOut() => ZoomPercent -= 5;
 
     private bool ConfirmDiscardChanges()
     {
