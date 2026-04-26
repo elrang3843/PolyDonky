@@ -52,6 +52,9 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 - **Fixed** — 설정 창 조용한 종료. `OnThemeChecked` 가 `InitializeComponent` 중 `ThemeDark`/`ThemeSoft` 가 아직 null 인 상태에서 호출돼 `NullReferenceException`. null guard 추가.
 - **Fixed** — B 폴리싱 4종 빌드 오류 수정 (2226861 에서 미적용). `Properties/Resources.Designer.cs` 누락으로 `dotnet build` 가 실패해 새 기능이 배포되지 않던 문제 해결 — Designer.cs 수동 생성 (`ResourceManager` + 정적 속성). 드래그&드롭: `RichTextBox` 가 `DragOver`를 가로채 파일 드롭 이벤트가 윈도우에 도달하지 않던 문제 — Window 이벤트를 `Drop`/`DragOver` → `PreviewDrop`/`PreviewDragOver` 로 변경, 파일 드롭만 처리 후 `Handled=true`.
 
+### Added
+- **Added** — 서식 > 글자 서식 다이얼로그 (`CharFormatWindow`). RichTextBox 선택 영역의 글꼴·크기·굵게·기울임꼴·밑줄·취소선·위선·위첨자·아래첨자·글자색·배경색을 읽어 표시하고, OK 시 선택 영역에 일괄 적용. 선택이 없으면 캐럿 위치 서식을 읽어 이후 입력에 반영. 미리보기 TextBlock 실시간 갱신. 선택 혼합값(mixed)은 세 상태 체크박스(불확정)로 표시 — 값을 바꾸지 않으면 해당 속성 변경 없음.
+
 ### Fixed
 - **Fixed** — 다른 이름으로 저장 시 형식을 바꿔도 원본 파일명(확장자 포함)이 그대로 남아 "이미 있습니다" 경고가 뜨던 문제. `SaveFileDialog.FileName` 초기값을 `GetFileName` → `GetFileNameWithoutExtension` 으로 변경 — 선택한 필터의 확장자가 자동 적용된다.
 

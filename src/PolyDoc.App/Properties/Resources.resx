@@ -226,4 +226,22 @@
   <data name="SettingsLanguage" xml:space="preserve"><value>언어:</value></data>
   <data name="SettingsLangKorean" xml:space="preserve"><value>한국어 (기본)</value></data>
   <data name="SettingsLangEnglish" xml:space="preserve"><value>English</value></data>
+
+  <!-- 글자 서식 다이얼로그 -->
+  <data name="FormatCharTitle"       xml:space="preserve"><value>글자 서식</value></data>
+  <data name="FormatCharFontGroup"   xml:space="preserve"><value>글꼴</value></data>
+  <data name="FormatCharFontFamily"  xml:space="preserve"><value>글꼴 이름</value></data>
+  <data name="FormatCharFontSize"    xml:space="preserve"><value>크기</value></data>
+  <data name="FormatCharStyleGroup"  xml:space="preserve"><value>스타일</value></data>
+  <data name="FormatCharBold"        xml:space="preserve"><value>굵게</value></data>
+  <data name="FormatCharItalic"      xml:space="preserve"><value>기울임꼴</value></data>
+  <data name="FormatCharUnderline"   xml:space="preserve"><value>밑줄</value></data>
+  <data name="FormatCharStrikethrough" xml:space="preserve"><value>취소선</value></data>
+  <data name="FormatCharOverline"    xml:space="preserve"><value>위선</value></data>
+  <data name="FormatCharSuperscript" xml:space="preserve"><value>위첨자</value></data>
+  <data name="FormatCharSubscript"   xml:space="preserve"><value>아래첨자</value></data>
+  <data name="FormatCharColorGroup"  xml:space="preserve"><value>색상</value></data>
+  <data name="FormatCharFgColor"     xml:space="preserve"><value>글자색</value></data>
+  <data name="FormatCharBgColor"     xml:space="preserve"><value>배경색</value></data>
+  <data name="FormatCharPreviewGroup" xml:space="preserve"><value>미리보기</value></data>
 </root>

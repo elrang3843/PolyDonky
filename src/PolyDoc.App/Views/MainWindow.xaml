@@ -86,7 +86,8 @@
             </MenuItem>
 
             <MenuItem Header="{Binding MenuFormat, Source={x:Static svc:LocalizedStrings.Instance}}">
-                <MenuItem Header="{Binding MenuFormatChar, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuFormatChar, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnFormatChar" />
                 <MenuItem Header="{Binding MenuFormatPara, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
                 <MenuItem Header="{Binding MenuFormatPage, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
             </MenuItem>

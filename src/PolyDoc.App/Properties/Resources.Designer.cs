@@ -211,5 +211,23 @@ namespace PolyDoc.App.Properties
         internal static string SettingsLanguage   => Get(nameof(SettingsLanguage));
         internal static string SettingsLangKorean => Get(nameof(SettingsLangKorean));
         internal static string SettingsLangEnglish => Get(nameof(SettingsLangEnglish));
+
+        // ── 글자 서식 다이얼로그 ────────────────────────────────────
+        internal static string FormatCharTitle        => Get(nameof(FormatCharTitle));
+        internal static string FormatCharFontGroup    => Get(nameof(FormatCharFontGroup));
+        internal static string FormatCharFontFamily   => Get(nameof(FormatCharFontFamily));
+        internal static string FormatCharFontSize     => Get(nameof(FormatCharFontSize));
+        internal static string FormatCharStyleGroup   => Get(nameof(FormatCharStyleGroup));
+        internal static string FormatCharBold         => Get(nameof(FormatCharBold));
+        internal static string FormatCharItalic       => Get(nameof(FormatCharItalic));
+        internal static string FormatCharUnderline    => Get(nameof(FormatCharUnderline));
+        internal static string FormatCharStrikethrough => Get(nameof(FormatCharStrikethrough));
+        internal static string FormatCharOverline     => Get(nameof(FormatCharOverline));
+        internal static string FormatCharSuperscript  => Get(nameof(FormatCharSuperscript));
+        internal static string FormatCharSubscript    => Get(nameof(FormatCharSubscript));
+        internal static string FormatCharColorGroup   => Get(nameof(FormatCharColorGroup));
+        internal static string FormatCharFgColor      => Get(nameof(FormatCharFgColor));
+        internal static string FormatCharBgColor      => Get(nameof(FormatCharBgColor));
+        internal static string FormatCharPreviewGroup => Get(nameof(FormatCharPreviewGroup));
     }
 }

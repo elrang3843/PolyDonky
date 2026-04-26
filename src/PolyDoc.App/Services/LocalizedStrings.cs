@@ -134,6 +134,24 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string StatusWriteProtected  => SR.StatusWriteProtected;
     public string DlgConfirm            => SR.DlgConfirm;
 
+    // ── 글자 서식 다이얼로그 ────────────────────────────────────
+    public string FormatCharTitle        => SR.FormatCharTitle;
+    public string FormatCharFontGroup    => SR.FormatCharFontGroup;
+    public string FormatCharFontFamily   => SR.FormatCharFontFamily;
+    public string FormatCharFontSize     => SR.FormatCharFontSize;
+    public string FormatCharStyleGroup   => SR.FormatCharStyleGroup;
+    public string FormatCharBold         => SR.FormatCharBold;
+    public string FormatCharItalic       => SR.FormatCharItalic;
+    public string FormatCharUnderline    => SR.FormatCharUnderline;
+    public string FormatCharStrikethrough => SR.FormatCharStrikethrough;
+    public string FormatCharOverline     => SR.FormatCharOverline;
+    public string FormatCharSuperscript  => SR.FormatCharSuperscript;
+    public string FormatCharSubscript    => SR.FormatCharSubscript;
+    public string FormatCharColorGroup   => SR.FormatCharColorGroup;
+    public string FormatCharFgColor      => SR.FormatCharFgColor;
+    public string FormatCharBgColor      => SR.FormatCharBgColor;
+    public string FormatCharPreviewGroup => SR.FormatCharPreviewGroup;
+
     // ── 설정 다이얼로그 ─────────────────────────────────────────
     public string SettingsTitle       => SR.SettingsTitle;
     public string SettingsTheme       => SR.SettingsTheme;

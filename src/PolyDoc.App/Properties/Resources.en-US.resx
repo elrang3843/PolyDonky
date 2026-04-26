@@ -226,4 +226,22 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="SettingsLanguage" xml:space="preserve"><value>Language:</value></data>
   <data name="SettingsLangKorean" xml:space="preserve"><value>한국어</value></data>
   <data name="SettingsLangEnglish" xml:space="preserve"><value>English (Default)</value></data>
+
+  <!-- Character Formatting dialog -->
+  <data name="FormatCharTitle"       xml:space="preserve"><value>Character Formatting</value></data>
+  <data name="FormatCharFontGroup"   xml:space="preserve"><value>Font</value></data>
+  <data name="FormatCharFontFamily"  xml:space="preserve"><value>Font name</value></data>
+  <data name="FormatCharFontSize"    xml:space="preserve"><value>Size</value></data>
+  <data name="FormatCharStyleGroup"  xml:space="preserve"><value>Style</value></data>
+  <data name="FormatCharBold"        xml:space="preserve"><value>Bold</value></data>
+  <data name="FormatCharItalic"      xml:space="preserve"><value>Italic</value></data>
+  <data name="FormatCharUnderline"   xml:space="preserve"><value>Underline</value></data>
+  <data name="FormatCharStrikethrough" xml:space="preserve"><value>Strikethrough</value></data>
+  <data name="FormatCharOverline"    xml:space="preserve"><value>Overline</value></data>
+  <data name="FormatCharSuperscript" xml:space="preserve"><value>Superscript</value></data>
+  <data name="FormatCharSubscript"   xml:space="preserve"><value>Subscript</value></data>
+  <data name="FormatCharColorGroup"  xml:space="preserve"><value>Color</value></data>
+  <data name="FormatCharFgColor"     xml:space="preserve"><value>Text color</value></data>
+  <data name="FormatCharBgColor"     xml:space="preserve"><value>Highlight</value></data>
+  <data name="FormatCharPreviewGroup" xml:space="preserve"><value>Preview</value></data>
 </root>
