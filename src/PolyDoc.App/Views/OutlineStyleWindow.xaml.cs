@@ -4,10 +4,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
 using PolyDoc.App.Services;
 using PolyDoc.Core;
 using Wpf = System.Windows.Documents;
+using WpfMedia = System.Windows.Media;
 
 namespace PolyDoc.App.Views;
 
@@ -129,14 +129,14 @@ public partial class OutlineStyleWindow : Window
             ChkBorderBottom.IsChecked = ls.Border.ShowBottom;
             TxtBorderColor.Text       = ls.Border.Color ?? "";
             if (TryParseColor(ls.Border.Color, out var bc))
-                BorderColorSwatch.Background = new SolidColorBrush(bc);
+                BorderColorSwatch.Background = new WpfMedia.SolidColorBrush(bc);
             else
                 BorderColorSwatch.Background = null;
 
             // 배경색
             TxtBgColor.Text = ls.BackgroundColor ?? "";
             if (TryParseColor(ls.BackgroundColor, out var bgc))
-                BgColorSwatch.Background = new SolidColorBrush(bgc);
+                BgColorSwatch.Background = new WpfMedia.SolidColorBrush(bgc);
             else
                 BgColorSwatch.Background = null;
         }
@@ -254,7 +254,7 @@ public partial class OutlineStyleWindow : Window
         var hex = TxtBorderColor.Text.Trim();
         if (TryParseColor(hex, out var c))
         {
-            BorderColorSwatch.Background = new SolidColorBrush(c);
+            BorderColorSwatch.Background = new WpfMedia.SolidColorBrush(c);
             CurrentLevelStyle.Border.Color = NormalizeHex(hex);
         }
         else
@@ -276,7 +276,7 @@ public partial class OutlineStyleWindow : Window
         var hex = TxtBgColor.Text.Trim();
         if (TryParseColor(hex, out var c))
         {
-            BgColorSwatch.Background = new SolidColorBrush(c);
+            BgColorSwatch.Background = new WpfMedia.SolidColorBrush(c);
             CurrentLevelStyle.BackgroundColor = NormalizeHex(hex);
         }
         else
@@ -293,7 +293,7 @@ public partial class OutlineStyleWindow : Window
     {
         var fd = new FlowDocument
         {
-            FontFamily = new FontFamily("맑은 고딕, Malgun Gothic, Segoe UI"),
+            FontFamily = new WpfMedia.FontFamily("맑은 고딕, Malgun Gothic, Segoe UI"),
             FontSize   = FlowDocumentBuilder.PtToDip(11),
             PagePadding = new Thickness(8),
         };
@@ -338,9 +338,9 @@ public partial class OutlineStyleWindow : Window
             FontStyle  = c.Italic ? FontStyles.Italic   : FontStyles.Normal,
         };
         if (!string.IsNullOrEmpty(c.FontFamily))
-            run.FontFamily = new FontFamily(c.FontFamily);
+            run.FontFamily = new WpfMedia.FontFamily(c.FontFamily);
         if (c.Foreground is { } fg)
-            run.Foreground = new SolidColorBrush(Color.FromArgb(fg.A, fg.R, fg.G, fg.B));
+            run.Foreground = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(fg.A, fg.R, fg.G, fg.B));
 
         var para = new Wpf.Paragraph(run)
         {
@@ -362,14 +362,14 @@ public partial class OutlineStyleWindow : Window
 
         // 배경색
         if (!string.IsNullOrEmpty(ls.BackgroundColor) && TryParseColor(ls.BackgroundColor, out var bgc))
-            para.Background = new SolidColorBrush(bgc);
+            para.Background = new WpfMedia.SolidColorBrush(bgc);
 
         // 테두리 — WPF Paragraph 의 Border* 속성으로 표현
         if (ls.Border.ShowTop || ls.Border.ShowBottom)
         {
-            SolidColorBrush borderBrush = !string.IsNullOrEmpty(ls.Border.Color) && TryParseColor(ls.Border.Color, out var brc)
-                ? new SolidColorBrush(brc)
-                : new SolidColorBrush(Colors.DimGray);
+            WpfMedia.SolidColorBrush borderBrush = !string.IsNullOrEmpty(ls.Border.Color) && TryParseColor(ls.Border.Color, out var brc)
+                ? new WpfMedia.SolidColorBrush(brc)
+                : new WpfMedia.SolidColorBrush(WpfMedia.Colors.DimGray);
             para.BorderBrush     = borderBrush;
             para.BorderThickness = new Thickness(0,
                 ls.Border.ShowTop    ? 1 : 0,
@@ -424,13 +424,13 @@ public partial class OutlineStyleWindow : Window
 
     // ── 유틸 ────────────────────────────────────────────────────
 
-    private static bool TryParseColor(string? hex, out Color color)
+    private static bool TryParseColor(string? hex, out WpfMedia.Color color)
     {
         color = default;
         if (string.IsNullOrWhiteSpace(hex)) return false;
         var t = hex.Trim();
         if (!t.StartsWith('#')) t = '#' + t;
-        try { color = (Color)ColorConverter.ConvertFromString(t); return true; }
+        try { color = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(t); return true; }
         catch { return false; }
     }
 
