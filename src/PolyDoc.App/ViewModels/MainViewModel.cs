@@ -251,6 +251,14 @@ public partial class MainViewModel : ObservableObject
     public event EventHandler? SettingsRequested;
 
     [RelayCommand]
+    private void Close()
+    {
+        if (!ConfirmDiscardChanges()) return;
+        LoadDocument(PolyDocument.Empty(), null);
+        StatusMessage = SR.StatusDocClosed;
+    }
+
+    [RelayCommand]
     private void Exit()
     {
         if (!ConfirmDiscardChanges()) return;

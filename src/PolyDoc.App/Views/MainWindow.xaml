@@ -43,15 +43,26 @@
                 <MenuItem Header="{Binding MenuFilePreview, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
                 <MenuItem Header="{Binding MenuFilePrint, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" InputGestureText="Ctrl+P" />
                 <Separator />
-                <MenuItem Header="{Binding MenuFileClose, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuFileClose, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding CloseCommand}" />
                 <MenuItem Header="{Binding MenuFileExit, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding ExitCommand}" InputGestureText="Alt+F4" />
             </MenuItem>
 
             <MenuItem Header="{Binding MenuEdit, Source={x:Static svc:LocalizedStrings.Instance}}">
-                <MenuItem Header="{Binding MenuEditCopy, Source={x:Static svc:LocalizedStrings.Instance}}" Command="ApplicationCommands.Copy" />
-                <MenuItem Header="{Binding MenuEditCut, Source={x:Static svc:LocalizedStrings.Instance}}" Command="ApplicationCommands.Cut" />
-                <MenuItem Header="{Binding MenuEditPaste, Source={x:Static svc:LocalizedStrings.Instance}}" Command="ApplicationCommands.Paste" />
-                <MenuItem Header="{Binding MenuEditDelete, Source={x:Static svc:LocalizedStrings.Instance}}" Command="ApplicationCommands.Delete" />
+                <MenuItem Header="{Binding MenuEditCopy, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Command="ApplicationCommands.Copy"
+                          CommandTarget="{Binding ElementName=BodyEditor}"
+                          InputGestureText="Ctrl+C" />
+                <MenuItem Header="{Binding MenuEditCut, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Command="ApplicationCommands.Cut"
+                          CommandTarget="{Binding ElementName=BodyEditor}"
+                          InputGestureText="Ctrl+X" />
+                <MenuItem Header="{Binding MenuEditPaste, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Command="ApplicationCommands.Paste"
+                          CommandTarget="{Binding ElementName=BodyEditor}"
+                          InputGestureText="Ctrl+V" />
+                <MenuItem Header="{Binding MenuEditDelete, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnEditDelete"
+                          InputGestureText="Del" />
                 <Separator />
                 <MenuItem Header="{Binding MenuEditFindReplace, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding FindReplaceCommand}" InputGestureText="Ctrl+F" />
                 <Separator />

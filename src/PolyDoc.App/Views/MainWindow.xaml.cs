@@ -126,6 +126,22 @@ public partial class MainWindow : Window
         dlg.ShowDialog();
     }
 
+    // 편집 > 지우기: RichTextBox 는 ApplicationCommands.Delete 를 자체 바인딩하지 않으므로
+    // 메뉴에서 직접 호출 시 동작하도록 선택 영역을 지운다. 선택이 비어 있으면 캐럿 직후
+    // 한 글자(EditingCommands.Delete) 를 지우는 일반 워드프로세서 동작을 따른다.
+    private void OnEditDelete(object sender, RoutedEventArgs e)
+    {
+        if (!BodyEditor.Selection.IsEmpty)
+        {
+            BodyEditor.Selection.Text = string.Empty;
+        }
+        else
+        {
+            System.Windows.Documents.EditingCommands.Delete.Execute(null, BodyEditor);
+        }
+        BodyEditor.Focus();
+    }
+
     private void OnDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;

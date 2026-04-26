@@ -96,6 +96,7 @@ namespace PolyDoc.App.Properties
         internal static string StatusSaveDone        => Get(nameof(StatusSaveDone));
         internal static string StatusInsert          => Get(nameof(StatusInsert));
         internal static string StatusOverwrite       => Get(nameof(StatusOverwrite));
+        internal static string StatusDocClosed       => Get(nameof(StatusDocClosed));
 
         // ── 다이얼로그 공통 ─────────────────────────────────────────
         internal static string DlgOK                    => Get(nameof(DlgOK));
