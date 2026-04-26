@@ -231,5 +231,24 @@ namespace PolyDoc.App.Properties
         internal static string FormatCharPreviewGroup => Get(nameof(FormatCharPreviewGroup));
         internal static string FormatCharWidthPercent  => Get(nameof(FormatCharWidthPercent));
         internal static string FormatCharLetterSpacing => Get(nameof(FormatCharLetterSpacing));
+
+        internal static string FormatParaTitle           => Get(nameof(FormatParaTitle));
+        internal static string FormatParaAlignGroup      => Get(nameof(FormatParaAlignGroup));
+        internal static string FormatParaAlignLeft       => Get(nameof(FormatParaAlignLeft));
+        internal static string FormatParaAlignCenter     => Get(nameof(FormatParaAlignCenter));
+        internal static string FormatParaAlignRight      => Get(nameof(FormatParaAlignRight));
+        internal static string FormatParaAlignJustify    => Get(nameof(FormatParaAlignJustify));
+        internal static string FormatParaAlignDistributed => Get(nameof(FormatParaAlignDistributed));
+        internal static string FormatParaSpacingGroup    => Get(nameof(FormatParaSpacingGroup));
+        internal static string FormatParaLineHeight      => Get(nameof(FormatParaLineHeight));
+        internal static string FormatParaSpaceBefore     => Get(nameof(FormatParaSpaceBefore));
+        internal static string FormatParaSpaceAfter      => Get(nameof(FormatParaSpaceAfter));
+        internal static string FormatParaIndentGroup     => Get(nameof(FormatParaIndentGroup));
+        internal static string FormatParaIndentFirst     => Get(nameof(FormatParaIndentFirst));
+        internal static string FormatParaIndentLeft      => Get(nameof(FormatParaIndentLeft));
+        internal static string FormatParaIndentRight     => Get(nameof(FormatParaIndentRight));
+        internal static string FormatParaOutline         => Get(nameof(FormatParaOutline));
+        internal static string FormatParaOutlineBody     => Get(nameof(FormatParaOutlineBody));
+        internal static string FormatParaPreviewGroup    => Get(nameof(FormatParaPreviewGroup));
     }
 }

@@ -45,6 +45,7 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- **Fixed** — 글자 서식 적용 후 InlineUIContainer 가 atomic 요소로 잡혀 선택 영역이 시각상 묶여 보이고 자동 해제되지 않던 문제. `CharFormatWindow.OnOk` 에서 적용 직후 `_editor.Selection.Select(end, end)` 으로 캐럿을 끝으로 collapse.
 - **Fixed** — IWPF 옛 / 누락 discriminator 호환. `BlockJsonConverter` 신설 — 읽기 시 `$type` (현행) 외에 `kind` (29c09bd 시기 옛 빌드) 도 인식하고, 둘 다 없으면 `Paragraph` 로 폴백. 사용자가 옛 빌드로 저장한 iwpf 를 신 빌드에서 그대로 열 수 있다. 쓰기는 항상 `$type` 로 출력. xUnit 회귀 테스트 2건 추가 (legacy `kind` / 누락 discriminator).
 - **Fixed** — 테마 변경이 메인 윈도우에 적용되지 않던 문제. `MainWindow` / `AboutWindow` / `FindReplaceWindow` / `SettingsWindow` 의 모든 테마 리소스 참조를 `StaticResource` → `DynamicResource` 로 교체. (StaticResource 는 로드 시 한 번만 해석되어 사전 교체 후에도 옛 값을 유지.)
 - **Fixed** — 설정 창 우측 잘림 — 너비 320 → 380.
@@ -55,6 +56,7 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 ### Added
 - **Added** — 서식 > 글자 서식 다이얼로그 (`CharFormatWindow`). RichTextBox 선택 영역의 글꼴·크기·굵게·기울임꼴·밑줄·취소선·위선·위첨자·아래첨자·글자색·배경색을 읽어 표시하고, OK 시 선택 영역에 일괄 적용. 선택이 없으면 캐럿 위치 서식을 읽어 이후 입력에 반영. 미리보기 TextBlock 실시간 갱신. 선택 혼합값(mixed)은 세 상태 체크박스(불확정)로 표시 — 값을 바꾸지 않으면 해당 속성 변경 없음.
 - **Added** — 글자폭(WidthPercent)·자간(LetterSpacingPx) WPF 시각화. 글자폭 != 100% 인 Run 은 `ScaleTransform` + `InlineUIContainer(TextBlock)`으로 렌더링. 자간은 `Typography.CharacterSpacing`(1/1000 em)으로 적용. `CharFormatWindow` 글꼴 그룹에 글자폭(%) / 자간(px) 입력란 추가 및 미리보기 실시간 반영. `FlowDocumentParser` 가 `InlineUIContainer`·`CharacterSpacing` 값을 파싱해 IWPF 라운드트립 보존.
+- **Added** — 서식 > 문단 서식 다이얼로그 (`ParaFormatWindow`). 선택 영역에 걸친 단락의 정렬(왼/가운데/오른/양쪽/배분), 줄 간격(%), 단락 위/아래 여백(pt), 첫 줄·왼쪽·오른쪽 들여쓰기(mm), 개요 수준(본문/H1~H6) 을 일괄 적용. `Paragraph.Tag`(PolyDoc.Paragraph)의 `Style` 도 함께 갱신해 비-FlowDocument 속성(IndentMm, SpaceBeforePt 등)까지 라운드트립 보존. `FlowDocumentScrollViewer` 기반 실시간 미리보기.
 
 ### Fixed
 - **Fixed** — 다른 이름으로 저장 시 형식을 바꿔도 원본 파일명(확장자 포함)이 그대로 남아 "이미 있습니다" 경고가 뜨던 문제. `SaveFileDialog.FileName` 초기값을 `GetFileName` → `GetFileNameWithoutExtension` 으로 변경 — 선택한 필터의 확장자가 자동 적용된다.

@@ -246,4 +246,24 @@
   <data name="FormatCharPreviewGroup" xml:space="preserve"><value>미리보기</value></data>
   <data name="FormatCharWidthPercent"  xml:space="preserve"><value>글자폭</value></data>
   <data name="FormatCharLetterSpacing" xml:space="preserve"><value>자간</value></data>
+
+  <!-- 문단 서식 다이얼로그 -->
+  <data name="FormatParaTitle"           xml:space="preserve"><value>문단 서식</value></data>
+  <data name="FormatParaAlignGroup"      xml:space="preserve"><value>정렬</value></data>
+  <data name="FormatParaAlignLeft"       xml:space="preserve"><value>왼쪽</value></data>
+  <data name="FormatParaAlignCenter"     xml:space="preserve"><value>가운데</value></data>
+  <data name="FormatParaAlignRight"      xml:space="preserve"><value>오른쪽</value></data>
+  <data name="FormatParaAlignJustify"    xml:space="preserve"><value>양쪽</value></data>
+  <data name="FormatParaAlignDistributed" xml:space="preserve"><value>배분</value></data>
+  <data name="FormatParaSpacingGroup"    xml:space="preserve"><value>간격</value></data>
+  <data name="FormatParaLineHeight"      xml:space="preserve"><value>줄 간격</value></data>
+  <data name="FormatParaSpaceBefore"     xml:space="preserve"><value>단락 위</value></data>
+  <data name="FormatParaSpaceAfter"      xml:space="preserve"><value>단락 아래</value></data>
+  <data name="FormatParaIndentGroup"     xml:space="preserve"><value>들여쓰기</value></data>
+  <data name="FormatParaIndentFirst"     xml:space="preserve"><value>첫 줄</value></data>
+  <data name="FormatParaIndentLeft"      xml:space="preserve"><value>왼쪽</value></data>
+  <data name="FormatParaIndentRight"     xml:space="preserve"><value>오른쪽</value></data>
+  <data name="FormatParaOutline"         xml:space="preserve"><value>개요 수준</value></data>
+  <data name="FormatParaOutlineBody"     xml:space="preserve"><value>본문</value></data>
+  <data name="FormatParaPreviewGroup"    xml:space="preserve"><value>미리보기</value></data>
 </root>

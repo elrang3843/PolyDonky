@@ -242,6 +242,14 @@ public partial class CharFormatWindow : Window
     private void OnOk(object sender, RoutedEventArgs e)
     {
         ApplyToSelection();
+        // 선택 영역이 InlineUIContainer 로 교체되면 WPF 가 atomic 요소를 둘러싼 highlight 를
+        // 그대로 잡고 있어 시각상 "묶여" 보인다. 캐럿을 영역 끝으로 collapse 해서 해제.
+        try
+        {
+            var end = _editor.Selection.End;
+            if (end != null) _editor.Selection.Select(end, end);
+        }
+        catch { /* TextPointer 무효화 시 무시 */ }
         DialogResult = true;
     }
 

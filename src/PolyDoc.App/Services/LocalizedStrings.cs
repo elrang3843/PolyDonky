@@ -154,6 +154,26 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string FormatCharWidthPercent  => SR.FormatCharWidthPercent;
     public string FormatCharLetterSpacing => SR.FormatCharLetterSpacing;
 
+    // ── 문단 서식 다이얼로그 ────────────────────────────────────
+    public string FormatParaTitle           => SR.FormatParaTitle;
+    public string FormatParaAlignGroup      => SR.FormatParaAlignGroup;
+    public string FormatParaAlignLeft       => SR.FormatParaAlignLeft;
+    public string FormatParaAlignCenter     => SR.FormatParaAlignCenter;
+    public string FormatParaAlignRight      => SR.FormatParaAlignRight;
+    public string FormatParaAlignJustify    => SR.FormatParaAlignJustify;
+    public string FormatParaAlignDistributed => SR.FormatParaAlignDistributed;
+    public string FormatParaSpacingGroup    => SR.FormatParaSpacingGroup;
+    public string FormatParaLineHeight      => SR.FormatParaLineHeight;
+    public string FormatParaSpaceBefore     => SR.FormatParaSpaceBefore;
+    public string FormatParaSpaceAfter      => SR.FormatParaSpaceAfter;
+    public string FormatParaIndentGroup     => SR.FormatParaIndentGroup;
+    public string FormatParaIndentFirst     => SR.FormatParaIndentFirst;
+    public string FormatParaIndentLeft      => SR.FormatParaIndentLeft;
+    public string FormatParaIndentRight     => SR.FormatParaIndentRight;
+    public string FormatParaOutline         => SR.FormatParaOutline;
+    public string FormatParaOutlineBody     => SR.FormatParaOutlineBody;
+    public string FormatParaPreviewGroup    => SR.FormatParaPreviewGroup;
+
     // ── 설정 다이얼로그 ─────────────────────────────────────────
     public string SettingsTitle       => SR.SettingsTitle;
     public string SettingsTheme       => SR.SettingsTheme;

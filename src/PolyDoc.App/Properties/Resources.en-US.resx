@@ -246,4 +246,24 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="FormatCharPreviewGroup" xml:space="preserve"><value>Preview</value></data>
   <data name="FormatCharWidthPercent"  xml:space="preserve"><value>Width</value></data>
   <data name="FormatCharLetterSpacing" xml:space="preserve"><value>Spacing</value></data>
+
+  <!-- Paragraph format dialog -->
+  <data name="FormatParaTitle"           xml:space="preserve"><value>Paragraph Formatting</value></data>
+  <data name="FormatParaAlignGroup"      xml:space="preserve"><value>Alignment</value></data>
+  <data name="FormatParaAlignLeft"       xml:space="preserve"><value>Left</value></data>
+  <data name="FormatParaAlignCenter"     xml:space="preserve"><value>Center</value></data>
+  <data name="FormatParaAlignRight"      xml:space="preserve"><value>Right</value></data>
+  <data name="FormatParaAlignJustify"    xml:space="preserve"><value>Justify</value></data>
+  <data name="FormatParaAlignDistributed" xml:space="preserve"><value>Distributed</value></data>
+  <data name="FormatParaSpacingGroup"    xml:space="preserve"><value>Spacing</value></data>
+  <data name="FormatParaLineHeight"      xml:space="preserve"><value>Line height</value></data>
+  <data name="FormatParaSpaceBefore"     xml:space="preserve"><value>Before</value></data>
+  <data name="FormatParaSpaceAfter"      xml:space="preserve"><value>After</value></data>
+  <data name="FormatParaIndentGroup"     xml:space="preserve"><value>Indent</value></data>
+  <data name="FormatParaIndentFirst"     xml:space="preserve"><value>First line</value></data>
+  <data name="FormatParaIndentLeft"      xml:space="preserve"><value>Left</value></data>
+  <data name="FormatParaIndentRight"     xml:space="preserve"><value>Right</value></data>
+  <data name="FormatParaOutline"         xml:space="preserve"><value>Outline level</value></data>
+  <data name="FormatParaOutlineBody"     xml:space="preserve"><value>Body</value></data>
+  <data name="FormatParaPreviewGroup"    xml:space="preserve"><value>Preview</value></data>
 </root>
