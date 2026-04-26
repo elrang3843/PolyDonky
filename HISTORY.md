@@ -45,7 +45,11 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
-- **Added** — 입력 > 글상자 (사각형). 메뉴 클릭 후 종이 위에 마우스 드래그로 위치/크기를 직접 지정해 생성. 모델은 `Section.FloatingObjects` 에 `TextBoxObject`(IWPF 직렬화: `FloatingObjectJsonConverter`, `$type="textbox"`) 로 추가. 본문 흐름과 별도 레이어 (`FloatingCanvas`) 에 렌더링되어 본문 편집과 충돌하지 않음. 4코너 핸들로 리사이즈, 외곽 클릭으로 이동, 내부 클릭으로 본문 편집 (이번 사이클은 평문). 선택 시 점선(파랑) chrome 표시, Esc 로 선택 해제 또는 드래그 모드 취소, Delete 로 삭제. 모양 enum (`TextBoxShape`) 에 Speech/Cloud/Spiky/Lightning 슬롯 예약 — 다음 사이클.
+- **Added** — 글상자 4종 추가 모양 렌더링 (Speech/Cloud/Spiky/Lightning). `TextBoxOverlay` 에 `Path Stretch=Fill` 방식으로 각 모양의 `PathGeometry` 문자열(100×100 정규화 좌표)을 정의 — 말풍선(하단 중앙 삼각 꼬리), 구름풍선(베지어 곡선 다중 돌기), 가시풍선(12각 별형), 번개상자(번개 볼트 실루엣). 테두리 색·두께·배경색을 모양별로 일관 적용.
+- **Added** — 글상자 속성 대화상자 (`TextBoxPropertiesWindow`). 우클릭 컨텍스트 메뉴 → "속성..." 으로 열림. 테두리 색(hex), 테두리 두께(pt), 배경색(hex) 입력란 + 실시간 색상 미리보기. 확인 시 모델 갱신 + `AppearanceChangedCommitted` 이벤트 발행 → Dirty 플래그 갱신.
+- **Added** — 글상자 우클릭 컨텍스트 메뉴. 속성/앞으로 가져오기/뒤로 보내기/삭제 항목. 앞/뒤 이동은 `FloatingCanvas` 자식 순서(ZOrder) 조정.
+- **Added** — 글상자 내부 편집기를 `TextBox` → `RichTextBox` 로 교체. 볼드·이탤릭 등 WPF 기본 서식 단축키(Ctrl+B/I/U) 사용 가능. 단락별 plain-text 는 `FlowDocument.Blocks` 에서 `TextRange` 로 읽어 `TextBoxObject.Content` 에 동기화.
+- **Added** — 입력 > 글상자 (사각형). 메뉴 클릭 후 종이 위에 마우스 드래그로 위치/크기를 직접 지정해 생성. 모델은 `Section.FloatingObjects` 에 `TextBoxObject`(IWPF 직렬화: `FloatingObjectJsonConverter`, `$type="textbox"`) 로 추가. 본문 흐름과 별도 레이어 (`FloatingCanvas`) 에 렌더링되어 본문 편집과 충돌하지 않음. 4코너 핸들로 리사이즈, 외곽 클릭으로 이동, 내부 클릭으로 본문 편집. 선택 시 점선(파랑) chrome 표시, Esc 로 선택 해제 또는 드래그 모드 취소, Delete 로 삭제.
 - **Added** — 툴바 오른쪽에 확대/축소 조절기 추가. "−/+" 버튼(10% 단계), 배율 직접 입력 TextBox(Enter·LostFocus 로 적용), "폭 맞춤"(뷰포트 너비 기준)·"쪽 맞춤"(너비·높이 중 작은 쪽 기준) 버튼. 배율은 `ZoomPercent`(10–500 %) 에 저장되며 `PaperStackPanel.LayoutTransform(ScaleTransform)` 으로 편집창 전체에 적용. 쪽 맞춤은 빈 문서에서도 `PaperBorder.MinHeight`(한 페이지 분량) 기준으로 계산.
 - **Added** — 메뉴 바로 아래에 메인 툴바 추가. 1단계로 파일 그룹(새 파일/불러오기/저장/다른 이름으로 저장/미리보기/인쇄/닫기) 7개 버튼 노출. 아이콘은 `Resources/ToolbarIcons.xaml` 의 `DrawingImage` 리소스를 `App.xaml` 에 머지해 사용하며, SVG 원본 80개는 `Resources/Icons/svg/` 에 임베드(추후 `Svg.Skia`/`SharpVectors` 로 동적 로딩 예정). 미리보기·인쇄는 메뉴와 동일하게 비활성.
 - **Added** — `PageSettings.ShowMarginGuides` (기본 `true`) — 편집창 용지 위에 점선(파랑) 여백 안내선을 표시. 페이지 서식 > 여백 탭에 "여백 안내선 표시" 체크박스 추가.

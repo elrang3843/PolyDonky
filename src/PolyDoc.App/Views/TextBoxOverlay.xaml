@@ -9,29 +9,57 @@
              MouseMove="OnRootMouseMove"
              PreviewMouseLeftButtonUp="OnRootMouseUp"
              KeyDown="OnRootKeyDown">
+
+    <UserControl.ContextMenu>
+        <ContextMenu Opened="OnContextMenuOpened">
+            <MenuItem Header="속성(_P)..." Click="OnContextMenuProperties" />
+            <Separator />
+            <MenuItem Header="앞으로 가져오기(_F)" Click="OnContextMenuBringForward" />
+            <MenuItem Header="뒤로 보내기(_B)" Click="OnContextMenuSendBack" />
+            <Separator />
+            <MenuItem Header="삭제(_D)" Click="OnContextMenuDelete" />
+        </ContextMenu>
+    </UserControl.ContextMenu>
+
     <Grid>
-        <!-- 모양: 사각형 (이번 사이클 한정. Speech/Cloud/Spiky/Lightning 은 다음 사이클) -->
+        <!-- 사각형 모양 (Rectangle) -->
         <Border x:Name="ShapeBorder"
                 Background="White"
                 BorderBrush="Black"
-                BorderThickness="1" />
+                BorderThickness="1"
+                Visibility="Visible" />
 
-        <!-- 내부 편집 영역 -->
-        <TextBox x:Name="InnerEditor"
-                 Background="Transparent"
-                 BorderThickness="0"
-                 AcceptsReturn="True"
-                 AcceptsTab="True"
-                 TextWrapping="Wrap"
-                 VerticalScrollBarVisibility="Auto"
-                 Margin="6"
-                 VerticalContentAlignment="Top"
-                 HorizontalContentAlignment="Left"
-                 SpellCheck.IsEnabled="False"
-                 TextChanged="OnInnerTextChanged" />
+        <!-- 비사각형 모양 (Speech/Cloud/Spiky/Lightning) — Stretch=Fill 로 자동 스케일 -->
+        <Path x:Name="ShapePath"
+              Stretch="Fill"
+              Fill="White"
+              Stroke="Black"
+              StrokeThickness="1"
+              Visibility="Collapsed" />
 
-        <!-- 선택 시에만 표시되는 chrome (점선 외곽 + 4코너 핸들).
-             핸들 캔버스는 IsHitTestVisible 가 자식별로 켜져 마우스를 받을 수 있다. -->
+        <!-- 내부 편집 영역 (RichTextBox 로 서식 있는 텍스트 지원) -->
+        <RichTextBox x:Name="InnerEditor"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     AcceptsReturn="True"
+                     AcceptsTab="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Disabled"
+                     Margin="6"
+                     VerticalAlignment="Stretch"
+                     HorizontalAlignment="Stretch"
+                     SpellCheck.IsEnabled="False"
+                     TextChanged="OnInnerTextChanged"
+                     FontFamily="{DynamicResource UiFont}">
+            <RichTextBox.Resources>
+                <!-- RichTextBox 기본 포커스 테두리 제거 -->
+                <Style TargetType="Paragraph">
+                    <Setter Property="Margin" Value="0" />
+                </Style>
+            </RichTextBox.Resources>
+        </RichTextBox>
+
+        <!-- 선택 시에만 표시되는 chrome (점선 외곽 + 4코너 핸들) -->
         <Rectangle x:Name="SelectionFrame"
                    Stroke="#4A90E2"
                    StrokeThickness="1"

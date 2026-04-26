@@ -489,6 +489,32 @@ public partial class MainWindow : Window
 
         overlay.Selected += (_, _) => SelectOverlay(overlay);
 
+        overlay.BringForwardRequested += (_, _) =>
+        {
+            int idx = FloatingCanvas.Children.IndexOf(overlay);
+            if (idx < FloatingCanvas.Children.Count - 1)
+            {
+                FloatingCanvas.Children.RemoveAt(idx);
+                FloatingCanvas.Children.Insert(idx + 1, overlay);
+                model.ZOrder++;
+                _viewModel?.NotifyFloatingObjectChanged();
+            }
+        };
+
+        overlay.SendBackRequested += (_, _) =>
+        {
+            int idx = FloatingCanvas.Children.IndexOf(overlay);
+            if (idx > 0)
+            {
+                FloatingCanvas.Children.RemoveAt(idx);
+                FloatingCanvas.Children.Insert(idx - 1, overlay);
+                model.ZOrder--;
+                _viewModel?.NotifyFloatingObjectChanged();
+            }
+        };
+
+        overlay.AppearanceChangedCommitted += (_, _) => _viewModel?.NotifyFloatingObjectChanged();
+
         overlay.GeometryChangedCommitted += (_, _) =>
         {
             // Canvas DIP → mm 동기화. NaN 방어 (SetLeft 직후라 정상이지만 안전).

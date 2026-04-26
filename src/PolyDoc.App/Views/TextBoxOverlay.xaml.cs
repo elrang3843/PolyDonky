@@ -1,6 +1,8 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -14,15 +16,39 @@ namespace PolyDoc.App.Views;
 ///
 /// - 부모는 <c>FloatingCanvas</c> (MainWindow). Canvas.Left/Top + Width/Height 로 위치/크기 결정.
 /// - 모델은 mm 단위, 캔버스는 DIP 단위 — <see cref="DipsPerMm"/> 로 변환.
-/// - 외곽(Border) 클릭 = 드래그 이동 시작, 내부 TextBox 클릭 = 텍스트 편집.
-/// - 선택 시 4코너 핸들로 리사이즈 (드래그 중 모델 동기화는 호출자가
-///   <see cref="GeometryChangedCommitted"/> 이벤트 받아서 처리).
-///
-/// 이번 사이클은 사각형만. Shape enum 은 모델에 보존되지만 Rectangle 외에는 동일 렌더.
+/// - 외곽(Border/Path) 클릭 = 드래그 이동, 내부 RichTextBox 클릭 = 서식 편집.
+/// - 선택 시 4코너 핸들로 리사이즈.
+/// - 우클릭 컨텍스트 메뉴: 속성, 앞/뒤 순서, 삭제.
 /// </summary>
 public partial class TextBoxOverlay : UserControl
 {
     public const double DipsPerMm = 96.0 / 25.4;
+
+    // ── PathGeometry 문자열 (100×100 정규화 공간, Stretch=Fill 로 자동 스케일) ──
+
+    // 말풍선: 둥근 사각형 + 하단 중앙 삼각 꼬리
+    private const string PathSpeech =
+        "M 6,0 L 94,0 Q 100,0 100,6 L 100,70 Q 100,76 94,76 " +
+        "L 58,76 L 50,95 L 42,76 L 6,76 Q 0,76 0,70 L 0,6 Q 0,0 6,0 Z";
+
+    // 구름풍선: 여러 개의 둥근 튀어나온 부분으로 구성
+    private const string PathCloud =
+        "M 20,80 " +
+        "C 5,80 0,65 5,55 C 0,45 5,32 18,32 " +
+        "C 14,18 28,10 40,16 C 43,5 57,2 66,10 " +
+        "C 73,3 87,6 88,20 C 100,20 100,38 93,46 " +
+        "C 102,55 98,72 86,76 C 86,88 74,90 64,82 " +
+        "C 58,92 44,93 38,84 C 28,92 18,90 20,80 Z";
+
+    // 가시풍선: 12각 별 모양 (뾰족한 돌기)
+    private const string PathSpiky =
+        "M 50,0 L 58,35 L 94,25 L 68,50 L 93,75 " +
+        "L 58,65 L 50,100 L 42,65 L 7,75 L 32,50 " +
+        "L 6,25 L 42,35 Z";
+
+    // 번개상자: 번개 볼트 실루엣
+    private const string PathLightning =
+        "M 65,0 L 22,52 L 46,52 L 35,100 L 78,48 L 54,48 Z";
 
     public TextBoxObject Model { get; }
 
@@ -35,8 +61,17 @@ public partial class TextBoxOverlay : UserControl
     /// <summary>본문 편집 종료 — 호출자가 모델 동기화 + Dirty 표시.</summary>
     public event EventHandler? ContentChangedCommitted;
 
-    /// <summary>오버레이 삭제 요청 (Delete 키). 호출자가 모델/캔버스에서 제거.</summary>
+    /// <summary>오버레이 삭제 요청 (Delete 키 / 컨텍스트 메뉴). 호출자가 모델/캔버스에서 제거.</summary>
     public event EventHandler? DeleteRequested;
+
+    /// <summary>앞으로 가져오기 요청. 호출자가 Canvas ZOrder 조정.</summary>
+    public event EventHandler? BringForwardRequested;
+
+    /// <summary>뒤로 보내기 요청. 호출자가 Canvas ZOrder 조정.</summary>
+    public event EventHandler? SendBackRequested;
+
+    /// <summary>속성 변경 확정 (속성 대화상자 OK). 호출자가 Dirty 표시.</summary>
+    public event EventHandler? AppearanceChangedCommitted;
 
     private bool _suppressTextChanged;
 
@@ -45,9 +80,9 @@ public partial class TextBoxOverlay : UserControl
         Model = model ?? throw new ArgumentNullException(nameof(model));
         InitializeComponent();
 
-        // 초기 텍스트 로드.
+        // 초기 텍스트 로드 (plain text → FlowDocument)
         _suppressTextChanged = true;
-        InnerEditor.Text = model.GetPlainText();
+        LoadModelTextToEditor();
         _suppressTextChanged = false;
 
         ApplyShapeFromModel();
@@ -67,11 +102,8 @@ public partial class TextBoxOverlay : UserControl
             _isSelected = value;
             SelectionFrame.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
             HandlesCanvas.Visibility  = value ? Visibility.Visible : Visibility.Collapsed;
-            // 선택 해제 시 inner editor 도 포커스 풀어 캐럿이 사라지도록.
             if (!value && InnerEditor.IsKeyboardFocusWithin)
-            {
                 Keyboard.ClearFocus();
-            }
         }
     }
 
@@ -83,20 +115,52 @@ public partial class TextBoxOverlay : UserControl
         Keyboard.Focus(InnerEditor);
     }
 
-    // ── 모양/배경/테두리 적용 ───────────────────────────────────────
+    // ── 모양/배경/테두리 적용 ────────────────────────────────────────
 
     private void ApplyShapeFromModel()
     {
-        // Rectangle 만 렌더 (다른 모양은 다음 사이클).
-        ShapeBorder.BorderThickness = new Thickness(Math.Max(0.5, Model.BorderThicknessPt));
+        if (Model.Shape == TextBoxShape.Rectangle)
+        {
+            ShapeBorder.Visibility = Visibility.Visible;
+            ShapePath.Visibility   = Visibility.Collapsed;
 
-        if (TryParseColor(Model.BorderColor, out var bc))
-            ShapeBorder.BorderBrush = new SolidColorBrush(bc);
-        // null/빈 = 검정 기본 유지
+            ShapeBorder.BorderThickness = new Thickness(Math.Max(0.5, Model.BorderThicknessPt));
+            if (TryParseColor(Model.BorderColor, out var bc))
+                ShapeBorder.BorderBrush = new SolidColorBrush(bc);
+            else
+                ShapeBorder.BorderBrush = Brushes.Black;
 
-        if (TryParseColor(Model.BackgroundColor, out var fillc))
-            ShapeBorder.Background = new SolidColorBrush(fillc);
-        // null/빈 = 흰색 기본 유지
+            if (TryParseColor(Model.BackgroundColor, out var fillc))
+                ShapeBorder.Background = new SolidColorBrush(fillc);
+            else
+                ShapeBorder.Background = Brushes.White;
+        }
+        else
+        {
+            ShapeBorder.Visibility = Visibility.Collapsed;
+            ShapePath.Visibility   = Visibility.Visible;
+
+            var pathData = Model.Shape switch
+            {
+                TextBoxShape.Speech    => PathSpeech,
+                TextBoxShape.Cloud     => PathCloud,
+                TextBoxShape.Spiky     => PathSpiky,
+                TextBoxShape.Lightning => PathLightning,
+                _                      => PathSpeech,
+            };
+            ShapePath.Data = Geometry.Parse(pathData);
+            ShapePath.StrokeThickness = Math.Max(0.5, Model.BorderThicknessPt);
+
+            if (TryParseColor(Model.BorderColor, out var bc))
+                ShapePath.Stroke = new SolidColorBrush(bc);
+            else
+                ShapePath.Stroke = Brushes.Black;
+
+            if (TryParseColor(Model.BackgroundColor, out var fillc))
+                ShapePath.Fill = new SolidColorBrush(fillc);
+            else
+                ShapePath.Fill = Brushes.White;
+        }
     }
 
     // PolyDoc.Core.Color 와 충돌하므로 WpfMedia alias 로 명시.
@@ -110,17 +174,96 @@ public partial class TextBoxOverlay : UserControl
         catch { return false; }
     }
 
-    // ── 내부 편집 ───────────────────────────────────────────────────
+    // ── 모델 ↔ RichTextBox 동기화 ────────────────────────────────────
+
+    private void LoadModelTextToEditor()
+    {
+        // 모델의 plain text → FlowDocument paragraphs
+        var doc = new FlowDocument();
+        foreach (var block in Model.Content)
+        {
+            if (block is PolyDoc.Core.Paragraph cp)
+            {
+                var para = new System.Windows.Documents.Paragraph(new Run(cp.GetPlainText()));
+                doc.Blocks.Add(para);
+            }
+        }
+        if (!doc.Blocks.Any())
+            doc.Blocks.Add(new System.Windows.Documents.Paragraph());
+
+        InnerEditor.Document = doc;
+    }
+
+    private void SyncEditorToModel()
+    {
+        // RichTextBox의 plain text를 모델에 동기화 (단락 유지)
+        var doc = InnerEditor.Document;
+        Model.Content.Clear();
+        foreach (var block in doc.Blocks)
+        {
+            if (block is System.Windows.Documents.Paragraph para)
+            {
+                var range = new TextRange(para.ContentStart, para.ContentEnd);
+                var cp = new PolyDoc.Core.Paragraph();
+                var text = range.Text.TrimEnd('\r', '\n');
+                if (text.Length > 0) cp.AddText(text);
+                Model.Content.Add(cp);
+            }
+        }
+        if (Model.Content.Count == 0)
+            Model.Content.Add(new PolyDoc.Core.Paragraph());
+    }
+
+    // ── 내부 편집 ────────────────────────────────────────────────────
 
     private void OnInnerTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_suppressTextChanged) return;
-        Model.SetPlainText(InnerEditor.Text);
+        SyncEditorToModel();
         Model.Status = NodeStatus.Modified;
         ContentChangedCommitted?.Invoke(this, EventArgs.Empty);
     }
 
-    // ── 드래그 이동 ─────────────────────────────────────────────────
+    // ── 컨텍스트 메뉴 ────────────────────────────────────────────────
+
+    private void OnContextMenuOpened(object sender, RoutedEventArgs e)
+    {
+        // 선택 상태를 컨텍스트 메뉴 열릴 때 확보
+        Selected?.Invoke(this, EventArgs.Empty);
+        IsSelected = true;
+    }
+
+    private void OnContextMenuProperties(object sender, RoutedEventArgs e)
+    {
+        var dlg = new TextBoxPropertiesWindow(
+            Model.BorderColor,
+            Model.BorderThicknessPt,
+            Model.BackgroundColor)
+        {
+            Owner = Window.GetWindow(this),
+        };
+
+        if (dlg.ShowDialog() == true)
+        {
+            Model.BorderColor        = dlg.ResultBorderColor;
+            Model.BorderThicknessPt  = dlg.ResultBorderThicknessPt;
+            Model.BackgroundColor    = dlg.ResultBackgroundColor;
+            Model.Status             = NodeStatus.Modified;
+            ApplyShapeFromModel();
+            AppearanceChangedCommitted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void OnContextMenuBringForward(object sender, RoutedEventArgs e)
+        => BringForwardRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnContextMenuSendBack(object sender, RoutedEventArgs e)
+        => SendBackRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnContextMenuDelete(object sender, RoutedEventArgs e)
+        => DeleteRequested?.Invoke(this, EventArgs.Empty);
+
+    // ── 드래그 이동 ──────────────────────────────────────────────────
 
     private bool _dragging;
     private Point _dragStart;
@@ -130,24 +273,17 @@ public partial class TextBoxOverlay : UserControl
     {
         if (e.ChangedButton != MouseButton.Left) return;
 
-        // 핸들 클릭은 OnHandleMouseDown 이 먼저 처리하고 e.Handled=true 로 막음.
-        // 여기까지 왔다면 핸들 외 클릭 — 본문 영역 또는 외곽 보더.
-
         Selected?.Invoke(this, EventArgs.Empty);
 
-        // 클릭이 inner TextBox 내부에 떨어졌으면 텍스트 편집 모드로 — 드래그 안 함.
         if (IsInsideEditor(e.OriginalSource as DependencyObject))
-        {
-            return; // TextBox 가 자체적으로 focus/caret 처리
-        }
+            return;
 
-        // 외곽 클릭 — 드래그 이동 시작.
         Focus();
         if (Parent is not IInputElement parent) return;
-        _dragStart      = e.GetPosition(parent);
-        _dragOrigLeft   = SafeGetCanvasLeft(this);
-        _dragOrigTop    = SafeGetCanvasTop(this);
-        _dragging       = true;
+        _dragStart    = e.GetPosition(parent);
+        _dragOrigLeft = SafeGetCanvasLeft(this);
+        _dragOrigTop  = SafeGetCanvasTop(this);
+        _dragging     = true;
         CaptureMouse();
         e.Handled = true;
     }
@@ -186,13 +322,13 @@ public partial class TextBoxOverlay : UserControl
     {
         while (source is not null)
         {
-            if (source is TextBox) return true;
+            if (source is RichTextBox) return true;
             source = VisualTreeHelper.GetParent(source);
         }
         return false;
     }
 
-    // ── 4코너 리사이즈 ──────────────────────────────────────────────
+    // ── 4코너 리사이즈 ───────────────────────────────────────────────
 
     private bool _resizing;
     private string _resizeCorner = "";
@@ -214,7 +350,6 @@ public partial class TextBoxOverlay : UserControl
         _resizeOrigTop  = SafeGetCanvasTop(this);
         _resizeOrigW    = ActualWidth;
         _resizeOrigH    = ActualHeight;
-        // 캡처는 UserControl 에 — 핸들 자체에 캡처하면 마우스가 핸들 밖으로 나가는 동안 이벤트가 끊김.
         CaptureMouse();
         e.Handled = true;
     }
@@ -225,7 +360,7 @@ public partial class TextBoxOverlay : UserControl
         var pos = e.GetPosition(parent);
         double dx = pos.X - _resizeStart.X;
         double dy = pos.Y - _resizeStart.Y;
-        const double minSize = 20; // 최소 20 DIP
+        const double minSize = 20;
 
         double newL = _resizeOrigLeft, newT = _resizeOrigTop;
         double newW = _resizeOrigW,    newH = _resizeOrigH;
@@ -260,11 +395,10 @@ public partial class TextBoxOverlay : UserControl
         Height = newH;
     }
 
-    // ── 키 입력 (Delete) ────────────────────────────────────────────
+    // ── 키 입력 ─────────────────────────────────────────────────────
 
     private void OnRootKeyDown(object sender, KeyEventArgs e)
     {
-        // 본문 편집 중에는 Delete 가 텍스트 한 글자 삭제 — 오버레이 삭제 X
         if (e.Key == Key.Delete && !InnerEditor.IsKeyboardFocusWithin)
         {
             DeleteRequested?.Invoke(this, EventArgs.Empty);
@@ -272,17 +406,17 @@ public partial class TextBoxOverlay : UserControl
         }
     }
 
-    // ── 핸들 위치 계산 ──────────────────────────────────────────────
+    // ── 핸들 위치 계산 ───────────────────────────────────────────────
 
     private void UpdateHandlePositions()
     {
         const double half = 4;
         double w = ActualWidth;
         double h = ActualHeight;
-        Canvas.SetLeft(HandleTL, -half);  Canvas.SetTop(HandleTL, -half);
-        Canvas.SetLeft(HandleTR, w - half); Canvas.SetTop(HandleTR, -half);
-        Canvas.SetLeft(HandleBL, -half);  Canvas.SetTop(HandleBL, h - half);
-        Canvas.SetLeft(HandleBR, w - half); Canvas.SetTop(HandleBR, h - half);
+        Canvas.SetLeft(HandleTL, -half);     Canvas.SetTop(HandleTL, -half);
+        Canvas.SetLeft(HandleTR, w - half);  Canvas.SetTop(HandleTR, -half);
+        Canvas.SetLeft(HandleBL, -half);     Canvas.SetTop(HandleBL, h - half);
+        Canvas.SetLeft(HandleBR, w - half);  Canvas.SetTop(HandleBR, h - half);
     }
 
     // ── 유틸 ────────────────────────────────────────────────────────
