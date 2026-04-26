@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -179,12 +178,12 @@ public partial class TextBoxOverlay : UserControl
     private void LoadModelTextToEditor()
     {
         // 모델의 plain text → FlowDocument paragraphs
-        var doc = new FlowDocument();
+        var doc = new System.Windows.Documents.FlowDocument();
         foreach (var block in Model.Content)
         {
             if (block is PolyDoc.Core.Paragraph cp)
             {
-                var para = new System.Windows.Documents.Paragraph(new Run(cp.GetPlainText()));
+                var para = new System.Windows.Documents.Paragraph(new System.Windows.Documents.Run(cp.GetPlainText()));
                 doc.Blocks.Add(para);
             }
         }
@@ -203,7 +202,7 @@ public partial class TextBoxOverlay : UserControl
         {
             if (block is System.Windows.Documents.Paragraph para)
             {
-                var range = new TextRange(para.ContentStart, para.ContentEnd);
+                var range = new System.Windows.Documents.TextRange(para.ContentStart, para.ContentEnd);
                 var cp = new PolyDoc.Core.Paragraph();
                 var text = range.Text.TrimEnd('\r', '\n');
                 if (text.Length > 0) cp.AddText(text);
