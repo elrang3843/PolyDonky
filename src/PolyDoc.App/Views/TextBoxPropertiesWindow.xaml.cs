@@ -8,6 +8,7 @@ namespace PolyDoc.App.Views;
 /// <summary>글상자 테두리·배경·여백·정렬 편집 대화상자.</summary>
 public partial class TextBoxPropertiesWindow : Window
 {
+    public TextBoxShape  ResultShape            { get; private set; }
     public string?       ResultBorderColor      { get; private set; }
     public double        ResultBorderThicknessPt { get; private set; }
     public string?       ResultBackgroundColor  { get; private set; }
@@ -22,6 +23,7 @@ public partial class TextBoxPropertiesWindow : Window
     {
         InitializeComponent();
 
+        CboShape.SelectedIndex  = (int)model.Shape;
         TxtBorderColor.Text     = model.BorderColor ?? "#000000";
         TxtBorderThickness.Text = model.BorderThicknessPt.ToString("0.##");
         TxtBackgroundColor.Text = model.BackgroundColor ?? "";
@@ -97,6 +99,8 @@ public partial class TextBoxPropertiesWindow : Window
 
     private void OnOk(object sender, RoutedEventArgs e)
     {
+        ResultShape = (TextBoxShape)Math.Clamp(CboShape.SelectedIndex, 0, 4);
+
         ResultBorderColor = string.IsNullOrWhiteSpace(TxtBorderColor.Text)
             ? null : TxtBorderColor.Text.Trim();
 

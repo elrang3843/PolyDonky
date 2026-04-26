@@ -12,6 +12,20 @@
 
     <StackPanel Margin="16">
 
+        <!-- ── 모양 ── -->
+        <TextBlock Text="모양" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <ComboBox x:Name="CboShape"
+                  Margin="0,0,0,12"
+                  Background="{DynamicResource SurfaceAlt}"
+                  Foreground="{DynamicResource OnSurface}"
+                  BorderBrush="{DynamicResource Divider}">
+            <ComboBoxItem Content="사각형" />
+            <ComboBoxItem Content="말풍선" />
+            <ComboBoxItem Content="구름풍선" />
+            <ComboBoxItem Content="가시풍선" />
+            <ComboBoxItem Content="번개상자" />
+        </ComboBox>
+
         <!-- ── 테두리 ── -->
         <TextBlock Text="테두리" FontWeight="SemiBold" Margin="0,0,0,6" />
 

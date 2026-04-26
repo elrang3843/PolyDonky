@@ -180,6 +180,17 @@ public partial class TextBoxOverlay : UserControl
         InnerEditor.Document.TextAlignment = ta;
         foreach (var b in InnerEditor.Document.Blocks)
             if (b is System.Windows.Documents.Paragraph wp) wp.TextAlignment = ta;
+
+        // ── 세로 정렬 ─────────────────────────────────────────────────
+        // RichTextBox 는 VerticalContentAlignment 를 지원하지 않으므로
+        // VerticalAlignment(Stretch/Center/Bottom) 로 컨테이너 내 위치를 제어.
+        // 내용이 박스보다 클 때는 세 경우 모두 스크롤 동작.
+        InnerEditor.VerticalAlignment = Model.VAlign switch
+        {
+            TextBoxVAlign.Middle => VerticalAlignment.Center,
+            TextBoxVAlign.Bottom => VerticalAlignment.Bottom,
+            _                    => VerticalAlignment.Stretch,
+        };
     }
 
     // PolyDoc.Core.Color 와 충돌하므로 WpfMedia alias 로 명시.
@@ -257,6 +268,7 @@ public partial class TextBoxOverlay : UserControl
         var dlg = new TextBoxPropertiesWindow(Model) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
+            Model.Shape              = dlg.ResultShape;
             Model.BorderColor        = dlg.ResultBorderColor;
             Model.BorderThicknessPt  = dlg.ResultBorderThicknessPt;
             Model.BackgroundColor    = dlg.ResultBackgroundColor;
