@@ -91,6 +91,12 @@ public partial class MainWindow : Window
 
     private void ApplyFlowDocument(System.Windows.Documents.FlowDocument fd)
     {
+        // FlowDocument 는 RichTextBox 의 자식이지만 자체 시각 트리 루트라
+        // RichTextBox.Foreground 가 Run 까지 전파되지 않는다.
+        // SetResourceReference 로 테마 사전을 동적 바인딩 — 테마 교체 시 자동 갱신.
+        fd.SetResourceReference(System.Windows.Documents.FlowDocument.ForegroundProperty, "OnSurface");
+        fd.SetResourceReference(System.Windows.Documents.FlowDocument.BackgroundProperty, "Surface");
+
         _suppressTextChanged = true;
         try
         {
