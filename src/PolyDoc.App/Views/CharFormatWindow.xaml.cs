@@ -67,7 +67,7 @@ public partial class CharFormatWindow : Window
                 ? null
                 : (bool?)(styleVal is FontStyle fs && fs == FontStyles.Italic);
 
-            // ── 텍스트 장식 (밑줄 / 취소선 / 위선) ──
+            // ── 텍스트 장식 ──
             var decoVal = sel.GetPropertyValue(Inline.TextDecorationsProperty);
             if (decoVal == DependencyProperty.UnsetValue)
             {
@@ -117,20 +117,16 @@ public partial class CharFormatWindow : Window
                 BgSwatch.Background = new SolidColorBrush(bgBrush.Color);
             }
 
-            // ── 글자폭 / 자간: 선택 영역 첫 인라인에서 읽음 ──
+            // ── 글자폭 / 자간: 첫 인라인의 Tag 에서 읽음 ──
             TxtWidthPercent.Text  = "100";
             TxtLetterSpacing.Text = "0";
             var firstInline = GetFirstInlineInSelection();
-            if (firstInline is Run wr)
+            if (firstInline is Run wr && wr.Tag is PolyDoc.Core.Run pr)
             {
-                if (wr.Tag is PolyDoc.Core.Run pr && Math.Abs(pr.Style.WidthPercent - 100) > 0.1)
+                if (Math.Abs(pr.Style.WidthPercent - 100) > 0.1)
                     TxtWidthPercent.Text = pr.Style.WidthPercent.ToString("0.#");
-                var cs = Typography.GetCharacterSpacing(wr);
-                if (cs != 0)
-                {
-                    var dip = wr.FontSize > 0 ? wr.FontSize : FlowDocumentBuilder.PtToDip(11);
-                    TxtLetterSpacing.Text = (cs / 1000.0 * dip).ToString("0.##");
-                }
+                if (Math.Abs(pr.Style.LetterSpacingPx) > 0.01)
+                    TxtLetterSpacing.Text = pr.Style.LetterSpacingPx.ToString("0.##");
             }
             else if (firstInline is InlineUIContainer { Tag: PolyDoc.Core.Run scaledRun })
             {
@@ -200,7 +196,7 @@ public partial class CharFormatWindow : Window
             catch { /* 잘못된 폰트 이름 무시 */ }
         }
 
-        // 크기 (최소 4, 최대 144pt)
+        // 크기
         if (double.TryParse(TxtSize.Text, out var sizePt) && sizePt >= 1)
             PreviewText.FontSize = FlowDocumentBuilder.PtToDip(Math.Clamp(sizePt, 4, 144));
 
@@ -228,18 +224,17 @@ public partial class CharFormatWindow : Window
         else if (string.IsNullOrWhiteSpace(TxtBgColor.Text))
             PreviewText.Background = null;
 
-        // 글자폭: LayoutTransform ScaleTransform
+        // 글자폭: LayoutTransform
         if (double.TryParse(TxtWidthPercent.Text, out var wp) && wp >= 1)
             PreviewText.LayoutTransform = new ScaleTransform(wp / 100.0, 1.0);
         else
             PreviewText.LayoutTransform = Transform.Identity;
 
-        // 자간: Typography.CharacterSpacing
-        if (double.TryParse(TxtLetterSpacing.Text, out var lsPx) && PreviewText.FontSize > 0)
-        {
-            var emUnits = (int)Math.Round(lsPx / PreviewText.FontSize * 1000);
-            Typography.SetCharacterSpacing(PreviewText, emUnits);
-        }
+        // 자간: 미리보기 TextBlock 에 직접 표현할 수단이 없으므로 ToolTip 으로 표시
+        if (double.TryParse(TxtLetterSpacing.Text, out var ls) && Math.Abs(ls) > 0.01)
+            PreviewText.ToolTip = $"자간 {ls:0.##}px";
+        else
+            PreviewText.ToolTip = null;
     }
 
     // ── OK / Cancel ──────────────────────────────────────────────
@@ -302,36 +297,26 @@ public partial class CharFormatWindow : Window
         if (TryParseColor(TxtFgColor.Text, out var fgColor))
             sel.ApplyPropertyValue(TextElement.ForegroundProperty, new SolidColorBrush(fgColor));
 
-        // 배경색 — 빈 문자열이면 배경 제거
+        // 배경색
         if (string.IsNullOrWhiteSpace(TxtBgColor.Text))
             sel.ApplyPropertyValue(TextElement.BackgroundProperty, null);
         else if (TryParseColor(TxtBgColor.Text, out var bgColor))
             sel.ApplyPropertyValue(TextElement.BackgroundProperty, new SolidColorBrush(bgColor));
 
-        // 자간: Typography.CharacterSpacing (1/1000 em 단위로 변환)
-        if (double.TryParse(TxtLetterSpacing.Text, out var lsPx))
-        {
-            var fontSizePt = double.TryParse(TxtSize.Text, out var sp) ? sp : 11.0;
-            var fontSizeDip = FlowDocumentBuilder.PtToDip(fontSizePt);
-            var emUnits = (int)Math.Round(lsPx / fontSizeDip * 1000);
-            sel.ApplyPropertyValue(Typography.CharacterSpacingProperty, emUnits);
-        }
-
-        // 글자폭: 선택 영역의 Run/InlineUIContainer 를 직접 재구성
-        if (double.TryParse(TxtWidthPercent.Text, out var widthPct) && widthPct >= 1)
-        {
-            ApplyWidthPercent(widthPct);
-        }
+        // 글자폭 / 자간: InlineUIContainer 재구성
+        double widthPct = double.TryParse(TxtWidthPercent.Text, out var wp) && wp >= 1 ? wp : 100;
+        double lsPx     = double.TryParse(TxtLetterSpacing.Text, out var ls) ? ls : 0;
+        ApplyTypographicProps(widthPct, lsPx);
     }
 
-    // ── 글자폭 적용 (Run ↔ InlineUIContainer 재구성) ─────────────
+    // ── 글자폭·자간 적용 (Run ↔ InlineUIContainer 재구성) ────────
 
-    private void ApplyWidthPercent(double widthPercent)
+    private void ApplyTypographicProps(double widthPercent, double letterSpacingPx)
     {
-        bool scaled = Math.Abs(widthPercent - 100) > 0.5;
+        bool needsContainer = Math.Abs(widthPercent - 100) > 0.5 || Math.Abs(letterSpacingPx) > 0.01;
         var sel = _editor.Selection;
 
-        // TextPointer 로 선택 영역 내 모든 Inline 을 수집
+        // 선택 영역 내 모든 인라인 수집
         var inlines = new System.Collections.Generic.List<Inline>();
         var ptr = sel.Start;
         while (ptr != null && ptr.CompareTo(sel.End) < 0)
@@ -347,52 +332,24 @@ public partial class CharFormatWindow : Window
 
         foreach (var inline in inlines)
         {
-            if (scaled)
+            // PolyDoc Run 추출 (Tag 우선, 없으면 WPF 속성에서 역산)
+            PolyDoc.Core.Run polyRun = inline switch
             {
-                if (inline is Run run)
-                {
-                    // PolyDoc Run 을 Tag 에서 가져오거나 WPF 속성에서 추출
-                    var polyRun = run.Tag as PolyDoc.Core.Run ?? ExtractPolyRun(run);
-                    polyRun.Style.WidthPercent = widthPercent;
-                    ReplaceInline(run, FlowDocumentBuilder.BuildScaledContainer(polyRun));
-                }
-                else if (inline is InlineUIContainer iuc && iuc.Child is TextBlock tb)
-                {
-                    // 기존 컨테이너의 ScaleTransform 만 갱신
-                    tb.LayoutTransform = new ScaleTransform(widthPercent / 100.0, 1.0);
-                    if (iuc.Tag is PolyDoc.Core.Run pr) pr.Style.WidthPercent = widthPercent;
-                }
-            }
-            else
-            {
-                // 100%: InlineUIContainer → 일반 Run 으로 복원
-                if (inline is InlineUIContainer iuc)
-                {
-                    PolyDoc.Core.Run? polyRun = null;
-                    Inline newInline;
-                    if (iuc.Tag is PolyDoc.Core.Run pr)
-                    {
-                        pr.Style.WidthPercent = 100;
-                        polyRun = pr;
-                        newInline = FlowDocumentBuilder.BuildInline(pr);
-                    }
-                    else if (iuc.Child is TextBlock tb)
-                    {
-                        var extracted = ExtractPolyRunFromTextBlock(tb);
-                        extracted.Style.WidthPercent = 100;
-                        newInline = FlowDocumentBuilder.BuildInline(extracted);
-                    }
-                    else
-                    {
-                        newInline = new Run(string.Empty);
-                    }
-                    ReplaceInline(iuc, newInline);
-                }
-                else if (inline is Run r && r.Tag is PolyDoc.Core.Run prun)
-                {
-                    prun.Style.WidthPercent = 100;
-                }
-            }
+                Run r                     => r.Tag as PolyDoc.Core.Run ?? ExtractPolyRun(r),
+                InlineUIContainer { Tag: PolyDoc.Core.Run pr } => pr,
+                InlineUIContainer iuc     => ExtractPolyRunFromContainer(iuc),
+                _                         => null!,
+            };
+            if (polyRun is null) continue;
+
+            polyRun.Style.WidthPercent     = widthPercent;
+            polyRun.Style.LetterSpacingPx  = letterSpacingPx;
+
+            var newInline = needsContainer
+                ? (Inline)FlowDocumentBuilder.BuildScaledContainer(polyRun)
+                : FlowDocumentBuilder.BuildInline(polyRun);
+
+            ReplaceInline(inline, newInline);
         }
     }
 
@@ -414,11 +371,11 @@ public partial class CharFormatWindow : Window
     {
         var s = new PolyDoc.Core.RunStyle
         {
-            FontFamily    = wpfRun.FontFamily?.Source,
-            FontSizePt    = FlowDocumentBuilder.DipToPt(wpfRun.FontSize),
-            Bold          = wpfRun.FontWeight.ToOpenTypeWeight() >= FontWeights.Bold.ToOpenTypeWeight(),
-            Italic        = wpfRun.FontStyle == FontStyles.Italic,
-            WidthPercent  = 100,
+            FontFamily   = wpfRun.FontFamily?.Source,
+            FontSizePt   = FlowDocumentBuilder.DipToPt(wpfRun.FontSize),
+            Bold         = wpfRun.FontWeight.ToOpenTypeWeight() >= FontWeights.Bold.ToOpenTypeWeight(),
+            Italic       = wpfRun.FontStyle == FontStyles.Italic,
+            WidthPercent = 100,
         };
         if (wpfRun.TextDecorations is { Count: > 0 } decos)
         {
@@ -433,39 +390,53 @@ public partial class CharFormatWindow : Window
             s.Foreground = new PolyDoc.Core.Color(fg.Color.R, fg.Color.G, fg.Color.B, fg.Color.A);
         if (wpfRun.Background is SolidColorBrush bg)
             s.Background = new PolyDoc.Core.Color(bg.Color.R, bg.Color.G, bg.Color.B, bg.Color.A);
-        var cs = Typography.GetCharacterSpacing(wpfRun);
-        if (cs != 0) s.LetterSpacingPx = cs / 1000.0 * wpfRun.FontSize;
 
         return new PolyDoc.Core.Run { Text = wpfRun.Text, Style = s };
     }
 
-    private static PolyDoc.Core.Run ExtractPolyRunFromTextBlock(TextBlock tb)
+    private static PolyDoc.Core.Run ExtractPolyRunFromContainer(InlineUIContainer iuc)
     {
-        var s = new PolyDoc.Core.RunStyle
+        if (iuc.Tag is PolyDoc.Core.Run pr) return pr;
+
+        var s = new PolyDoc.Core.RunStyle { WidthPercent = 100 };
+        string text = string.Empty;
+
+        if (iuc.Child is StackPanel panel)
         {
-            FontFamily   = tb.FontFamily?.Source,
-            FontSizePt   = FlowDocumentBuilder.DipToPt(tb.FontSize),
-            Bold         = tb.FontWeight.ToOpenTypeWeight() >= FontWeights.Bold.ToOpenTypeWeight(),
-            Italic       = tb.FontStyle == FontStyles.Italic,
-            WidthPercent = tb.LayoutTransform is ScaleTransform st ? st.ScaleX * 100.0 : 100,
-        };
-        if (tb.TextDecorations is { Count: > 0 } decos)
-        {
-            foreach (var d in decos)
+            var sb = new System.Text.StringBuilder();
+            TextBlock? first = null;
+            foreach (var child in panel.Children)
             {
-                if (d.Location == TextDecorationLocation.Underline) s.Underline = true;
-                else if (d.Location == TextDecorationLocation.Strikethrough) s.Strikethrough = true;
-                else if (d.Location == TextDecorationLocation.OverLine) s.Overline = true;
+                if (child is TextBlock ctb) { sb.Append(ctb.Text); first ??= ctb; }
+            }
+            text = sb.ToString();
+            if (first != null)
+            {
+                s.LetterSpacingPx = first.Margin.Right;
+                if (first.LayoutTransform is ScaleTransform st) s.WidthPercent = st.ScaleX * 100.0;
+                CopyTextBlockStyle(first, s);
             }
         }
+        else if (iuc.Child is TextBlock tb)
+        {
+            text = tb.Text;
+            if (tb.LayoutTransform is ScaleTransform st) s.WidthPercent = st.ScaleX * 100.0;
+            CopyTextBlockStyle(tb, s);
+        }
+
+        return new PolyDoc.Core.Run { Text = text, Style = s };
+    }
+
+    private static void CopyTextBlockStyle(TextBlock tb, PolyDoc.Core.RunStyle s)
+    {
+        s.FontFamily = tb.FontFamily?.Source;
+        s.FontSizePt = FlowDocumentBuilder.DipToPt(tb.FontSize);
+        s.Bold       = tb.FontWeight.ToOpenTypeWeight() >= FontWeights.Bold.ToOpenTypeWeight();
+        s.Italic     = tb.FontStyle == FontStyles.Italic;
         if (tb.Foreground is SolidColorBrush fg)
             s.Foreground = new PolyDoc.Core.Color(fg.Color.R, fg.Color.G, fg.Color.B, fg.Color.A);
         if (tb.Background is SolidColorBrush bg)
             s.Background = new PolyDoc.Core.Color(bg.Color.R, bg.Color.G, bg.Color.B, bg.Color.A);
-        var cs = Typography.GetCharacterSpacing(tb);
-        if (cs != 0) s.LetterSpacingPx = cs / 1000.0 * tb.FontSize;
-
-        return new PolyDoc.Core.Run { Text = tb.Text, Style = s };
     }
 
     // ── 선택 영역 첫 인라인 조회 ────────────────────────────────

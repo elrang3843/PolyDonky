@@ -268,14 +268,12 @@ public static class FlowDocumentBuilder
         }
     }
 
-    /// <summary>PolyDoc Run 을 WPF Inline 으로 변환. 글자폭이 100% 가 아니면 InlineUIContainer 반환.</summary>
+    /// <summary>글자폭 != 100% 또는 자간 != 0 이면 InlineUIContainer, 그 외에는 Run 반환.</summary>
     public static Wpf.Inline BuildInline(Run run)
     {
         var s = run.Style;
-        if (Math.Abs(s.WidthPercent - 100) > 0.5)
-        {
+        if (NeedsContainer(s))
             return BuildScaledContainer(run);
-        }
 
         var wpfRun = new Wpf.Run(run.Text);
 
@@ -305,35 +303,71 @@ public static class FlowDocumentBuilder
         else if (s.Subscript)
             wpfRun.BaselineAlignment = BaselineAlignment.Subscript;
 
-        // 자간: Typography.CharacterSpacing (1/1000 em 단위)
-        if (Math.Abs(s.LetterSpacingPx) > 0.01)
-        {
-            var dip = PtToDip(s.FontSizePt > 0 ? s.FontSizePt : 11);
-            var emUnits = (int)Math.Round(s.LetterSpacingPx / dip * 1000);
-            if (emUnits != 0)
-                System.Windows.Documents.Typography.SetCharacterSpacing(wpfRun, emUnits);
-        }
-
-        // 원본 Run 도 Tag 에 보관 (Parser 머지용).
         wpfRun.Tag = run;
         return wpfRun;
     }
 
-    /// <summary>글자폭 != 100% 인 Run 을 ScaleTransform TextBlock + InlineUIContainer 로 시각화.</summary>
+    private static bool NeedsContainer(RunStyle s)
+        => Math.Abs(s.WidthPercent - 100) > 0.5 || Math.Abs(s.LetterSpacingPx) > 0.01;
+
+    /// <summary>글자폭·자간을 InlineUIContainer(TextBlock 또는 StackPanel)으로 시각화.</summary>
     public static Wpf.InlineUIContainer BuildScaledContainer(Run run)
     {
         var s = run.Style;
         var fontSize = PtToDip(s.FontSizePt > 0 ? s.FontSizePt : 11);
 
+        System.Windows.UIElement child;
+        if (Math.Abs(s.LetterSpacingPx) > 0.01)
+        {
+            // 자간이 있으면 문자별 TextBlock 을 가로 StackPanel 로 배치
+            var panel = new System.Windows.Controls.StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+            };
+            foreach (char c in run.Text.Length > 0 ? run.Text : " ")
+            {
+                panel.Children.Add(BuildCharTextBlock(c.ToString(), s, fontSize));
+            }
+            child = panel;
+        }
+        else
+        {
+            child = BuildBodyTextBlock(run.Text, s, fontSize);
+        }
+
+        return new Wpf.InlineUIContainer(child)
+        {
+            BaselineAlignment = BaselineAlignment.Baseline,
+            Tag = run,
+        };
+    }
+
+    private static System.Windows.Controls.TextBlock BuildBodyTextBlock(string text, RunStyle s, double fontSize)
+    {
+        var tb = new System.Windows.Controls.TextBlock { Text = text, FontSize = fontSize };
+        if (Math.Abs(s.WidthPercent - 100) > 0.5)
+            tb.LayoutTransform = new WpfMedia.ScaleTransform(s.WidthPercent / 100.0, 1.0);
+        ApplyStyleToTextBlock(tb, s);
+        return tb;
+    }
+
+    private static System.Windows.Controls.TextBlock BuildCharTextBlock(string ch, RunStyle s, double fontSize)
+    {
         var tb = new System.Windows.Controls.TextBlock
         {
-            Text = run.Text,
+            Text = ch,
             FontSize = fontSize,
-            LayoutTransform = new WpfMedia.ScaleTransform(s.WidthPercent / 100.0, 1.0),
+            Margin = new Thickness(0, 0, s.LetterSpacingPx, 0),
         };
+        if (Math.Abs(s.WidthPercent - 100) > 0.5)
+            tb.LayoutTransform = new WpfMedia.ScaleTransform(s.WidthPercent / 100.0, 1.0);
+        ApplyStyleToTextBlock(tb, s);
+        return tb;
+    }
 
-        if (!string.IsNullOrEmpty(s.FontFamily))
-            tb.FontFamily = new WpfMedia.FontFamily(s.FontFamily);
+    private static void ApplyStyleToTextBlock(System.Windows.Controls.TextBlock tb, RunStyle s)
+    {
+        if (!string.IsNullOrEmpty(s.FontFamily)) tb.FontFamily = new WpfMedia.FontFamily(s.FontFamily);
         if (s.Bold) tb.FontWeight = FontWeights.Bold;
         if (s.Italic) tb.FontStyle = FontStyles.Italic;
 
@@ -347,18 +381,5 @@ public static class FlowDocumentBuilder
             tb.Foreground = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(fg.A, fg.R, fg.G, fg.B));
         if (s.Background is { } bg)
             tb.Background = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(bg.A, bg.R, bg.G, bg.B));
-
-        if (Math.Abs(s.LetterSpacingPx) > 0.01)
-        {
-            var emUnits = (int)Math.Round(s.LetterSpacingPx / fontSize * 1000);
-            if (emUnits != 0) System.Windows.Documents.Typography.SetCharacterSpacing(tb, emUnits);
-        }
-
-        tb.Tag = run;
-        return new Wpf.InlineUIContainer(tb)
-        {
-            BaselineAlignment = BaselineAlignment.Baseline,
-            Tag = run,
-        };
     }
 }
