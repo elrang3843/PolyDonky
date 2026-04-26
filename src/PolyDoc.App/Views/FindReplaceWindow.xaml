@@ -1,0 +1,78 @@
+<Window x:Class="PolyDoc.App.Views.FindReplaceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="찾기 / 바꾸기"
+        Width="440" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        FontFamily="{StaticResource UiFont}"
+        Background="{StaticResource Surface}"
+        Foreground="{StaticResource OnSurface}">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="8" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="12" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="12" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="80" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 찾기 -->
+        <Label Grid.Row="0" Grid.Column="0" Content="찾기(_F):"
+               Target="{Binding ElementName=FindBox}"
+               VerticalAlignment="Center" />
+        <TextBox x:Name="FindBox"
+                 Grid.Row="0" Grid.Column="1"
+                 Padding="4,3"
+                 KeyDown="OnKeyDown" />
+
+        <!-- 바꾸기 -->
+        <Label Grid.Row="2" Grid.Column="0" Content="바꾸기(_R):"
+               Target="{Binding ElementName=ReplaceBox}"
+               VerticalAlignment="Center" />
+        <TextBox x:Name="ReplaceBox"
+                 Grid.Row="2" Grid.Column="1"
+                 Padding="4,3"
+                 KeyDown="OnKeyDown" />
+
+        <!-- 옵션 -->
+        <CheckBox x:Name="CaseSensitiveBox"
+                  Grid.Row="4" Grid.Column="1"
+                  Content="대소문자 구분(_C)"
+                  VerticalAlignment="Center" />
+
+        <!-- 상태 메시지 -->
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2"
+                   Foreground="{StaticResource OnSurfaceMuted}"
+                   FontSize="11"
+                   Margin="0,0,0,0"
+                   TextWrapping="Wrap" />
+
+        <!-- 버튼 -->
+        <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="8">
+            <Button Content="다음 찾기(_N)"
+                    Padding="12,5"
+                    IsDefault="True"
+                    Click="OnFindNext" />
+            <Button Content="모두 바꾸기(_A)"
+                    Padding="12,5"
+                    Click="OnReplaceAll" />
+            <Button Content="닫기"
+                    Padding="12,5"
+                    IsCancel="True"
+                    Click="OnClose" />
+        </StackPanel>
+    </Grid>
+</Window>

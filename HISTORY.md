@@ -45,6 +45,11 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **Added** — B 폴리싱 4종.
+  - **드래그&드롭**: `MainWindow` 에 `AllowDrop=True` + `Drop`/`DragOver` 핸들러. 파일을 창에 끌어놓으면 `OpenFile(path)` 호출로 즉시 열기. `MainViewModel.OpenFile` 공개 메서드 추가, 내부 `OpenPath` 로 중복 제거.
+  - **찾기/바꾸기**: `FindReplaceWindow` 모달리스 다이얼로그 (Ctrl+F / Ctrl+H). `FlowDocumentSearch` 헬퍼 — WPF `TextPointer` 기반 순방향 검색(`FindNext`) + `ReplaceAll`. 대소문자 구분 옵션, wrap-around, 상태 메시지 표시.
+  - **i18n .resx 한/영 분리**: `Properties/Resources.resx` (한국어 기본) + `Properties/Resources.en-US.resx` (영어 병행). 메뉴 항목 / 다이얼로그 제목·버튼 / 상태 메시지 / 에러 메시지 전부 리소스 키로 분리. `MainViewModel` 의 모든 하드코딩 문자열을 `SR.Xxx` 참조로 교체.
+  - **테마 다중화**: `Themes/Dark.xaml` (어두운 배경·밝은 텍스트) + `Themes/Soft.xaml` (따뜻한 아이보리 색조, 학생·장년 대상). `ThemeService` — `Application.Resources.MergedDictionaries[0]` 교체로 런타임 즉시 전환. `SettingsWindow` (도구→설정) — 라디오 버튼으로 Light/Dark/Soft 실시간 미리보기.
 - **Added** — HWPX OpaqueBlock 양방향. Reader: `<hp:rect>` / `<hp:line>` / `<hp:ellipse>` / `<hp:arc>` / `<hp:polygon>` / `<hp:textBox>` / `<hp:connector>` 를 `OpaqueBlock(Format="hwpx", Kind, Xml=원본XML)` 으로 보존 (pic/tbl 처리 방식 동일). Writer: `OpaqueBlock.Format=="hwpx"` 이면 Xml 을 파싱해 `<hp:p><hp:run>` 안에 원형 재출력; 다른 포맷(docx 등)은 placeholder 단락으로 fallback. xUnit 테스트 2건 추가 (hwpx OpaqueBlock 보존 / 비hwpx fallback). 13 → 15건.
 - **Fixed** — HWPX 자체 라운드트립 시 글자 크기·색상·폰트 패밀리 손실 수정. `HwpxWriter` 를 동적 charPr/paraPr/font registry 방식으로 재설계 — 문서에서 사용된 모든 `RunStyle`(폰트 크기·색·패밀리·굵게/기울임 등)을 고유 charPr 항목으로 header.xml 에 기록하고, `ParagraphStyle`(정렬·줄간격·여백)도 고유 paraPr 항목으로 기록. 기존 6개 고정 charPr ID 방식을 대체. xUnit 라운드트립 4건 추가 (FontSize / ForegroundColor / FontFamily / 복합 서식). 9 → 13건.
 - **Added** — HWPX 표 / 이미지 양방향. Reader: `<hp:tbl>` → Table (rows·cells·cellSpan·cellSz, 중첩 표), `<hp:pic>` 의 `<hp:img binaryItemIDRef>` → ImageBlock (BinData/{stem}.* 파일 매칭, 바이트 추출, curSz 의 hwpunit → mm). 표 안 paragraph 는 본문 평탄화에서 제외하고 셀 본문에 모음. Writer: Table → `<hp:tbl>` (sz/outMargin/inMargin 최소 valid 정의 + tr/tc/cellAddr/cellSpan/cellSz/cellMargin), ImageBlock → `<hp:pic><hp:img>` 와 BinData/{imageN}.{ext} 추가. SHA-256 dedupe 로 같은 이미지는 한 번만 저장. xUnit 라운드트립 6 → 9건 (Table 구조, 이미지 바이트 동일성, BinData dedupe 추가). 자체 라운드트립 + 스모크 전부 그린 유지.

@@ -10,7 +10,10 @@
         MinWidth="640" MinHeight="480"
         FontFamily="{StaticResource UiFont}"
         Background="{StaticResource Surface}"
-        Foreground="{StaticResource OnSurface}">
+        Foreground="{StaticResource OnSurface}"
+        AllowDrop="True"
+        Drop="OnDrop"
+        DragOver="OnDragOver">
 
     <Window.DataContext>
         <vm:MainViewModel />
@@ -21,6 +24,8 @@
         <KeyBinding Modifiers="Control" Key="O" Command="{Binding OpenCommand}" />
         <KeyBinding Modifiers="Control" Key="S" Command="{Binding SaveCommand}" />
         <KeyBinding Modifiers="Control+Shift" Key="S" Command="{Binding SaveAsCommand}" />
+        <KeyBinding Modifiers="Control" Key="F" Command="{Binding FindReplaceCommand}" />
+        <KeyBinding Modifiers="Control" Key="H" Command="{Binding FindReplaceCommand}" />
     </Window.InputBindings>
 
     <DockPanel LastChildFill="True">
@@ -47,8 +52,7 @@
                 <MenuItem Header="붙여넣기(_P)" Command="ApplicationCommands.Paste" />
                 <MenuItem Header="지우기(_D)" Command="ApplicationCommands.Delete" />
                 <Separator />
-                <MenuItem Header="찾기(_F)..." IsEnabled="False" InputGestureText="Ctrl+F" />
-                <MenuItem Header="바꾸기(_R)..." IsEnabled="False" InputGestureText="Ctrl+H" />
+                <MenuItem Header="찾기/바꾸기(_F)..." Command="{Binding FindReplaceCommand}" InputGestureText="Ctrl+F" />
                 <Separator />
                 <MenuItem Header="문서 정보(_I)..." IsEnabled="False" />
             </MenuItem>
@@ -72,7 +76,7 @@
             </MenuItem>
 
             <MenuItem Header="도구(_T)">
-                <MenuItem Header="설정(_O)..." IsEnabled="False" />
+                <MenuItem Header="설정(_O)..." Command="{Binding SettingsCommand}" />
                 <MenuItem Header="사전(_D)" IsEnabled="False" />
                 <MenuItem Header="맞춤법 검사(_S)" IsEnabled="False" />
                 <MenuItem Header="사인 만들기(_M)..." IsEnabled="False" />

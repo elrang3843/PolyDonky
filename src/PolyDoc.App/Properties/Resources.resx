@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+
+  <!-- 메뉴: 파일 -->
+  <data name="MenuFile" xml:space="preserve"><value>파일(_F)</value></data>
+  <data name="MenuFileNew" xml:space="preserve"><value>새 파일(_N)</value></data>
+  <data name="MenuFileOpen" xml:space="preserve"><value>불러오기(_O)...</value></data>
+  <data name="MenuFileSave" xml:space="preserve"><value>저장(_S)</value></data>
+  <data name="MenuFileSaveAs" xml:space="preserve"><value>다른 이름으로 저장(_A)...</value></data>
+  <data name="MenuFilePrint" xml:space="preserve"><value>인쇄(_P)...</value></data>
+  <data name="MenuFileExit" xml:space="preserve"><value>종료(_X)</value></data>
+
+  <!-- 메뉴: 편집 -->
+  <data name="MenuEdit" xml:space="preserve"><value>편집(_E)</value></data>
+  <data name="MenuEditCopy" xml:space="preserve"><value>복사(_C)</value></data>
+  <data name="MenuEditCut" xml:space="preserve"><value>잘라내기(_T)</value></data>
+  <data name="MenuEditPaste" xml:space="preserve"><value>붙여넣기(_P)</value></data>
+  <data name="MenuEditDelete" xml:space="preserve"><value>지우기(_D)</value></data>
+  <data name="MenuEditFindReplace" xml:space="preserve"><value>찾기/바꾸기(_F)...</value></data>
+  <data name="MenuEditDocInfo" xml:space="preserve"><value>문서 정보(_I)...</value></data>
+
+  <!-- 메뉴: 입력 -->
+  <data name="MenuInsert" xml:space="preserve"><value>입력(_I)</value></data>
+  <data name="MenuInsertTextBox" xml:space="preserve"><value>글상자(_T)</value></data>
+  <data name="MenuInsertTable" xml:space="preserve"><value>표(_B)</value></data>
+  <data name="MenuInsertGraph" xml:space="preserve"><value>그래프(_G)</value></data>
+  <data name="MenuInsertSpecialChar" xml:space="preserve"><value>특수문자(_S)</value></data>
+  <data name="MenuInsertEquation" xml:space="preserve"><value>수식(_E)</value></data>
+  <data name="MenuInsertEmoji" xml:space="preserve"><value>이모지(_M)</value></data>
+  <data name="MenuInsertShape" xml:space="preserve"><value>도형(_H)</value></data>
+  <data name="MenuInsertImage" xml:space="preserve"><value>그림(_P)</value></data>
+  <data name="MenuInsertSign" xml:space="preserve"><value>사인(_N)</value></data>
+
+  <!-- 메뉴: 서식 -->
+  <data name="MenuFormat" xml:space="preserve"><value>서식(_R)</value></data>
+  <data name="MenuFormatChar" xml:space="preserve"><value>글자 서식(_F)</value></data>
+  <data name="MenuFormatPara" xml:space="preserve"><value>문단 서식(_P)</value></data>
+  <data name="MenuFormatPage" xml:space="preserve"><value>페이지 서식(_G)</value></data>
+
+  <!-- 메뉴: 도구 -->
+  <data name="MenuTools" xml:space="preserve"><value>도구(_T)</value></data>
+  <data name="MenuToolsSettings" xml:space="preserve"><value>설정(_O)...</value></data>
+  <data name="MenuToolsDict" xml:space="preserve"><value>사전(_D)</value></data>
+  <data name="MenuToolsSpell" xml:space="preserve"><value>맞춤법 검사(_S)</value></data>
+  <data name="MenuToolsSignMaker" xml:space="preserve"><value>사인 만들기(_M)...</value></data>
+
+  <!-- 메뉴: 도움말 -->
+  <data name="MenuHelp" xml:space="preserve"><value>도움말(_H)</value></data>
+  <data name="MenuHelpManual" xml:space="preserve"><value>사용 방법(_M)</value></data>
+  <data name="MenuHelpLicense" xml:space="preserve"><value>라이선스(_L)</value></data>
+  <data name="MenuHelpAbout" xml:space="preserve"><value>PolyDoc 정보(_A)</value></data>
+
+  <!-- 찾기/바꾸기 다이얼로그 -->
+  <data name="FindReplaceTitle" xml:space="preserve"><value>찾기 / 바꾸기</value></data>
+  <data name="FindReplaceFind" xml:space="preserve"><value>찾기(_F):</value></data>
+  <data name="FindReplaceReplace" xml:space="preserve"><value>바꾸기(_R):</value></data>
+  <data name="FindReplaceCaseSensitive" xml:space="preserve"><value>대소문자 구분(_C)</value></data>
+  <data name="FindReplaceFindNext" xml:space="preserve"><value>다음 찾기(_N)</value></data>
+  <data name="FindReplaceReplaceAll" xml:space="preserve"><value>모두 바꾸기(_A)</value></data>
+  <data name="FindReplaceClose" xml:space="preserve"><value>닫기</value></data>
+  <data name="FindReplaceEnterQuery" xml:space="preserve"><value>찾을 내용을 입력하세요.</value></data>
+  <data name="FindReplaceNotFound" xml:space="preserve"><value>찾을 수 없습니다.</value></data>
+  <data name="FindReplaceWrapped" xml:space="preserve"><value>문서 처음부터 다시 검색했습니다.</value></data>
+  <data name="FindReplaceReplaced" xml:space="preserve"><value>{0}개 바꿨습니다.</value></data>
+
+  <!-- 상태 표시줄 -->
+  <data name="StatusReady" xml:space="preserve"><value>준비됨</value></data>
+  <data name="StatusNewDoc" xml:space="preserve"><value>새 문서가 생성되었습니다.</value></data>
+  <data name="StatusOpenDone" xml:space="preserve"><value>열기 완료 — {0}</value></data>
+  <data name="StatusSaveDone" xml:space="preserve"><value>저장 완료 — {0}</value></data>
+  <data name="StatusInsert" xml:space="preserve"><value>삽입</value></data>
+  <data name="StatusOverwrite" xml:space="preserve"><value>수정</value></data>
+
+  <!-- 다이얼로그 공통 -->
+  <data name="DlgOK" xml:space="preserve"><value>확인</value></data>
+  <data name="DlgCancel" xml:space="preserve"><value>취소</value></data>
+  <data name="DlgYes" xml:space="preserve"><value>예</value></data>
+  <data name="DlgNo" xml:space="preserve"><value>아니오</value></data>
+  <data name="DlgUnsavedPrompt" xml:space="preserve"><value>저장하지 않은 변경 사항이 있습니다. 저장하시겠습니까?</value></data>
+  <data name="DlgUnsupportedFormat" xml:space="preserve"><value>이 형식 (.{0}) 은 외부 컨버터 모듈이 필요합니다 (Phase D 이후 지원).
+
+현재 PolyDoc 이 직접 열 수 있는 형식: IWPF, DOCX, HWPX, Markdown, TXT.</value></data>
+  <data name="DlgUnsupportedFormatTitle" xml:space="preserve"><value>지원되지 않는 형식</value></data>
+  <data name="DlgUnknownFormat" xml:space="preserve"><value>알 수 없는 파일 형식입니다.</value></data>
+  <data name="DlgOpenFail" xml:space="preserve"><value>열기 실패</value></data>
+  <data name="DlgSaveConverterNeeded" xml:space="preserve"><value>선택하신 형식 (.{0}) 은 외부 컨버터를 통한 변환이 필요합니다 (Phase D 이후 지원).
+
+지금은 PolyDoc 이 직접 처리하는 형식(IWPF, DOCX, Markdown, TXT)으로 저장해 주세요.</value></data>
+  <data name="DlgSaveConverterTitle" xml:space="preserve"><value>외부 컨버터 필요</value></data>
+  <data name="DlgSaveFail" xml:space="preserve"><value>이 형식은 PolyDoc 이 직접 저장할 수 없습니다.</value></data>
+  <data name="DlgSaveFailTitle" xml:space="preserve"><value>저장 실패</value></data>
+  <data name="DlgOpenError" xml:space="preserve"><value>문서를 여는 중 오류가 발생했습니다.</value></data>
+  <data name="DlgSaveError" xml:space="preserve"><value>문서를 저장하는 중 오류가 발생했습니다.</value></data>
+  <data name="DlgNewDocTitle" xml:space="preserve"><value>(새 문서)</value></data>
+  <data name="DlgFileOpenTitle" xml:space="preserve"><value>문서 열기</value></data>
+  <data name="DlgFileSaveTitle" xml:space="preserve"><value>다른 이름으로 저장</value></data>
+  <data name="DlgDefaultFileName" xml:space="preserve"><value>문서.iwpf</value></data>
+
+  <!-- About -->
+  <data name="AboutTitle" xml:space="preserve"><value>PolyDoc 정보</value></data>
+  <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
+  <data name="AboutCompany" xml:space="preserve"><value>핸텍 (HANDTECH)</value></data>
+  <data name="AboutAuthor" xml:space="preserve"><value>노진문 (Noh JinMoon)</value></data>
+  <data name="AboutLicense" xml:space="preserve"><value>Apache License 2.0</value></data>
+  <data name="AboutDesc" xml:space="preserve"><value>HWP, HWPX, DOCX, Markdown, TXT 문서를 읽고 IWPF 포맷으로 저장하는 워드프로세서.</value></data>
+
+  <!-- 설정 다이얼로그 -->
+  <data name="SettingsTitle" xml:space="preserve"><value>설정</value></data>
+  <data name="SettingsTheme" xml:space="preserve"><value>테마:</value></data>
+  <data name="SettingsThemeLight" xml:space="preserve"><value>라이트 (기본)</value></data>
+  <data name="SettingsThemeDark" xml:space="preserve"><value>다크</value></data>
+  <data name="SettingsThemeSoft" xml:space="preserve"><value>소프트</value></data>
+  <data name="SettingsApply" xml:space="preserve"><value>적용</value></data>
+</root>

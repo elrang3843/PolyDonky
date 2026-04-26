@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using PolyDoc.App.Services;
 using PolyDoc.App.Views;
 using PolyDoc.Core;
+using SR = PolyDoc.App.Properties.Resources;
 using Wpf = System.Windows.Documents;
 
 namespace PolyDoc.App.ViewModels;
@@ -22,13 +23,13 @@ public partial class MainViewModel : ObservableObject
     private Wpf.FlowDocument _flowDocument = new();
 
     [ObservableProperty]
-    private string _documentTitle = "(새 문서)";
+    private string _documentTitle = SR.DlgNewDocTitle;
 
     [ObservableProperty]
     private string _currentFilePath = string.Empty;
 
     [ObservableProperty]
-    private string _statusMessage = "준비됨";
+    private string _statusMessage = SR.StatusReady;
 
     [ObservableProperty]
     private bool _hasUnsavedChanges;
@@ -39,7 +40,7 @@ public partial class MainViewModel : ObservableObject
     private string _memoryUsage = "0.0 MB";
 
     [ObservableProperty]
-    private string _insertModeText = "삽입";
+    private string _insertModeText = SR.StatusInsert;
 
     [ObservableProperty]
     private string _capsLockText = "    ";
@@ -53,7 +54,7 @@ public partial class MainViewModel : ObservableObject
     public void ToggleInsertMode()
     {
         IsOverwriteMode = !IsOverwriteMode;
-        InsertModeText = IsOverwriteMode ? "수정" : "삽입";
+        InsertModeText = IsOverwriteMode ? SR.StatusOverwrite : SR.StatusInsert;
     }
 
     public void RefreshSystemKeys()
@@ -66,8 +67,6 @@ public partial class MainViewModel : ObservableObject
 
     public void RefreshMemoryUsage()
     {
-        // "이 문서가 차지하는 데이터 크기" — 앱 전체 메모리가 아니라 본문 콘텐츠 기준.
-        // 본문이 비어 있거나 문서를 새로 만든 직후에는 자연스럽게 0 가까이 떨어진다.
         var bytes = DocumentMeasurement.EstimateBytes(_document);
         MemoryUsage = DocumentMeasurement.FormatBytes(bytes);
     }
@@ -83,7 +82,6 @@ public partial class MainViewModel : ObservableObject
     partial void OnHasUnsavedChangesChanged(bool value)
         => OnPropertyChanged(nameof(WindowTitle));
 
-    /// <summary>RichTextBox 에서 본문 변경이 일어나면 code-behind 가 호출. Open/Save 등 프로그램적 변경 중에는 _suppressDirty 로 무시.</summary>
     public void MarkDirty()
     {
         if (_suppressDirty) return;
@@ -99,7 +97,7 @@ public partial class MainViewModel : ObservableObject
         FlowDocument = FlowDocumentBuilder.Build(document);
         _suppressDirty = false;
         CurrentFilePath = path ?? string.Empty;
-        DocumentTitle = string.IsNullOrEmpty(path) ? "(새 문서)" : Path.GetFileName(path);
+        DocumentTitle = string.IsNullOrEmpty(path) ? SR.DlgNewDocTitle : Path.GetFileName(path);
         HasUnsavedChanges = false;
     }
 
@@ -108,7 +106,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (!ConfirmDiscardChanges()) return;
         LoadDocument(PolyDocument.Empty(), null);
-        StatusMessage = "새 문서가 생성되었습니다.";
+        StatusMessage = SR.StatusNewDoc;
     }
 
     [RelayCommand]
@@ -119,19 +117,28 @@ public partial class MainViewModel : ObservableObject
         var dlg = new OpenFileDialog
         {
             Filter = KnownFormats.OpenFilter,
-            Title = "문서 열기",
+            Title = SR.DlgFileOpenTitle,
         };
         if (dlg.ShowDialog() != true) return;
 
-        var path = dlg.FileName;
+        OpenPath(dlg.FileName);
+    }
 
+    /// <summary>드래그&드롭 등 외부에서 파일 경로를 직접 전달받아 열기.</summary>
+    public void OpenFile(string path)
+    {
+        if (!ConfirmDiscardChanges()) return;
+        OpenPath(path);
+    }
+
+    private void OpenPath(string path)
+    {
         if (KnownFormats.RequiresExternalConverter(path) && !KnownFormats.IsSupportedNatively(path))
         {
             var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
             MessageBox.Show(
-                $"이 형식 (.{ext}) 은 외부 컨버터 모듈이 필요합니다 (Phase D 이후 지원).\n\n" +
-                "현재 PolyDoc 이 직접 열 수 있는 형식: IWPF, DOCX, Markdown, TXT.",
-                "지원되지 않는 형식",
+                string.Format(SR.DlgUnsupportedFormat, ext),
+                SR.DlgUnsupportedFormatTitle,
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -139,7 +146,7 @@ public partial class MainViewModel : ObservableObject
         var reader = KnownFormats.PickReader(path);
         if (reader is null)
         {
-            MessageBox.Show("알 수 없는 파일 형식입니다.", "열기 실패",
+            MessageBox.Show(SR.DlgUnknownFormat, SR.DlgOpenFail,
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -153,14 +160,13 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ReportError("문서를 여는 중 오류가 발생했습니다.", ex);
+            ReportError(SR.DlgOpenError, ex);
         }
     }
 
     private static string BuildOpenStatusMessage(string path, PolyDocument doc)
     {
         var name = Path.GetFileName(path);
-        // HWPX reader 가 metadata.Custom 에 진단을 박았으면 본문 인식이 0건일 때 사용자에게 경고 + 자가 진단 데이터 노출.
         if (doc.Metadata.Custom.TryGetValue("hwpx.paragraphCount", out var pCount)
             && int.TryParse(pCount, out var pc) && pc == 0)
         {
@@ -171,16 +177,14 @@ public partial class MainViewModel : ObservableObject
             doc.Metadata.Custom.TryGetValue("hwpx.firstSectionTags", out var tags);
             doc.Metadata.Custom.TryGetValue("hwpx.xmlEntries", out var xmlEntries);
             doc.Metadata.Custom.TryGetValue("hwpx.parseErrors", out var parseErrors);
-            // 한 줄로 합쳐 ToolTip 으로도 풀 텍스트 공유 가능.
             var errPart = string.IsNullOrEmpty(parseErrors) ? "" : $" | XML 오류: {parseErrors}";
             return $"열기 완료 — {name} | 본문 0건, 섹션 {sCount ?? "?"}개 (entry-hit={hit ?? "?"}) | path={firstPath ?? "?"} | root=<{rootName ?? "?"}> | 자식: {tags ?? "(없음)"} | xml: {xmlEntries ?? "(없음)"}{errPart}";
         }
-        // 본문은 보였지만 일부 packaging XML 이 깨졌을 수 있으니 그것도 함께 알린다 (silent degradation).
         if (doc.Metadata.Custom.TryGetValue("hwpx.parseErrors", out var perr) && !string.IsNullOrEmpty(perr))
         {
             return $"열기 완료 — {name} (일부 XML 파싱 경고: {perr})";
         }
-        return $"열기 완료 — {name}";
+        return string.Format(SR.StatusOpenDone, name);
     }
 
     [RelayCommand]
@@ -200,9 +204,9 @@ public partial class MainViewModel : ObservableObject
         var dlg = new SaveFileDialog
         {
             Filter = KnownFormats.SaveFilter,
-            Title = "다른 이름으로 저장",
+            Title = SR.DlgFileSaveTitle,
             FileName = string.IsNullOrEmpty(CurrentFilePath)
-                ? "문서.iwpf"
+                ? SR.DlgDefaultFileName
                 : Path.GetFileName(CurrentFilePath),
         };
         if (dlg.ShowDialog() != true) return;
@@ -211,9 +215,8 @@ public partial class MainViewModel : ObservableObject
         {
             var ext = Path.GetExtension(dlg.FileName).TrimStart('.').ToLowerInvariant();
             MessageBox.Show(
-                $"선택하신 형식 (.{ext}) 은 외부 컨버터를 통한 변환이 필요합니다 (Phase D 이후 지원).\n\n" +
-                "지금은 PolyDoc 이 직접 처리하는 형식(IWPF, DOCX, Markdown, TXT)으로 저장해 주세요.",
-                "외부 컨버터 필요",
+                string.Format(SR.DlgSaveConverterNeeded, ext),
+                SR.DlgSaveConverterTitle,
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -232,6 +235,22 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void FindReplace()
+    {
+        FindReplaceRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    public event EventHandler? FindReplaceRequested;
+
+    [RelayCommand]
+    private void Settings()
+    {
+        SettingsRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    public event EventHandler? SettingsRequested;
+
+    [RelayCommand]
     private void Exit()
     {
         if (!ConfirmDiscardChanges()) return;
@@ -243,15 +262,13 @@ public partial class MainViewModel : ObservableObject
         var writer = KnownFormats.PickWriter(path);
         if (writer is null)
         {
-            MessageBox.Show("이 형식은 PolyDoc 이 직접 저장할 수 없습니다.",
-                "저장 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(SR.DlgSaveFail, SR.DlgSaveFailTitle,
+                MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         try
         {
-            // FlowDocument 를 다시 PolyDocument 로 회수. 원본을 머지 베이스로 넘겨
-            // 메타·페이지 설정·한글 조판 속성을 비파괴 보존한다.
             var rebuilt = FlowDocumentParser.Parse(FlowDocument, _document);
 
             using var fs = File.Create(path);
@@ -261,11 +278,11 @@ public partial class MainViewModel : ObservableObject
             CurrentFilePath = path;
             DocumentTitle = Path.GetFileName(path);
             HasUnsavedChanges = false;
-            StatusMessage = $"저장 완료 — {Path.GetFileName(path)}";
+            StatusMessage = string.Format(SR.StatusSaveDone, Path.GetFileName(path));
         }
         catch (Exception ex)
         {
-            ReportError("문서를 저장하는 중 오류가 발생했습니다.", ex);
+            ReportError(SR.DlgSaveError, ex);
         }
     }
 
@@ -273,7 +290,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (!HasUnsavedChanges) return true;
         var result = MessageBox.Show(
-            "저장하지 않은 변경 사항이 있습니다. 저장하시겠습니까?",
+            SR.DlgUnsavedPrompt,
             "PolyDoc",
             MessageBoxButton.YesNoCancel,
             MessageBoxImage.Question);

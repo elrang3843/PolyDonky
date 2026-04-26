@@ -32,6 +32,8 @@ public partial class MainWindow : Window
             _viewModel = vm;
             ApplyFlowDocument(vm.FlowDocument);
             vm.PropertyChanged += OnViewModelPropertyChanged;
+            vm.FindReplaceRequested += OnFindReplaceRequested;
+            vm.SettingsRequested   += OnSettingsRequested;
             vm.RefreshSystemKeys();
             vm.RefreshMemoryUsage();
         }
@@ -104,5 +106,33 @@ public partial class MainWindow : Window
     {
         if (_suppressTextChanged) return;
         _viewModel?.MarkDirty();
+    }
+
+    private void OnFindReplaceRequested(object? sender, EventArgs e)
+    {
+        var dlg = new FindReplaceWindow(BodyEditor) { Owner = this };
+        dlg.Show();
+    }
+
+    private void OnSettingsRequested(object? sender, EventArgs e)
+    {
+        var dlg = new SettingsWindow { Owner = this };
+        dlg.ShowDialog();
+    }
+
+    private void OnDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnDrop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
+        {
+            _viewModel?.OpenFile(files[0]);
+        }
     }
 }

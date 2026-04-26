@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+
+  <!-- Menu: File -->
+  <data name="MenuFile" xml:space="preserve"><value>_File</value></data>
+  <data name="MenuFileNew" xml:space="preserve"><value>_New</value></data>
+  <data name="MenuFileOpen" xml:space="preserve"><value>_Open...</value></data>
+  <data name="MenuFileSave" xml:space="preserve"><value>_Save</value></data>
+  <data name="MenuFileSaveAs" xml:space="preserve"><value>Save _As...</value></data>
+  <data name="MenuFilePrint" xml:space="preserve"><value>_Print...</value></data>
+  <data name="MenuFileExit" xml:space="preserve"><value>E_xit</value></data>
+
+  <!-- Menu: Edit -->
+  <data name="MenuEdit" xml:space="preserve"><value>_Edit</value></data>
+  <data name="MenuEditCopy" xml:space="preserve"><value>_Copy</value></data>
+  <data name="MenuEditCut" xml:space="preserve"><value>Cu_t</value></data>
+  <data name="MenuEditPaste" xml:space="preserve"><value>_Paste</value></data>
+  <data name="MenuEditDelete" xml:space="preserve"><value>_Delete</value></data>
+  <data name="MenuEditFindReplace" xml:space="preserve"><value>_Find / Replace...</value></data>
+  <data name="MenuEditDocInfo" xml:space="preserve"><value>Document _Info...</value></data>
+
+  <!-- Menu: Insert -->
+  <data name="MenuInsert" xml:space="preserve"><value>_Insert</value></data>
+  <data name="MenuInsertTextBox" xml:space="preserve"><value>_Text Box</value></data>
+  <data name="MenuInsertTable" xml:space="preserve"><value>Ta_ble</value></data>
+  <data name="MenuInsertGraph" xml:space="preserve"><value>_Graph</value></data>
+  <data name="MenuInsertSpecialChar" xml:space="preserve"><value>_Special Character</value></data>
+  <data name="MenuInsertEquation" xml:space="preserve"><value>_Equation</value></data>
+  <data name="MenuInsertEmoji" xml:space="preserve"><value>E_moji</value></data>
+  <data name="MenuInsertShape" xml:space="preserve"><value>S_hape</value></data>
+  <data name="MenuInsertImage" xml:space="preserve"><value>_Image</value></data>
+  <data name="MenuInsertSign" xml:space="preserve"><value>Sig_n</value></data>
+
+  <!-- Menu: Format -->
+  <data name="MenuFormat" xml:space="preserve"><value>F_ormat</value></data>
+  <data name="MenuFormatChar" xml:space="preserve"><value>_Character...</value></data>
+  <data name="MenuFormatPara" xml:space="preserve"><value>_Paragraph...</value></data>
+  <data name="MenuFormatPage" xml:space="preserve"><value>Pa_ge...</value></data>
+
+  <!-- Menu: Tools -->
+  <data name="MenuTools" xml:space="preserve"><value>_Tools</value></data>
+  <data name="MenuToolsSettings" xml:space="preserve"><value>_Settings...</value></data>
+  <data name="MenuToolsDict" xml:space="preserve"><value>_Dictionary</value></data>
+  <data name="MenuToolsSpell" xml:space="preserve"><value>_Spell Check</value></data>
+  <data name="MenuToolsSignMaker" xml:space="preserve"><value>Sign _Maker...</value></data>
+
+  <!-- Menu: Help -->
+  <data name="MenuHelp" xml:space="preserve"><value>_Help</value></data>
+  <data name="MenuHelpManual" xml:space="preserve"><value>_Manual</value></data>
+  <data name="MenuHelpLicense" xml:space="preserve"><value>_License</value></data>
+  <data name="MenuHelpAbout" xml:space="preserve"><value>_About PolyDoc</value></data>
+
+  <!-- Find/Replace Dialog -->
+  <data name="FindReplaceTitle" xml:space="preserve"><value>Find / Replace</value></data>
+  <data name="FindReplaceFind" xml:space="preserve"><value>_Find:</value></data>
+  <data name="FindReplaceReplace" xml:space="preserve"><value>_Replace:</value></data>
+  <data name="FindReplaceCaseSensitive" xml:space="preserve"><value>_Case sensitive</value></data>
+  <data name="FindReplaceFindNext" xml:space="preserve"><value>Find _Next</value></data>
+  <data name="FindReplaceReplaceAll" xml:space="preserve"><value>Replace _All</value></data>
+  <data name="FindReplaceClose" xml:space="preserve"><value>Close</value></data>
+  <data name="FindReplaceEnterQuery" xml:space="preserve"><value>Please enter search text.</value></data>
+  <data name="FindReplaceNotFound" xml:space="preserve"><value>Not found.</value></data>
+  <data name="FindReplaceWrapped" xml:space="preserve"><value>Wrapped to beginning of document.</value></data>
+  <data name="FindReplaceReplaced" xml:space="preserve"><value>Replaced {0} occurrence(s).</value></data>
+
+  <!-- Status bar -->
+  <data name="StatusReady" xml:space="preserve"><value>Ready</value></data>
+  <data name="StatusNewDoc" xml:space="preserve"><value>New document created.</value></data>
+  <data name="StatusOpenDone" xml:space="preserve"><value>Opened — {0}</value></data>
+  <data name="StatusSaveDone" xml:space="preserve"><value>Saved — {0}</value></data>
+  <data name="StatusInsert" xml:space="preserve"><value>INS</value></data>
+  <data name="StatusOverwrite" xml:space="preserve"><value>OVR</value></data>
+
+  <!-- Common dialogs -->
+  <data name="DlgOK" xml:space="preserve"><value>OK</value></data>
+  <data name="DlgCancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="DlgYes" xml:space="preserve"><value>Yes</value></data>
+  <data name="DlgNo" xml:space="preserve"><value>No</value></data>
+  <data name="DlgUnsavedPrompt" xml:space="preserve"><value>You have unsaved changes. Do you want to save?</value></data>
+  <data name="DlgUnsupportedFormat" xml:space="preserve"><value>This format (.{0}) requires an external converter (available in Phase D).
+
+Formats natively supported: IWPF, DOCX, HWPX, Markdown, TXT.</value></data>
+  <data name="DlgUnsupportedFormatTitle" xml:space="preserve"><value>Unsupported Format</value></data>
+  <data name="DlgUnknownFormat" xml:space="preserve"><value>Unknown file format.</value></data>
+  <data name="DlgOpenFail" xml:space="preserve"><value>Open Failed</value></data>
+  <data name="DlgSaveConverterNeeded" xml:space="preserve"><value>The selected format (.{0}) requires an external converter (available in Phase D).
+
+Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
+  <data name="DlgSaveConverterTitle" xml:space="preserve"><value>External Converter Required</value></data>
+  <data name="DlgSaveFail" xml:space="preserve"><value>PolyDoc cannot save in this format directly.</value></data>
+  <data name="DlgSaveFailTitle" xml:space="preserve"><value>Save Failed</value></data>
+  <data name="DlgOpenError" xml:space="preserve"><value>An error occurred while opening the document.</value></data>
+  <data name="DlgSaveError" xml:space="preserve"><value>An error occurred while saving the document.</value></data>
+  <data name="DlgNewDocTitle" xml:space="preserve"><value>(New Document)</value></data>
+  <data name="DlgFileOpenTitle" xml:space="preserve"><value>Open Document</value></data>
+  <data name="DlgFileSaveTitle" xml:space="preserve"><value>Save As</value></data>
+  <data name="DlgDefaultFileName" xml:space="preserve"><value>document.iwpf</value></data>
+
+  <!-- About -->
+  <data name="AboutTitle" xml:space="preserve"><value>About PolyDoc</value></data>
+  <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
+  <data name="AboutCompany" xml:space="preserve"><value>HANDTECH</value></data>
+  <data name="AboutAuthor" xml:space="preserve"><value>Noh JinMoon</value></data>
+  <data name="AboutLicense" xml:space="preserve"><value>Apache License 2.0</value></data>
+  <data name="AboutDesc" xml:space="preserve"><value>A word processor that reads HWP, HWPX, DOCX, Markdown and TXT documents and saves them in IWPF format.</value></data>
+
+  <!-- Settings -->
+  <data name="SettingsTitle" xml:space="preserve"><value>Settings</value></data>
+  <data name="SettingsTheme" xml:space="preserve"><value>Theme:</value></data>
+  <data name="SettingsThemeLight" xml:space="preserve"><value>Light (Default)</value></data>
+  <data name="SettingsThemeDark" xml:space="preserve"><value>Dark</value></data>
+  <data name="SettingsThemeSoft" xml:space="preserve"><value>Soft</value></data>
+  <data name="SettingsApply" xml:space="preserve"><value>Apply</value></data>
+</root>

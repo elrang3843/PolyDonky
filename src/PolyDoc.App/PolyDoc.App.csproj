@@ -30,4 +30,13 @@
     </Resource>
   </ItemGroup>
 
+  <!-- i18n: Properties/Resources.resx + en-US satellite -->
+  <ItemGroup>
+    <EmbeddedResource Include="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Properties\Resources.en-US.resx" />
+  </ItemGroup>
+
 </Project>
