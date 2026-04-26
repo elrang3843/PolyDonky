@@ -45,6 +45,16 @@ public static class FlowDocumentBuilder
             PagePadding = new Thickness(0),
         };
 
+        // 글자 방향 — 가로쓰기는 FlowDirection 으로 처리.
+        // 세로쓰기는 WPF FlowDocument 가 native 지원하지 않아 다음 사이클에서 커스텀 레이아웃으로 도입 예정.
+        // 일단 모델은 보존되며, 가로쓰기 RTL/LTR 만 시각적으로 적용된다.
+        if (page.TextOrientation == TextOrientation.Horizontal)
+        {
+            fd.FlowDirection = page.TextProgression == TextProgression.Leftward
+                ? System.Windows.FlowDirection.RightToLeft
+                : System.Windows.FlowDirection.LeftToRight;
+        }
+
         // 용지 배경색
         if (!string.IsNullOrEmpty(page.PaperColor))
         {

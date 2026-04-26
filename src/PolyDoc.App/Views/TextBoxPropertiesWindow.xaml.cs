@@ -25,6 +25,8 @@ public partial class TextBoxPropertiesWindow : Window
     public int                    ResultSpikeCount         { get; private set; }
     public int                    ResultLightningBendCount { get; private set; }
     public double                 ResultRotationAngleDeg   { get; private set; }
+    public TextOrientation        ResultTextOrientation    { get; private set; }
+    public TextProgression        ResultTextProgression    { get; private set; }
 
     public TextBoxPropertiesWindow(TextBoxObject model)
     {
@@ -49,6 +51,9 @@ public partial class TextBoxPropertiesWindow : Window
         TxtSpikeCount.Text     = model.SpikeCount.ToString();
         TxtLightningBends.Text = model.LightningBendCount.ToString();
         TxtRotationAngle.Text  = model.RotationAngleDeg.ToString("0.##");
+
+        CboTextOrientation.SelectedIndex = (int)model.TextOrientation;
+        CboTextProgression.SelectedIndex = (int)model.TextProgression;
 
         UpdateShapePanelVisibility();
 
@@ -182,6 +187,8 @@ public partial class TextBoxPropertiesWindow : Window
         ResultSpikeCount         = ParseInt(TxtSpikeCount.Text,     12, 5, 24);
         ResultLightningBendCount = ParseInt(TxtLightningBends.Text,  2, 1,  5);
         ResultRotationAngleDeg   = ParseAngle(TxtRotationAngle.Text);
+        ResultTextOrientation    = (TextOrientation)System.Math.Clamp(CboTextOrientation.SelectedIndex, 0, 1);
+        ResultTextProgression    = (TextProgression)System.Math.Clamp(CboTextProgression.SelectedIndex, 0, 1);
 
         DialogResult = true;
     }

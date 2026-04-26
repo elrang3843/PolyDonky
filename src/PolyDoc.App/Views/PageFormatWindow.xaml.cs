@@ -125,6 +125,10 @@ public partial class PageFormatWindow : Window
             RbPortrait.IsChecked  = _settings.Orientation == PageOrientation.Portrait;
             RbLandscape.IsChecked = _settings.Orientation == PageOrientation.Landscape;
 
+            // 글자 방향
+            CboTextOrientation.SelectedIndex = (int)_settings.TextOrientation;
+            CboTextProgression.SelectedIndex = (int)_settings.TextProgression;
+
             // 용지 색
             bool isDefault = string.IsNullOrEmpty(_settings.PaperColor);
             ChkDefaultColor.IsChecked = isDefault;
@@ -195,6 +199,14 @@ public partial class PageFormatWindow : Window
             ? PageOrientation.Landscape
             : PageOrientation.Portrait;
         UpdatePreview();
+    }
+
+    private void OnTextDirectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress) return;
+        if (CboTextOrientation is null || CboTextProgression is null) return;
+        _settings.TextOrientation = (TextOrientation)System.Math.Clamp(CboTextOrientation.SelectedIndex, 0, 1);
+        _settings.TextProgression = (TextProgression)System.Math.Clamp(CboTextProgression.SelectedIndex, 0, 1);
     }
 
     // ── 용지 색상 ────────────────────────────────────────────────
@@ -488,5 +500,7 @@ public partial class PageFormatWindow : Window
         DifferentFirstPage = s.DifferentFirstPage,
         DifferentOddEven   = s.DifferentOddEven,
         ShowMarginGuides   = s.ShowMarginGuides,
+        TextOrientation    = s.TextOrientation,
+        TextProgression    = s.TextProgression,
     };
 }

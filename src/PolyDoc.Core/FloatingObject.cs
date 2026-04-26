@@ -70,6 +70,12 @@ public sealed class TextBoxObject : FloatingObject
     /// <summary>박스 전체 회전각 (도, 시계방향). 모양과 본문 모두 함께 회전. -360~360.</summary>
     public double RotationAngleDeg { get; set; }
 
+    // ── 글자 방향 (페이지와 동일 의미; 기본값은 가로/오른쪽으로) ──────────────
+    /// <summary>가로/세로 쓰기. 세로쓰기는 모델만 저장 — 렌더링은 다음 사이클.</summary>
+    public TextOrientation TextOrientation { get; set; } = TextOrientation.Horizontal;
+    /// <summary>본문/행 진행 방향.</summary>
+    public TextProgression TextProgression { get; set; } = TextProgression.Rightward;
+
     // ── 모양별 형태 파라미터 ─────────────────────────────────────────────────
     /// <summary>말풍선(Speech) 꼬리가 뻗는 방향.</summary>
     public SpeechPointerDirection SpeechDirection { get; set; } = SpeechPointerDirection.Bottom;

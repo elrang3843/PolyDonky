@@ -339,6 +339,19 @@ public partial class TextBoxOverlay : UserControl
             _                    => VerticalAlignment.Stretch,
         };
 
+        // ── 글자 방향 (가로 LTR/RTL 만 시각 적용; 세로는 모델 보존만, 다음 사이클에서 렌더링) ──
+        if (Model.TextOrientation == TextOrientation.Horizontal)
+        {
+            InnerEditor.FlowDirection = Model.TextProgression == TextProgression.Leftward
+                ? FlowDirection.RightToLeft
+                : FlowDirection.LeftToRight;
+        }
+        else
+        {
+            // 세로쓰기: 일단 LTR 로 두고 모델만 저장. (커스텀 세로 레이아웃 도입 시 교체)
+            InnerEditor.FlowDirection = FlowDirection.LeftToRight;
+        }
+
         // ── 회전 ───────────────────────────────────────────────────────
         // 박스 중심을 피벗으로 모양·본문 모두 함께 회전. 0이면 transform 제거.
         // 드래그/리사이즈 좌표는 부모 캔버스 좌표계 기반이라 회전과 무관하게 동작 —
@@ -445,6 +458,8 @@ public partial class TextBoxOverlay : UserControl
             Model.SpikeCount         = dlg.ResultSpikeCount;
             Model.LightningBendCount = dlg.ResultLightningBendCount;
             Model.RotationAngleDeg   = dlg.ResultRotationAngleDeg;
+            Model.TextOrientation    = dlg.ResultTextOrientation;
+            Model.TextProgression    = dlg.ResultTextProgression;
             Model.Status             = NodeStatus.Modified;
             ApplyShapeFromModel();
             AppearanceChangedCommitted?.Invoke(this, EventArgs.Empty);

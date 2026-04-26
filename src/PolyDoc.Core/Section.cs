@@ -61,6 +61,21 @@ public enum PaperSizeKind
 
 public enum PageOrientation { Portrait, Landscape }
 
+// ── 글자 진행 방향 ────────────────────────────────────────────────────────
+/// <summary>본문 글자 방향 (가로/세로 쓰기).</summary>
+public enum TextOrientation
+{
+    Horizontal = 0,  // 가로쓰기
+    Vertical   = 1,  // 세로쓰기
+}
+
+/// <summary>본문/행 진행 방향. 가로쓰기에서는 글자 방향, 세로쓰기에서는 행(=세로 단) 진행 방향.</summary>
+public enum TextProgression
+{
+    Rightward = 0,  // 오른쪽으로 (가로: 왼→오 / 세로: 행이 왼→오)
+    Leftward  = 1,  // 왼쪽으로   (가로: 오→왼 / 세로: 행이 오→왼, 전통 CJK)
+}
+
 // ── 머리말·꼬리말 정의 (이번 사이클은 모델만; UI는 다음 사이클) ──────────
 public sealed class HeaderFooterContent
 {
@@ -81,6 +96,12 @@ public sealed class PageSettings
     public double HeightMm { get; set; } = 297;
 
     public PageOrientation Orientation { get; set; } = PageOrientation.Portrait;
+
+    // ── 글자 방향 ─────────────────────────────────────────────────────────────
+    /// <summary>가로/세로 쓰기. 세로쓰기는 모델만 저장 — 렌더링은 다음 사이클에서 지원.</summary>
+    public TextOrientation TextOrientation { get; set; } = TextOrientation.Horizontal;
+    /// <summary>본문/행 진행 방향. 가로쓰기에서는 글자 방향, 세로쓰기에서는 행 진행 방향.</summary>
+    public TextProgression TextProgression { get; set; } = TextProgression.Rightward;
 
     // 용지 색상 (null / "" = 흰색 기본)
     public string? PaperColor { get; set; }
