@@ -6,9 +6,9 @@
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
-        FontFamily="{StaticResource UiFont}"
-        Background="{StaticResource Surface}"
-        Foreground="{StaticResource OnSurface}">
+        FontFamily="{DynamicResource UiFont}"
+        Background="{DynamicResource Surface}"
+        Foreground="{DynamicResource OnSurface}">
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -54,7 +54,7 @@
         <!-- 상태 메시지 -->
         <TextBlock x:Name="StatusText"
                    Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
-                   Foreground="{StaticResource OnSurfaceMuted}"
+                   Foreground="{DynamicResource OnSurfaceMuted}"
                    FontSize="11"
                    MinHeight="16"
                    TextWrapping="Wrap" />

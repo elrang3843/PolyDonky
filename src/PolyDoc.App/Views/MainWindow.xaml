@@ -8,9 +8,9 @@
         Title="{Binding WindowTitle}"
         Width="1200" Height="800"
         MinWidth="640" MinHeight="480"
-        FontFamily="{StaticResource UiFont}"
-        Background="{StaticResource Surface}"
-        Foreground="{StaticResource OnSurface}"
+        FontFamily="{DynamicResource UiFont}"
+        Background="{DynamicResource Surface}"
+        Foreground="{DynamicResource OnSurface}"
         AllowDrop="True"
         PreviewDrop="OnDrop"
         PreviewDragOver="OnDragOver">
@@ -31,7 +31,7 @@
     <DockPanel LastChildFill="True">
 
         <!-- 메뉴 바 -->
-        <Menu DockPanel.Dock="Top" Background="{StaticResource SurfaceAlt}">
+        <Menu DockPanel.Dock="Top" Background="{DynamicResource SurfaceAlt}">
             <MenuItem Header="파일(_F)">
                 <MenuItem Header="새 파일(_N)" Command="{Binding NewCommand}" InputGestureText="Ctrl+N" />
                 <MenuItem Header="불러오기(_O)..." Command="{Binding OpenCommand}" InputGestureText="Ctrl+O" />
@@ -93,7 +93,7 @@
         <!-- 상태 바 — 좌측: 상태 메시지 (가변 너비) / 우측: 파일경로·메모리·Insert·Caps·Num 고정 그룹.
              ItemsPanel 을 DockPanel 로 교체하고 상태 메시지만 Left dock, 나머지는 Right dock 으로 우측에 모은다.
              자식 순서대로 우측에서부터 stacking 되므로 XAML 작성 순서 = 시각상 좌→우. -->
-        <StatusBar DockPanel.Dock="Bottom" Background="{StaticResource SurfaceAlt}">
+        <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource SurfaceAlt}">
             <StatusBar.ItemsPanel>
                 <ItemsPanelTemplate>
                     <DockPanel HorizontalAlignment="Stretch" LastChildFill="True" />
@@ -103,7 +103,7 @@
             <!-- 우측 그룹: NumLock 이 가장 우측 -->
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock Text="{Binding NumLockText}"
-                           Foreground="{StaticResource OnSurfaceMuted}"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
                            ToolTip="Num Lock"
                            MinWidth="40" TextAlignment="Center"
                            FontFamily="Consolas, D2Coding" />
@@ -111,7 +111,7 @@
             <Separator DockPanel.Dock="Right" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock Text="{Binding CapsLockText}"
-                           Foreground="{StaticResource OnSurfaceMuted}"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
                            ToolTip="Caps Lock"
                            MinWidth="40" TextAlignment="Center"
                            FontFamily="Consolas, D2Coding" />
@@ -119,21 +119,21 @@
             <Separator DockPanel.Dock="Right" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock Text="{Binding InsertModeText}"
-                           Foreground="{StaticResource OnSurfaceMuted}"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
                            ToolTip="Insert 키로 삽입/수정 토글"
                            MinWidth="40" TextAlignment="Center" />
             </StatusBarItem>
             <Separator DockPanel.Dock="Right" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock Text="{Binding MemoryUsage}"
-                           Foreground="{StaticResource OnSurfaceMuted}"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
                            ToolTip="이 문서의 데이터 크기 (텍스트 + 이미지 + opaque)"
                            MinWidth="80" TextAlignment="Right" />
             </StatusBarItem>
             <Separator DockPanel.Dock="Right" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock Text="{Binding CurrentFilePath}"
-                           Foreground="{StaticResource OnSurfaceMuted}"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
                            ToolTip="{Binding CurrentFilePath}"
                            TextTrimming="CharacterEllipsis"
                            MaxWidth="600" />
@@ -143,7 +143,7 @@
             <!-- 좌측 — 가변 너비. LastChildFill=True 로 남은 가로 공간을 모두 차지. -->
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}"
-                           Foreground="{StaticResource OnSurfaceMuted}"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
                            ToolTip="{Binding StatusMessage}"
                            TextTrimming="CharacterEllipsis" />
             </StatusBarItem>
@@ -152,7 +152,7 @@
         <!-- 본문 영역 — Phase B 폴리싱: RichTextBox + FlowDocument 로 서식 표시·편집.
              RichTextBox.Document 는 DependencyProperty 가 아니라 code-behind 에서 ViewModel 의
              FlowDocument 변경을 받아 동기화한다. TextChanged 는 dirty 마킹용. -->
-        <Border Margin="12" BorderBrush="{StaticResource Divider}" BorderThickness="1">
+        <Border Margin="12" BorderBrush="{DynamicResource Divider}" BorderThickness="1">
             <RichTextBox x:Name="BodyEditor"
                          AcceptsReturn="True"
                          AcceptsTab="True"
@@ -162,8 +162,8 @@
                          SpellCheck.IsEnabled="False"
                          Padding="12"
                          BorderThickness="0"
-                         Background="{StaticResource Surface}"
-                         Foreground="{StaticResource OnSurface}" />
+                         Background="{DynamicResource Surface}"
+                         Foreground="{DynamicResource OnSurface}" />
         </Border>
 
     </DockPanel>

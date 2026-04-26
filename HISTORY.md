@@ -45,6 +45,11 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- **Fixed** — IWPF 옛 / 누락 discriminator 호환. `BlockJsonConverter` 신설 — 읽기 시 `$type` (현행) 외에 `kind` (29c09bd 시기 옛 빌드) 도 인식하고, 둘 다 없으면 `Paragraph` 로 폴백. 사용자가 옛 빌드로 저장한 iwpf 를 신 빌드에서 그대로 열 수 있다. 쓰기는 항상 `$type` 로 출력. xUnit 회귀 테스트 2건 추가 (legacy `kind` / 누락 discriminator).
+- **Fixed** — 테마 변경이 메인 윈도우에 적용되지 않던 문제. `MainWindow` / `AboutWindow` / `FindReplaceWindow` / `SettingsWindow` 의 모든 테마 리소스 참조를 `StaticResource` → `DynamicResource` 로 교체. (StaticResource 는 로드 시 한 번만 해석되어 사전 교체 후에도 옛 값을 유지.)
+- **Fixed** — 설정 창 우측 잘림 — 너비 320 → 380.
+- **Fixed** — 찾기/바꾸기에 "바꾸기(_E)" 단일 교체 버튼 추가, "모두 바꾸기(_A)" 유지. 상태 메시지 행을 별도 `Auto` 행으로 분리해 버튼 위치 흔들림 제거.
+- **Fixed** — 설정 창 조용한 종료. `OnThemeChecked` 가 `InitializeComponent` 중 `ThemeDark`/`ThemeSoft` 가 아직 null 인 상태에서 호출돼 `NullReferenceException`. null guard 추가.
 - **Fixed** — B 폴리싱 4종 빌드 오류 수정 (2226861 에서 미적용). `Properties/Resources.Designer.cs` 누락으로 `dotnet build` 가 실패해 새 기능이 배포되지 않던 문제 해결 — Designer.cs 수동 생성 (`ResourceManager` + 정적 속성). 드래그&드롭: `RichTextBox` 가 `DragOver`를 가로채 파일 드롭 이벤트가 윈도우에 도달하지 않던 문제 — Window 이벤트를 `Drop`/`DragOver` → `PreviewDrop`/`PreviewDragOver` 로 변경, 파일 드롭만 처리 후 `Handled=true`.
 
 ### Added
