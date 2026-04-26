@@ -10,6 +10,7 @@
     <Color x:Key="OnSurfaceColor">#E8E8E8</Color>
     <Color x:Key="OnSurfaceMutedColor">#A0A0A0</Color>
     <Color x:Key="DividerColor">#444444</Color>
+    <Color x:Key="EditorCanvasBgColor">#111111</Color>
 
     <SolidColorBrush x:Key="BrandPrimary"     Color="{StaticResource BrandPrimaryColor}" />
     <SolidColorBrush x:Key="BrandPrimaryDark" Color="{StaticResource BrandPrimaryDarkColor}" />
@@ -18,6 +19,7 @@
     <SolidColorBrush x:Key="OnSurface"        Color="{StaticResource OnSurfaceColor}" />
     <SolidColorBrush x:Key="OnSurfaceMuted"   Color="{StaticResource OnSurfaceMutedColor}" />
     <SolidColorBrush x:Key="Divider"          Color="{StaticResource DividerColor}" />
+    <SolidColorBrush x:Key="EditorCanvasBg" Color="{StaticResource EditorCanvasBgColor}" />
 
     <FontFamily x:Key="UiFont">맑은 고딕, Malgun Gothic, Segoe UI</FontFamily>
 

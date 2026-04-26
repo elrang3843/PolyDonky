@@ -182,25 +182,39 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- 본문 영역 — Phase B 폴리싱: RichTextBox + FlowDocument 로 서식 표시·편집.
-             RichTextBox.Document 는 DependencyProperty 가 아니라 code-behind 에서 ViewModel 의
-             FlowDocument 변경을 받아 동기화한다. TextChanged 는 dirty 마킹용. -->
-        <Border Margin="12" BorderBrush="{DynamicResource Divider}" BorderThickness="1">
-            <RichTextBox x:Name="BodyEditor"
-                         AcceptsReturn="True"
-                         AcceptsTab="True"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         IsDocumentEnabled="True"
-                         IsReadOnly="{Binding IsWriteProtected}"
-                         SpellCheck.IsEnabled="False"
-                         Padding="12"
-                         BorderThickness="0"
-                         Background="{DynamicResource Surface}"
-                         Foreground="{DynamicResource OnSurface}"
-                         PreviewKeyDown="OnEditorPreviewKeyDown"
-                         PreviewTextInput="OnEditorPreviewTextInput" />
-        </Border>
+        <!-- 본문 영역 — 페이지 뷰: 종이가 캔버스 위에 떠 있는 형태.
+             ScrollViewer 가 스크롤을 담당하고 RichTextBox 는 내부 스크롤 없이 콘텐츠 높이로 늘어난다.
+             PaperBorder.Width / Background 는 code-behind 에서 PageSettings 에 맞춰 갱신한다. -->
+        <ScrollViewer VerticalScrollBarVisibility="Visible"
+                      HorizontalScrollBarVisibility="Visible"
+                      Background="{DynamicResource EditorCanvasBg}"
+                      Focusable="False">
+            <StackPanel HorizontalAlignment="Center" Margin="32,28,32,48">
+                <Border x:Name="PaperBorder"
+                        Background="{DynamicResource Surface}"
+                        BorderBrush="{DynamicResource Divider}"
+                        BorderThickness="0.5">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="18" ShadowDepth="6"
+                                          Opacity="0.38" Direction="270" Color="Black" />
+                    </Border.Effect>
+                    <RichTextBox x:Name="BodyEditor"
+                                 AcceptsReturn="True"
+                                 AcceptsTab="True"
+                                 VerticalScrollBarVisibility="Disabled"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 IsDocumentEnabled="True"
+                                 IsReadOnly="{Binding IsWriteProtected}"
+                                 SpellCheck.IsEnabled="False"
+                                 Padding="0"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Foreground="{DynamicResource OnSurface}"
+                                 PreviewKeyDown="OnEditorPreviewKeyDown"
+                                 PreviewTextInput="OnEditorPreviewTextInput" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
 
     </DockPanel>
 </Window>

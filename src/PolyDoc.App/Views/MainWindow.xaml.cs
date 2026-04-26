@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -97,7 +98,8 @@ public partial class MainWindow : Window
         // RichTextBox.Foreground 가 Run 까지 전파되지 않는다.
         // SetResourceReference 로 테마 사전을 동적 바인딩 — 테마 교체 시 자동 갱신.
         fd.SetResourceReference(System.Windows.Documents.FlowDocument.ForegroundProperty, "OnSurface");
-        fd.SetResourceReference(System.Windows.Documents.FlowDocument.BackgroundProperty, "Surface");
+        // Background 는 PaperBorder 가 담당하므로 FlowDocument 는 투명으로 둔다.
+        fd.Background = Brushes.Transparent;
 
         _suppressTextChanged = true;
         try
@@ -107,6 +109,36 @@ public partial class MainWindow : Window
         finally
         {
             _suppressTextChanged = false;
+        }
+
+        // 용지 크기·색상을 PaperBorder 에 반영
+        var page = _viewModel?.Document.Sections.FirstOrDefault()?.Page;
+        ApplyPageSettings(page);
+    }
+
+    private void ApplyPageSettings(PolyDoc.Core.PageSettings? page)
+    {
+        if (page is null) return;
+
+        // 용지 너비 (세로·가로 방향 보정)
+        PaperBorder.Width = PolyDoc.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveWidthMm);
+
+        // 용지 배경색 — 지정된 경우 SolidColorBrush, 없으면 테마 Surface 동적 리소스
+        if (!string.IsNullOrEmpty(page.PaperColor))
+        {
+            try
+            {
+                var c = (Color)ColorConverter.ConvertFromString(page.PaperColor)!;
+                PaperBorder.Background = new SolidColorBrush(c);
+            }
+            catch
+            {
+                PaperBorder.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "Surface");
+            }
+        }
+        else
+        {
+            PaperBorder.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "Surface");
         }
     }
 
