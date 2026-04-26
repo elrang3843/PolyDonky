@@ -10,6 +10,9 @@ public sealed class PolyDocument
     public IList<Section> Sections { get; set; } = new List<Section>();
     public Provenance Provenance { get; set; } = new();
 
+    /// <summary>워터마크 설정 (선택). null 이면 워터마크 없음.</summary>
+    public WatermarkSettings? Watermark { get; set; }
+
     /// <summary>비어 있지 않은 단일 섹션 단일 문단을 가진 최소 문서를 생성한다.</summary>
     public static PolyDocument Empty()
     {

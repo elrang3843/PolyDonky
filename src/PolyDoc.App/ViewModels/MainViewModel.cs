@@ -11,6 +11,7 @@ using PolyDoc.App.Models;
 using PolyDoc.App.Services;
 using PolyDoc.App.Views;
 using PolyDoc.Core;
+using PolyDoc.Iwpf;
 using SR = PolyDoc.App.Properties.Resources;
 using Wpf = System.Windows.Documents;
 
@@ -20,6 +21,12 @@ public partial class MainViewModel : ObservableObject
 {
     /// <summary>편집 모델의 source-of-truth 인 PolyDocument. FlowDocument 와는 Builder/Parser 로 동기화.</summary>
     private PolyDocument _document = PolyDocument.Empty();
+
+    /// <summary>
+    /// IWPF 암호화에 사용할 현재 문서의 비밀번호. null/빈 문자열이면 평문 저장.
+    /// 메모리 외 어디에도 저장되지 않는다 (ViewModel 인스턴스 생명 주기 내에서만 유효).
+    /// </summary>
+    private string? _documentPassword;
 
     [ObservableProperty]
     private Wpf.FlowDocument _flowDocument = new();
@@ -92,9 +99,10 @@ public partial class MainViewModel : ObservableObject
 
     private bool _suppressDirty;
 
-    private void LoadDocument(PolyDocument document, string? path)
+    private void LoadDocument(PolyDocument document, string? path, string? password = null)
     {
         _document = document;
+        _documentPassword = password;
         _suppressDirty = true;
         FlowDocument = FlowDocumentBuilder.Build(document);
         _suppressDirty = false;
@@ -107,7 +115,7 @@ public partial class MainViewModel : ObservableObject
     private void New()
     {
         if (!ConfirmDiscardChanges()) return;
-        LoadDocument(PolyDocument.Empty(), null);
+        LoadDocument(PolyDocument.Empty(), null, password: null);
         StatusMessage = SR.StatusNewDoc;
     }
 
@@ -153,16 +161,63 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        PolyDocument? doc;
+        string? usedPassword = null;
         try
         {
             using var fs = File.OpenRead(path);
-            var doc = reader.Read(fs);
-            LoadDocument(doc, path);
-            StatusMessage = BuildOpenStatusMessage(path, doc);
+            doc = reader.Read(fs);
+        }
+        catch (EncryptedIwpfException) when (reader is IwpfReader iwpf)
+        {
+            // 암호화된 IWPF — 비밀번호 입력 + 재시도 루프.
+            doc = ReadEncryptedWithPrompt(iwpf, path, out usedPassword);
+            if (doc is null) return; // 사용자 취소
         }
         catch (Exception ex)
         {
             ReportError(SR.DlgOpenError, ex);
+            return;
+        }
+
+        LoadDocument(doc, path, usedPassword);
+        StatusMessage = BuildOpenStatusMessage(path, doc);
+    }
+
+    /// <summary>
+    /// 암호화된 IWPF 를 위한 비밀번호 프롬프트 + 재시도 루프. 사용자가 [취소] 를 누르면 null
+    /// 을 반환한다 — 호출자는 결과가 null 이면 열기 작업 자체를 중단해야 한다.
+    /// </summary>
+    private PolyDocument? ReadEncryptedWithPrompt(IwpfReader reader, string path, out string? password)
+    {
+        string? errorMessage = null;
+        while (true)
+        {
+            var prompt = new PasswordPromptWindow { Owner = Application.Current.MainWindow };
+            if (errorMessage is not null) prompt.ShowError(errorMessage);
+            if (prompt.ShowDialog() != true)
+            {
+                password = null;
+                return null;
+            }
+
+            try
+            {
+                using var fs = File.OpenRead(path);
+                var doc = reader.Read(fs, prompt.EnteredPassword);
+                password = prompt.EnteredPassword;
+                return doc;
+            }
+            catch (WrongIwpfPasswordException)
+            {
+                errorMessage = SR.PwdWrong;
+            }
+            catch (Exception ex)
+            {
+                ReportError(SR.DlgOpenError, ex);
+                password = null;
+                return null;
+            }
         }
     }
 
@@ -256,13 +311,16 @@ public partial class MainViewModel : ObservableObject
             ? SR.DlgNewDocTitle
             : Path.GetExtension(CurrentFilePath).TrimStart('.').ToUpperInvariant();
 
+        // 워터마크 초기값 — 없으면 기본값 채워서 다이얼로그가 즉시 입력 가능한 상태가 되게.
+        var wm = _document.Watermark ?? new WatermarkSettings { Enabled = false };
+
         var info = new DocumentInfoModel
         {
             FilePath       = path,
             Format         = format,
             DataSize       = DocumentMeasurement.FormatBytes(bytes),
-            DocTitle       = string.IsNullOrWhiteSpace(meta.Title)  ? none : meta.Title,
-            Author         = string.IsNullOrWhiteSpace(meta.Author) ? none : meta.Author,
+            DocTitle       = string.IsNullOrWhiteSpace(meta.Title) ? none : meta.Title,
+            Author         = meta.Author ?? string.Empty, // 편집 가능한 raw 값
             Language       = meta.Language,
             Created        = meta.Created.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
             Modified       = meta.Modified.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
@@ -273,10 +331,80 @@ public partial class MainViewModel : ObservableObject
             SectionCount   = _document.Sections.Count.ToString("N0"),
             TableCount     = tables.ToString("N0"),
             ImageCount     = images.ToString("N0"),
+            HasPassword    = !string.IsNullOrEmpty(_documentPassword),
+            WatermarkEnabled  = wm.Enabled,
+            WatermarkText     = wm.Text,
+            WatermarkColor    = wm.Color,
+            WatermarkFontSize = wm.FontSize,
+            WatermarkRotation = wm.Rotation,
+            WatermarkOpacity  = wm.Opacity,
         };
 
         var dlg = new DocumentInfoWindow(info) { Owner = Application.Current.MainWindow };
-        dlg.ShowDialog();
+        if (dlg.ShowDialog() != true) return;
+
+        ApplyDocumentInfoChanges(info);
+    }
+
+    /// <summary>
+    /// 문서 정보 다이얼로그가 [확인] 으로 닫혔을 때 사용자가 편집한 항목을
+    /// _document / _documentPassword 에 반영하고 변경이 있으면 dirty 로 표시한다.
+    /// </summary>
+    private void ApplyDocumentInfoChanges(DocumentInfoModel info)
+    {
+        var dirty = false;
+        var meta = _document.Metadata;
+
+        // ── 작성자 ──
+        var newAuthor = string.IsNullOrWhiteSpace(info.Author) ? null : info.Author.Trim();
+        if (!string.Equals(meta.Author, newAuthor, StringComparison.Ordinal))
+        {
+            meta.Author = newAuthor;
+            dirty = true;
+        }
+
+        // ── 비밀번호 ──
+        if (info.PasswordChanged)
+        {
+            var newPwd = string.IsNullOrEmpty(info.NewPassword) ? null : info.NewPassword;
+            if (!string.Equals(_documentPassword, newPwd, StringComparison.Ordinal))
+            {
+                _documentPassword = newPwd;
+                dirty = true; // 다음 저장 때 암호화 적용
+            }
+        }
+
+        // ── 워터마크 ──
+        WatermarkSettings? newWm = info.WatermarkEnabled
+            ? new WatermarkSettings
+            {
+                Enabled  = true,
+                Text     = info.WatermarkText ?? "",
+                Color    = info.WatermarkColor ?? "#FF808080",
+                FontSize = Math.Max(1, info.WatermarkFontSize),
+                Rotation = info.WatermarkRotation,
+                Opacity  = Math.Clamp(info.WatermarkOpacity, 0.0, 1.0),
+            }
+            : null;
+        if (!WatermarkEquals(_document.Watermark, newWm))
+        {
+            _document.Watermark = newWm;
+            dirty = true;
+        }
+
+        if (dirty) MarkDirty();
+    }
+
+    private static bool WatermarkEquals(WatermarkSettings? a, WatermarkSettings? b)
+    {
+        if (a is null && b is null) return true;
+        if (a is null || b is null) return false;
+        return a.Enabled == b.Enabled
+            && a.Text == b.Text
+            && a.Color == b.Color
+            && a.FontSize == b.FontSize
+            && a.Rotation.Equals(b.Rotation)
+            && a.Opacity.Equals(b.Opacity);
     }
 
     private static (int paragraphs, int tables, int images) CountBlocks(IEnumerable<Section> sections)
@@ -337,7 +465,7 @@ public partial class MainViewModel : ObservableObject
     private void Close()
     {
         if (!ConfirmDiscardChanges()) return;
-        LoadDocument(PolyDocument.Empty(), null);
+        LoadDocument(PolyDocument.Empty(), null, password: null);
         StatusMessage = SR.StatusDocClosed;
     }
 
@@ -358,12 +486,34 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        // CurrentFilePath 가 비어 있으면 디스크에 한 번도 안 쓰여진 신규 문서 — 작성일 갱신.
+        var isFirstSave = string.IsNullOrEmpty(CurrentFilePath);
+        var now = DateTimeOffset.UtcNow;
+
         try
         {
             var rebuilt = FlowDocumentParser.Parse(FlowDocument, _document);
 
+            // 자동 일자 갱신: 첫 저장이면 Created+Modified 둘 다, 아니면 Modified 만.
+            if (isFirstSave)
+            {
+                rebuilt.Metadata.Created  = now;
+                rebuilt.Metadata.Modified = now;
+            }
+            else
+            {
+                rebuilt.Metadata.Modified = now;
+            }
+
+            // IWPF 이고 비밀번호가 설정되어 있으면 암호화 모드의 writer 로 교체.
+            var actualWriter = writer;
+            if (writer is IwpfWriter && !string.IsNullOrEmpty(_documentPassword))
+            {
+                actualWriter = new IwpfWriter { Password = _documentPassword };
+            }
+
             using var fs = File.Create(path);
-            writer.Write(rebuilt, fs);
+            actualWriter.Write(rebuilt, fs);
 
             _document = rebuilt;
             CurrentFilePath = path;

@@ -19,11 +19,27 @@ public sealed class IwpfWriter : IDocumentWriter
 {
     public string FormatId => "iwpf";
 
+    /// <summary>
+    /// null/빈 문자열이 아니면 IWPF 페이로드 전체를 AES-256-GCM 으로 암호화한 envelope
+    /// 패키지로 출력한다. (manifest 만 평문, 본문 ZIP 은 security/payload.bin 안에 봉인)
+    /// </summary>
+    public string? Password { get; init; }
+
     public void Write(PolyDocument document, Stream output)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(output);
 
+        if (!string.IsNullOrEmpty(Password))
+        {
+            WriteEncrypted(document, output, Password);
+            return;
+        }
+        WritePlain(document, output);
+    }
+
+    private void WritePlain(PolyDocument document, Stream output)
+    {
         using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
 
         var manifest = new IwpfManifest
@@ -141,12 +157,14 @@ public sealed class IwpfWriter : IDocumentWriter
     {
         // 패키지에서는 styles 와 provenance 를 별도 파트로 분리해 저장하므로
         // document.json 본문에는 그 둘을 비워서 직렬화한다.
+        // Watermark 는 본문 일부로 함께 보존된다.
         var detached = new PolyDocument
         {
             Metadata = document.Metadata,
             Sections = document.Sections,
             Styles = new StyleSheet(),
             Provenance = new Provenance(),
+            Watermark = document.Watermark,
         };
         return JsonSerializer.SerializeToUtf8Bytes(detached, JsonDefaults.Options);
     }
@@ -180,4 +198,38 @@ public sealed class IwpfWriter : IDocumentWriter
     /// <summary>편의 메서드 — 텍스트 디버깅용으로 매니페스트만 별도 직렬화.</summary>
     public static string SerializeManifest(IwpfManifest manifest)
         => Encoding.UTF8.GetString(JsonSerializer.SerializeToUtf8Bytes(manifest, JsonDefaults.Options));
+
+    /// <summary>
+    /// 암호화 모드. 평문 IWPF ZIP 을 메모리 내 빌드한 뒤 AES-256-GCM 으로 봉인하고
+    /// outer ZIP 에는 manifest.json (encrypted=true), security/envelope.json,
+    /// security/payload.bin 만 담는다. 이렇게 하면 비밀번호 없이는 어떠한 본문/스타일도
+    /// 노출되지 않고, 변조 시 GCM tag 가 깨져 감지된다.
+    /// </summary>
+    private void WriteEncrypted(PolyDocument document, Stream output, string password)
+    {
+        // 1. inner IWPF ZIP 을 메모리에 평문으로 빌드 — 동일한 WritePlain 경로 재사용.
+        using var innerStream = new MemoryStream();
+        WritePlain(document, innerStream);
+        var innerBytes = innerStream.ToArray();
+
+        // 2. AES-256-GCM 암호화.
+        var (cipherText, envelope) = IwpfEncryption.Encrypt(innerBytes, password);
+
+        // 3. outer ZIP 작성: encrypted=true 매니페스트 + envelope.json + payload.bin.
+        using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
+
+        var outerManifest = new IwpfManifest
+        {
+            Created  = document.Metadata.Created,
+            Modified = document.Metadata.Modified,
+            Encrypted = true,
+        };
+
+        var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(envelope, JsonDefaults.Options);
+        AddPart(archive, outerManifest, IwpfPaths.SecurityEnvelope, IwpfMediaTypes.Json, envelopeBytes);
+        AddPart(archive, outerManifest, IwpfPaths.SecurityPayload,  IwpfMediaTypes.OctetStream, cipherText);
+
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(outerManifest, JsonDefaults.Options);
+        WriteEntry(archive, IwpfPaths.Manifest, manifestBytes);
+    }
 }

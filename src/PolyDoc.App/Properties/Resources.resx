@@ -154,6 +154,42 @@
   <data name="DocInfoNotSaved"    xml:space="preserve"><value>(저장되지 않음)</value></data>
   <data name="DocInfoNone"        xml:space="preserve"><value>(없음)</value></data>
 
+  <!-- 문서 정보 - 탭 -->
+  <data name="DocInfoTabInfo"      xml:space="preserve"><value>정보</value></data>
+  <data name="DocInfoTabSecurity"  xml:space="preserve"><value>보안</value></data>
+  <data name="DocInfoTabWatermark" xml:space="preserve"><value>워터마크</value></data>
+
+  <!-- 보안 탭 -->
+  <data name="DocInfoPwdStatus"    xml:space="preserve"><value>암호 상태</value></data>
+  <data name="DocInfoPwdSet"       xml:space="preserve"><value>설정됨</value></data>
+  <data name="DocInfoPwdNone"      xml:space="preserve"><value>설정 안 됨</value></data>
+  <data name="DocInfoPwdChange"    xml:space="preserve"><value>암호 설정 / 변경...</value></data>
+  <data name="DocInfoPwdHint"      xml:space="preserve"><value>암호가 설정된 IWPF 문서는 다음 저장부터 암호화됩니다. 암호를 잊으면 복구할 수 없습니다.</value></data>
+  <data name="DocInfoPwdNotIwpf"   xml:space="preserve"><value>암호 보호는 IWPF 형식으로 저장할 때만 적용됩니다.</value></data>
+
+  <!-- 워터마크 탭 -->
+  <data name="DocInfoWmEnabled"    xml:space="preserve"><value>워터마크 사용</value></data>
+  <data name="DocInfoWmText"       xml:space="preserve"><value>텍스트</value></data>
+  <data name="DocInfoWmFontSize"   xml:space="preserve"><value>글자 크기</value></data>
+  <data name="DocInfoWmRotation"   xml:space="preserve"><value>회전 (도)</value></data>
+  <data name="DocInfoWmOpacity"    xml:space="preserve"><value>불투명도 (0~1)</value></data>
+  <data name="DocInfoWmColor"      xml:space="preserve"><value>색상 (#AARRGGBB)</value></data>
+  <data name="DocInfoWmHint"       xml:space="preserve"><value>워터마크 설정은 IWPF 문서에 저장됩니다. 편집 화면 미리보기와 인쇄 렌더링은 후속 단계에서 추가됩니다.</value></data>
+
+  <!-- 비밀번호 다이얼로그 -->
+  <data name="PwdPromptTitle"      xml:space="preserve"><value>비밀번호 입력</value></data>
+  <data name="PwdPromptMessage"    xml:space="preserve"><value>이 문서는 암호로 보호되어 있습니다.</value></data>
+  <data name="PwdPromptInput"      xml:space="preserve"><value>비밀번호</value></data>
+  <data name="PwdChangeTitle"      xml:space="preserve"><value>비밀번호 설정 / 변경</value></data>
+  <data name="PwdChangeNew"        xml:space="preserve"><value>새 비밀번호</value></data>
+  <data name="PwdChangeConfirm"    xml:space="preserve"><value>비밀번호 확인</value></data>
+  <data name="PwdChangeHintRemove" xml:space="preserve"><value>새 비밀번호를 비워두면 기존 암호가 제거됩니다.</value></data>
+  <data name="PwdMismatch"         xml:space="preserve"><value>두 비밀번호가 일치하지 않습니다.</value></data>
+  <data name="PwdWrong"            xml:space="preserve"><value>비밀번호가 틀렸습니다.</value></data>
+
+  <!-- 공통 버튼 -->
+  <data name="DlgConfirm"          xml:space="preserve"><value>확인</value></data>
+
   <data name="AboutTitle" xml:space="preserve"><value>PolyDoc 정보</value></data>
   <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
   <data name="AboutCompany" xml:space="preserve"><value>핸텍 (HANDTECH)</value></data>

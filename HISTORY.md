@@ -53,6 +53,10 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 - **Fixed** — B 폴리싱 4종 빌드 오류 수정 (2226861 에서 미적용). `Properties/Resources.Designer.cs` 누락으로 `dotnet build` 가 실패해 새 기능이 배포되지 않던 문제 해결 — Designer.cs 수동 생성 (`ResourceManager` + 정적 속성). 드래그&드롭: `RichTextBox` 가 `DragOver`를 가로채 파일 드롭 이벤트가 윈도우에 도달하지 않던 문제 — Window 이벤트를 `Drop`/`DragOver` → `PreviewDrop`/`PreviewDragOver` 로 변경, 파일 드롭만 처리 후 `Handled=true`.
 
 ### Added
+- **Added** — 편집 > 문서 정보 다이얼로그 확장: 3개 탭 (정보 / 보안 / 워터마크). 작성자(Author) 입력 가능. 저장 시 첫 저장이면 작성일자 + 수정일자, 이후 저장에서는 수정일자만 자동 갱신.
+- **Added** — IWPF 문서 암호 보호. 다음 저장부터 PBKDF2-HMAC-SHA256 (200,000회) 으로 키 유도 + AES-256-GCM 으로 inner ZIP 전체 암호화 → outer envelope ZIP 봉인 (`security/envelope.json` + `security/payload.bin`). 옵션 패키지라 기존 평문 IWPF 와 100% 호환. 암호 보호 IWPF 를 열 때는 `PasswordPromptWindow` 로 입력 + 틀리면 GCM tag 불일치로 즉시 감지·재시도.
+- **Added** — IWPF 워터마크 설정 (텍스트 / 색상 / 글자 크기 / 회전 / 불투명도). `PolyDocument.Watermark` 로 직렬화 — 옵션 필드라 기존 IWPF 와 호환. 편집기 화면 미리보기·인쇄 렌더링은 후속 단계.
+- **Security** — AES-256-GCM 인증 암호화로 본문/스타일/리소스를 모두 봉인 — 잘못된 비밀번호 또는 변조 시 GCM tag 검증으로 거부. 암호는 메모리 내에서만 보관되고 비밀번호 자체는 저장하지 않는다 (envelope 에는 salt/nonce/tag 만 보관).
 - **Added** — B 폴리싱 4종.
   - **드래그&드롭**: `MainWindow` 에 `AllowDrop=True` + `PreviewDrop`/`PreviewDragOver` 핸들러. 파일을 창에 끌어놓으면 `OpenFile(path)` 호출로 즉시 열기. `MainViewModel.OpenFile` 공개 메서드 추가, 내부 `OpenPath` 로 중복 제거.
   - **찾기/바꾸기**: `FindReplaceWindow` 모달리스 다이얼로그 (Ctrl+F / Ctrl+H). `FlowDocumentSearch` 헬퍼 — WPF `TextPointer` 기반 순방향 검색(`FindNext`) + `ReplaceAll`. 대소문자 구분 옵션, wrap-around, 상태 메시지 표시.

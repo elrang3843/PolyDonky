@@ -17,6 +17,13 @@ public sealed class IwpfManifest
 
     /// <summary>경로 → 파트 메타. 키는 ZIP 내부 경로 (forward slash).</summary>
     public IDictionary<string, IwpfManifestEntry> Parts { get; set; } = new Dictionary<string, IwpfManifestEntry>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// true 면 본문(content/styles/provenance/resources)이 평문이 아니라
+    /// security/payload.bin 안에 AES-256-GCM 으로 봉인돼 있다.
+    /// 이 경우 reader 는 비밀번호로 envelope 을 풀어 inner ZIP 을 추출한 뒤 다시 파싱한다.
+    /// </summary>
+    public bool Encrypted { get; set; }
 }
 
 public sealed class IwpfManifestEntry

@@ -101,6 +101,28 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string DocInfoSections   => SR.DocInfoSections;
     public string DocInfoTables     => SR.DocInfoTables;
     public string DocInfoImages     => SR.DocInfoImages;
+    public string DocInfoTabInfo      => SR.DocInfoTabInfo;
+    public string DocInfoTabSecurity  => SR.DocInfoTabSecurity;
+    public string DocInfoTabWatermark => SR.DocInfoTabWatermark;
+    public string DocInfoPwdStatus    => SR.DocInfoPwdStatus;
+    public string DocInfoPwdChange    => SR.DocInfoPwdChange;
+    public string DocInfoPwdHint      => SR.DocInfoPwdHint;
+    public string DocInfoPwdNotIwpf   => SR.DocInfoPwdNotIwpf;
+    public string DocInfoWmEnabled    => SR.DocInfoWmEnabled;
+    public string DocInfoWmText       => SR.DocInfoWmText;
+    public string DocInfoWmFontSize   => SR.DocInfoWmFontSize;
+    public string DocInfoWmRotation   => SR.DocInfoWmRotation;
+    public string DocInfoWmOpacity    => SR.DocInfoWmOpacity;
+    public string DocInfoWmColor      => SR.DocInfoWmColor;
+    public string DocInfoWmHint       => SR.DocInfoWmHint;
+    public string PwdPromptTitle      => SR.PwdPromptTitle;
+    public string PwdPromptMessage    => SR.PwdPromptMessage;
+    public string PwdPromptInput      => SR.PwdPromptInput;
+    public string PwdChangeTitle      => SR.PwdChangeTitle;
+    public string PwdChangeNew        => SR.PwdChangeNew;
+    public string PwdChangeConfirm    => SR.PwdChangeConfirm;
+    public string PwdChangeHintRemove => SR.PwdChangeHintRemove;
+    public string DlgConfirm          => SR.DlgConfirm;
 
     // ── 설정 다이얼로그 ─────────────────────────────────────────
     public string SettingsTitle       => SR.SettingsTitle;

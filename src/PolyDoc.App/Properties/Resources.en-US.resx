@@ -154,6 +154,42 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="DocInfoNotSaved"    xml:space="preserve"><value>(Not saved)</value></data>
   <data name="DocInfoNone"        xml:space="preserve"><value>(None)</value></data>
 
+  <!-- Document Info - Tabs -->
+  <data name="DocInfoTabInfo"      xml:space="preserve"><value>Info</value></data>
+  <data name="DocInfoTabSecurity"  xml:space="preserve"><value>Security</value></data>
+  <data name="DocInfoTabWatermark" xml:space="preserve"><value>Watermark</value></data>
+
+  <!-- Security tab -->
+  <data name="DocInfoPwdStatus"    xml:space="preserve"><value>Password</value></data>
+  <data name="DocInfoPwdSet"       xml:space="preserve"><value>Set</value></data>
+  <data name="DocInfoPwdNone"      xml:space="preserve"><value>Not set</value></data>
+  <data name="DocInfoPwdChange"    xml:space="preserve"><value>Set / Change Password...</value></data>
+  <data name="DocInfoPwdHint"      xml:space="preserve"><value>Password-protected IWPF documents are encrypted starting from the next save. Forgotten passwords cannot be recovered.</value></data>
+  <data name="DocInfoPwdNotIwpf"   xml:space="preserve"><value>Password protection only applies when the document is saved in IWPF format.</value></data>
+
+  <!-- Watermark tab -->
+  <data name="DocInfoWmEnabled"    xml:space="preserve"><value>Enable watermark</value></data>
+  <data name="DocInfoWmText"       xml:space="preserve"><value>Text</value></data>
+  <data name="DocInfoWmFontSize"   xml:space="preserve"><value>Font size</value></data>
+  <data name="DocInfoWmRotation"   xml:space="preserve"><value>Rotation (deg)</value></data>
+  <data name="DocInfoWmOpacity"    xml:space="preserve"><value>Opacity (0-1)</value></data>
+  <data name="DocInfoWmColor"      xml:space="preserve"><value>Color (#AARRGGBB)</value></data>
+  <data name="DocInfoWmHint"       xml:space="preserve"><value>Watermark settings are saved in the IWPF document. Editor preview and print rendering will be added in a later phase.</value></data>
+
+  <!-- Password dialogs -->
+  <data name="PwdPromptTitle"      xml:space="preserve"><value>Enter Password</value></data>
+  <data name="PwdPromptMessage"    xml:space="preserve"><value>This document is password-protected.</value></data>
+  <data name="PwdPromptInput"      xml:space="preserve"><value>Password</value></data>
+  <data name="PwdChangeTitle"      xml:space="preserve"><value>Set / Change Password</value></data>
+  <data name="PwdChangeNew"        xml:space="preserve"><value>New password</value></data>
+  <data name="PwdChangeConfirm"    xml:space="preserve"><value>Confirm password</value></data>
+  <data name="PwdChangeHintRemove" xml:space="preserve"><value>Leave the new password blank to remove the existing password.</value></data>
+  <data name="PwdMismatch"         xml:space="preserve"><value>The two passwords do not match.</value></data>
+  <data name="PwdWrong"            xml:space="preserve"><value>Incorrect password.</value></data>
+
+  <!-- Common -->
+  <data name="DlgConfirm"          xml:space="preserve"><value>OK</value></data>
+
   <data name="AboutTitle" xml:space="preserve"><value>About PolyDoc</value></data>
   <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
   <data name="AboutCompany" xml:space="preserve"><value>HANDTECH</value></data>
