@@ -2,9 +2,9 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Shapes;
 using PolyDoc.Core;
+using WpfMedia = System.Windows.Media;
 
 namespace PolyDoc.App.Views;
 
@@ -209,7 +209,7 @@ public partial class PageFormatWindow : Window
         else if (TryParseWpfColor(TxtPaperColor.Text, out var c))
         {
             _settings.PaperColor = NormalizeHex(TxtPaperColor.Text.Trim());
-            PaperColorSwatch.Background = new SolidColorBrush(c);
+            PaperColorSwatch.Background = new WpfMedia.SolidColorBrush(c);
         }
         UpdatePreview();
     }
@@ -218,7 +218,7 @@ public partial class PageFormatWindow : Window
     {
         using var dlg = new System.Windows.Forms.ColorDialog { FullOpen = true, AnyColor = true };
         if (TryParseWpfColor(TxtPaperColor.Text, out var cur))
-            dlg.Color = System.Drawing.Color.FromArgb(cur.A, cur.R, cur.G, cur.B);
+            dlg.Color = System.Drawing.WpfMedia.Color.FromArgb(cur.A, cur.R, cur.G, cur.B);
         if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
         {
             var p = dlg.Color;
@@ -250,9 +250,9 @@ public partial class PageFormatWindow : Window
     private void UpdateColorSwatch()
     {
         if (TryParseWpfColor(_settings.PaperColor, out var c))
-            PaperColorSwatch.Background = new SolidColorBrush(c);
+            PaperColorSwatch.Background = new WpfMedia.SolidColorBrush(c);
         else
-            PaperColorSwatch.Background = new SolidColorBrush(Colors.White);
+            PaperColorSwatch.Background = new WpfMedia.SolidColorBrush(WpfMedia.Colors.White);
     }
 
     // ── 여백 ─────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ public partial class PageFormatWindow : Window
         var shadow = new Rectangle
         {
             Width  = rw, Height = rh,
-            Fill   = new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)),
+            Fill   = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(40, 0, 0, 0)),
         };
         Canvas.SetLeft(shadow, ox + 3);
         Canvas.SetTop(shadow, oy + 3);
@@ -316,7 +316,7 @@ public partial class PageFormatWindow : Window
         {
             Width       = rw, Height = rh,
             Fill        = GetPaperBrush(),
-            Stroke      = new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA)),
+            Stroke      = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xAA, 0xAA, 0xAA)),
             StrokeThickness = 0.5,
         };
         Canvas.SetLeft(paper, ox);
@@ -341,8 +341,8 @@ public partial class PageFormatWindow : Window
             var margin = new Rectangle
             {
                 Width  = crw, Height = crh,
-                Fill   = Brushes.Transparent,
-                Stroke = new SolidColorBrush(Color.FromArgb(180, 0x44, 0x88, 0xCC)),
+                Fill   = WpfMedia.Brushes.Transparent,
+                Stroke = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(180, 0x44, 0x88, 0xCC)),
                 StrokeThickness = 0.7,
                 StrokeDashArray = new DoubleCollection { 3, 2 },
             };
@@ -354,14 +354,14 @@ public partial class PageFormatWindow : Window
             if (mh > 0 && mh < mt)
             {
                 double hy = oy + mh;
-                var hLine = MakeHLine(ox, hy, rw, Color.FromArgb(120, 0x44, 0x88, 0xCC));
+                var hLine = MakeHLine(ox, hy, rw, WpfMedia.Color.FromArgb(120, 0x44, 0x88, 0xCC));
                 PreviewCanvas.Children.Add(hLine);
             }
             // 꼬리말 선
             if (mf > 0 && mf < mb)
             {
                 double fy = oy + rh - mf;
-                var fLine = MakeHLine(ox, fy, rw, Color.FromArgb(120, 0x44, 0x88, 0xCC));
+                var fLine = MakeHLine(ox, fy, rw, WpfMedia.Color.FromArgb(120, 0x44, 0x88, 0xCC));
                 PreviewCanvas.Children.Add(fLine);
             }
 
@@ -376,7 +376,7 @@ public partial class PageFormatWindow : Window
                     var vLine = new Line
                     {
                         X1 = lx, Y1 = cy, X2 = lx, Y2 = cy + crh,
-                        Stroke          = new SolidColorBrush(Color.FromArgb(100, 0xFF, 0x80, 0x00)),
+                        Stroke          = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(100, 0xFF, 0x80, 0x00)),
                         StrokeThickness = 0.6,
                         StrokeDashArray = new DoubleCollection { 3, 2 },
                     };
@@ -401,14 +401,14 @@ public partial class PageFormatWindow : Window
     {
         if (!string.IsNullOrEmpty(_settings.PaperColor) &&
             TryParseWpfColor(_settings.PaperColor, out var c))
-            return new SolidColorBrush(c);
-        return Brushes.White;
+            return new WpfMedia.SolidColorBrush(c);
+        return WpfMedia.Brushes.White;
     }
 
-    private static Line MakeHLine(double x, double y, double w, System.Windows.Media.Color color) => new()
+    private static Line MakeHLine(double x, double y, double w, WpfMedia.Color color) => new()
     {
         X1 = x, Y1 = y, X2 = x + w, Y2 = y,
-        Stroke          = new SolidColorBrush(color),
+        Stroke          = new WpfMedia.SolidColorBrush(color),
         StrokeThickness = 0.6,
         StrokeDashArray = new DoubleCollection { 4, 3 },
     };
@@ -431,13 +431,13 @@ public partial class PageFormatWindow : Window
             setter(v);
     }
 
-    private static bool TryParseWpfColor(string? hex, out System.Windows.Media.Color color)
+    private static bool TryParseWpfColor(string? hex, out WpfMedia.Color color)
     {
         color = default;
         if (string.IsNullOrWhiteSpace(hex)) return false;
         var t = hex.Trim();
         if (!t.StartsWith('#')) t = '#' + t;
-        try { color = (Color)ColorConverter.ConvertFromString(t)!; return true; }
+        try { color = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(t)!; return true; }
         catch { return false; }
     }
 
