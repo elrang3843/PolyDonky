@@ -115,14 +115,19 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string DocInfoWmOpacity    => SR.DocInfoWmOpacity;
     public string DocInfoWmColor      => SR.DocInfoWmColor;
     public string DocInfoWmHint       => SR.DocInfoWmHint;
-    public string PwdPromptTitle      => SR.PwdPromptTitle;
-    public string PwdPromptMessage    => SR.PwdPromptMessage;
-    public string PwdPromptInput      => SR.PwdPromptInput;
-    public string PwdChangeTitle      => SR.PwdChangeTitle;
-    public string PwdChangeNew        => SR.PwdChangeNew;
-    public string PwdChangeConfirm    => SR.PwdChangeConfirm;
-    public string PwdChangeHintRemove => SR.PwdChangeHintRemove;
-    public string DlgConfirm          => SR.DlgConfirm;
+    public string PwdPromptTitle        => SR.PwdPromptTitle;
+    public string PwdPromptMessage      => SR.PwdPromptMessage;
+    public string PwdPromptInput        => SR.PwdPromptInput;
+    public string PwdChangeTitle        => SR.PwdChangeTitle;
+    public string PwdChangeNew          => SR.PwdChangeNew;
+    public string PwdChangeConfirm      => SR.PwdChangeConfirm;
+    public string PwdChangeHintRemove   => SR.PwdChangeHintRemove;
+    public string PwdModeGroupLabel     => SR.PwdModeGroupLabel;
+    public string PwdModeNone           => SR.PwdModeNone;
+    public string PwdModeRead           => SR.PwdModeRead;
+    public string PwdModeWrite          => SR.PwdModeWrite;
+    public string PwdModeBoth           => SR.PwdModeBoth;
+    public string DlgConfirm            => SR.DlgConfirm;
 
     // ── 설정 다이얼로그 ─────────────────────────────────────────
     public string SettingsTitle       => SR.SettingsTitle;

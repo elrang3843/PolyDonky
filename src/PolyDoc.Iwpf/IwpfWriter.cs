@@ -19,9 +19,13 @@ public sealed class IwpfWriter : IDocumentWriter
 {
     public string FormatId => "iwpf";
 
+    /// <summary>암호 보호 모드. 기본값은 <see cref="PasswordMode.None"/> (평문).</summary>
+    public PasswordMode PasswordMode { get; init; }
+
     /// <summary>
-    /// null/빈 문자열이 아니면 IWPF 페이로드 전체를 AES-256-GCM 으로 암호화한 envelope
-    /// 패키지로 출력한다. (manifest 만 평문, 본문 ZIP 은 security/payload.bin 안에 봉인)
+    /// <see cref="PasswordMode"/> 가 None 이 아닐 때 사용할 비밀번호.
+    /// Read/Both 모드에서는 AES-256-GCM 암호화 키 유도에 사용하고,
+    /// Write/Both 모드에서는 쓰기 잠금 PBKDF2 해시 생성에도 사용한다.
     /// </summary>
     public string? Password { get; init; }
 
@@ -30,21 +34,33 @@ public sealed class IwpfWriter : IDocumentWriter
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(output);
 
-        if (!string.IsNullOrEmpty(Password))
+        switch (PasswordMode)
         {
-            WriteEncrypted(document, output, Password);
-            return;
+            case PasswordMode.Read:
+            case PasswordMode.Both:
+                if (string.IsNullOrEmpty(Password))
+                    throw new InvalidOperationException(
+                        "Password is required for Read or Both protection mode.");
+                WriteEncrypted(document, output, Password, PasswordMode);
+                break;
+
+            case PasswordMode.Write:
+                WritePlain(document, output, writeLockPassword: Password);
+                break;
+
+            default: // None
+                WritePlain(document, output);
+                break;
         }
-        WritePlain(document, output);
     }
 
-    private void WritePlain(PolyDocument document, Stream output)
+    private void WritePlain(PolyDocument document, Stream output, string? writeLockPassword = null)
     {
         using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
 
         var manifest = new IwpfManifest
         {
-            Created = document.Metadata.Created,
+            Created  = document.Metadata.Created,
             Modified = document.Metadata.Modified,
         };
 
@@ -68,7 +84,16 @@ public sealed class IwpfWriter : IDocumentWriter
                 AddPart(archive, manifest, IwpfPaths.ProvenanceJson, IwpfMediaTypes.Provenance, provenanceBytes);
             }
 
-            // 5. manifest.json — 항상 마지막. 본문 파트의 해시가 모두 결정된 뒤에 작성한다.
+            // 5. security/write-lock.json — 쓰기 보호가 설정된 경우.
+            if (!string.IsNullOrEmpty(writeLockPassword))
+            {
+                manifest.WriteLocked = true;
+                var writeLock      = IwpfEncryption.CreateWriteLock(writeLockPassword);
+                var writeLockBytes = JsonSerializer.SerializeToUtf8Bytes(writeLock, JsonDefaults.Options);
+                AddPart(archive, manifest, IwpfPaths.SecurityWriteLock, IwpfMediaTypes.Json, writeLockBytes);
+            }
+
+            // 6. manifest.json — 항상 마지막. 본문 파트의 해시가 모두 결정된 뒤에 작성한다.
             var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonDefaults.Options);
             WriteEntry(archive, IwpfPaths.Manifest, manifestBytes);
         }
@@ -92,9 +117,9 @@ public sealed class IwpfWriter : IDocumentWriter
         ZipArchive archive,
         IwpfManifest manifest)
     {
-        var stashed = new List<(ImageBlock, byte[])>();
+        var stashed    = new List<(ImageBlock, byte[])>();
         var pathByHash = new Dictionary<string, string>(StringComparer.Ordinal);
-        int counter = 0;
+        int counter    = 0;
 
         foreach (var section in document.Sections)
         {
@@ -143,14 +168,14 @@ public sealed class IwpfWriter : IDocumentWriter
 
     private static string ExtensionForMediaType(string mediaType) => mediaType switch
     {
-        "image/png" => ".png",
-        "image/jpeg" => ".jpg",
-        "image/gif" => ".gif",
-        "image/bmp" => ".bmp",
-        "image/tiff" => ".tif",
+        "image/png"     => ".png",
+        "image/jpeg"    => ".jpg",
+        "image/gif"     => ".gif",
+        "image/bmp"     => ".bmp",
+        "image/tiff"    => ".tif",
         "image/svg+xml" => ".svg",
-        "image/webp" => ".webp",
-        _ => ".bin",
+        "image/webp"    => ".webp",
+        _               => ".bin",
     };
 
     private static byte[] SerializeDocument(PolyDocument document)
@@ -160,11 +185,11 @@ public sealed class IwpfWriter : IDocumentWriter
         // Watermark 는 본문 일부로 함께 보존된다.
         var detached = new PolyDocument
         {
-            Metadata = document.Metadata,
-            Sections = document.Sections,
-            Styles = new StyleSheet(),
+            Metadata   = document.Metadata,
+            Sections   = document.Sections,
+            Styles     = new StyleSheet(),
             Provenance = new Provenance(),
-            Watermark = document.Watermark,
+            Watermark  = document.Watermark,
         };
         return JsonSerializer.SerializeToUtf8Bytes(detached, JsonDefaults.Options);
     }
@@ -174,10 +199,10 @@ public sealed class IwpfWriter : IDocumentWriter
         WriteEntry(archive, path, payload);
         manifest.Parts[path] = new IwpfManifestEntry
         {
-            Path = path,
+            Path      = path,
             MediaType = mediaType,
-            Size = payload.LongLength,
-            Sha256 = Sha256Hex(payload),
+            Size      = payload.LongLength,
+            Sha256    = Sha256Hex(payload),
         };
     }
 
@@ -200,16 +225,18 @@ public sealed class IwpfWriter : IDocumentWriter
         => Encoding.UTF8.GetString(JsonSerializer.SerializeToUtf8Bytes(manifest, JsonDefaults.Options));
 
     /// <summary>
-    /// 암호화 모드. 평문 IWPF ZIP 을 메모리 내 빌드한 뒤 AES-256-GCM 으로 봉인하고
+    /// 암호화 모드(Read / Both). 평문 IWPF ZIP 을 메모리 내 빌드한 뒤 AES-256-GCM 으로 봉인하고
     /// outer ZIP 에는 manifest.json (encrypted=true), security/envelope.json,
-    /// security/payload.bin 만 담는다. 이렇게 하면 비밀번호 없이는 어떠한 본문/스타일도
-    /// 노출되지 않고, 변조 시 GCM tag 가 깨져 감지된다.
+    /// security/payload.bin 만 담는다.
+    /// Both 모드에서는 inner ZIP 안에 쓰기 잠금(write-lock.json) 도 함께 포함한다.
     /// </summary>
-    private void WriteEncrypted(PolyDocument document, Stream output, string password)
+    private void WriteEncrypted(PolyDocument document, Stream output, string password, PasswordMode mode)
     {
-        // 1. inner IWPF ZIP 을 메모리에 평문으로 빌드 — 동일한 WritePlain 경로 재사용.
+        // 1. inner IWPF ZIP 을 메모리에 평문으로 빌드.
+        //    Both 모드면 write-lock 도 inner 에 포함한다.
         using var innerStream = new MemoryStream();
-        WritePlain(document, innerStream);
+        var writeLockPwd = (mode == PasswordMode.Both) ? password : null;
+        WritePlain(document, innerStream, writeLockPassword: writeLockPwd);
         var innerBytes = innerStream.ToArray();
 
         // 2. AES-256-GCM 암호화.
@@ -220,14 +247,14 @@ public sealed class IwpfWriter : IDocumentWriter
 
         var outerManifest = new IwpfManifest
         {
-            Created  = document.Metadata.Created,
-            Modified = document.Metadata.Modified,
+            Created   = document.Metadata.Created,
+            Modified  = document.Metadata.Modified,
             Encrypted = true,
         };
 
         var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(envelope, JsonDefaults.Options);
-        AddPart(archive, outerManifest, IwpfPaths.SecurityEnvelope, IwpfMediaTypes.Json, envelopeBytes);
-        AddPart(archive, outerManifest, IwpfPaths.SecurityPayload,  IwpfMediaTypes.OctetStream, cipherText);
+        AddPart(archive, outerManifest, IwpfPaths.SecurityEnvelope, IwpfMediaTypes.Json,         envelopeBytes);
+        AddPart(archive, outerManifest, IwpfPaths.SecurityPayload,  IwpfMediaTypes.OctetStream,   cipherText);
 
         var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(outerManifest, JsonDefaults.Options);
         WriteEntry(archive, IwpfPaths.Manifest, manifestBytes);

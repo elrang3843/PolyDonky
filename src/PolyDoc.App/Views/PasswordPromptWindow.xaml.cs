@@ -19,6 +19,9 @@ public partial class PasswordPromptWindow : Window
     /// <summary>사용자가 [확인] 으로 닫았을 때의 입력 비밀번호.</summary>
     public string EnteredPassword { get; private set; } = "";
 
+    /// <summary>메시지 텍스트를 재정의한다 (쓰기 보호 프롬프트 등 맞춤 안내문용).</summary>
+    public void SetMessage(string message) => MessageText.Text = message;
+
     public void ShowError(string message)
     {
         ErrorText.Text = message;

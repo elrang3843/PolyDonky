@@ -164,7 +164,7 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="DocInfoPwdSet"       xml:space="preserve"><value>Set</value></data>
   <data name="DocInfoPwdNone"      xml:space="preserve"><value>Not set</value></data>
   <data name="DocInfoPwdChange"    xml:space="preserve"><value>Set / Change Password...</value></data>
-  <data name="DocInfoPwdHint"      xml:space="preserve"><value>Password-protected IWPF documents are encrypted starting from the next save. Forgotten passwords cannot be recovered.</value></data>
+  <data name="DocInfoPwdHint"      xml:space="preserve"><value>Open protection encrypts the entire file with AES-256-GCM. Save protection verifies a password when saving. Forgotten passwords cannot be recovered.</value></data>
   <data name="DocInfoPwdNotIwpf"   xml:space="preserve"><value>Password protection only applies when the document is saved in IWPF format.</value></data>
 
   <!-- Watermark tab -->
@@ -185,7 +185,20 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="PwdChangeConfirm"    xml:space="preserve"><value>Confirm password</value></data>
   <data name="PwdChangeHintRemove" xml:space="preserve"><value>Leave the new password blank to remove the existing password.</value></data>
   <data name="PwdMismatch"         xml:space="preserve"><value>The two passwords do not match.</value></data>
+  <data name="PwdEmpty"            xml:space="preserve"><value>Please enter a password.</value></data>
   <data name="PwdWrong"            xml:space="preserve"><value>Incorrect password.</value></data>
+  <data name="PwdWritePromptMessage" xml:space="preserve"><value>This file is write-protected. Enter the password to save.</value></data>
+
+  <!-- Password protection modes -->
+  <data name="PwdModeGroupLabel"   xml:space="preserve"><value>Protection mode</value></data>
+  <data name="PwdModeNone"         xml:space="preserve"><value>No password (remove protection)</value></data>
+  <data name="PwdModeRead"         xml:space="preserve"><value>Open protection — password required to open the file</value></data>
+  <data name="PwdModeWrite"        xml:space="preserve"><value>Save protection — password required to save</value></data>
+  <data name="PwdModeBoth"         xml:space="preserve"><value>Both — password required to open and save</value></data>
+  <data name="DocInfoPwdModeNone"  xml:space="preserve"><value>None</value></data>
+  <data name="DocInfoPwdModeRead"  xml:space="preserve"><value>Open protection (encrypted)</value></data>
+  <data name="DocInfoPwdModeWrite" xml:space="preserve"><value>Save protection</value></data>
+  <data name="DocInfoPwdModeBoth"  xml:space="preserve"><value>Open + save protection</value></data>
 
   <!-- Common -->
   <data name="DlgConfirm"          xml:space="preserve"><value>OK</value></data>

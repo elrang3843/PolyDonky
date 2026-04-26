@@ -97,6 +97,33 @@ public static class IwpfEncryption
         return plain;
     }
 
+    /// <summary>비밀번호로 쓰기 잠금 레코드를 생성. 새 salt 를 매번 생성.</summary>
+    public static IwpfWriteLock CreateWriteLock(string password)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(password);
+        var salt = RandomNumberGenerator.GetBytes(SaltSize);
+        var hash = DeriveKey(password, salt);
+        return new IwpfWriteLock
+        {
+            Salt = Convert.ToBase64String(salt),
+            Hash = Convert.ToBase64String(hash),
+        };
+    }
+
+    /// <summary>비밀번호가 쓰기 잠금 레코드와 일치하는지 상수 시간으로 비교한다.</summary>
+    public static bool VerifyWriteLock(string password, IwpfWriteLock writeLock)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(password);
+        ArgumentNullException.ThrowIfNull(writeLock);
+
+        var salt         = Convert.FromBase64String(writeLock.Salt);
+        var expectedHash = Convert.FromBase64String(writeLock.Hash);
+        var actualHash   = DeriveKey(password, salt, writeLock.Iterations);
+        var match        = CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
+        CryptographicOperations.ZeroMemory(actualHash);
+        return match;
+    }
+
     private static byte[] DeriveKey(string password, byte[] salt, int iterations = PbkdfIterations)
     {
         return Rfc2898DeriveBytes.Pbkdf2(

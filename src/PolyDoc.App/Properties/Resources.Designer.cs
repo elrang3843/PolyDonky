@@ -161,15 +161,28 @@ namespace PolyDoc.App.Properties
         internal static string DocInfoWmHint       => Get(nameof(DocInfoWmHint));
 
         // 비밀번호 다이얼로그
-        internal static string PwdPromptTitle      => Get(nameof(PwdPromptTitle));
-        internal static string PwdPromptMessage    => Get(nameof(PwdPromptMessage));
-        internal static string PwdPromptInput      => Get(nameof(PwdPromptInput));
-        internal static string PwdChangeTitle      => Get(nameof(PwdChangeTitle));
-        internal static string PwdChangeNew        => Get(nameof(PwdChangeNew));
-        internal static string PwdChangeConfirm    => Get(nameof(PwdChangeConfirm));
-        internal static string PwdChangeHintRemove => Get(nameof(PwdChangeHintRemove));
-        internal static string PwdMismatch         => Get(nameof(PwdMismatch));
-        internal static string PwdWrong            => Get(nameof(PwdWrong));
+        internal static string PwdPromptTitle        => Get(nameof(PwdPromptTitle));
+        internal static string PwdPromptMessage      => Get(nameof(PwdPromptMessage));
+        internal static string PwdPromptInput        => Get(nameof(PwdPromptInput));
+        internal static string PwdChangeTitle        => Get(nameof(PwdChangeTitle));
+        internal static string PwdChangeNew          => Get(nameof(PwdChangeNew));
+        internal static string PwdChangeConfirm      => Get(nameof(PwdChangeConfirm));
+        internal static string PwdChangeHintRemove   => Get(nameof(PwdChangeHintRemove));
+        internal static string PwdMismatch           => Get(nameof(PwdMismatch));
+        internal static string PwdEmpty              => Get(nameof(PwdEmpty));
+        internal static string PwdWrong              => Get(nameof(PwdWrong));
+        internal static string PwdWritePromptMessage => Get(nameof(PwdWritePromptMessage));
+
+        // 비밀번호 보호 모드
+        internal static string PwdModeGroupLabel   => Get(nameof(PwdModeGroupLabel));
+        internal static string PwdModeNone         => Get(nameof(PwdModeNone));
+        internal static string PwdModeRead         => Get(nameof(PwdModeRead));
+        internal static string PwdModeWrite        => Get(nameof(PwdModeWrite));
+        internal static string PwdModeBoth         => Get(nameof(PwdModeBoth));
+        internal static string DocInfoPwdModeNone  => Get(nameof(DocInfoPwdModeNone));
+        internal static string DocInfoPwdModeRead  => Get(nameof(DocInfoPwdModeRead));
+        internal static string DocInfoPwdModeWrite => Get(nameof(DocInfoPwdModeWrite));
+        internal static string DocInfoPwdModeBoth  => Get(nameof(DocInfoPwdModeBoth));
 
         // 공통
         internal static string DlgConfirm          => Get(nameof(DlgConfirm));

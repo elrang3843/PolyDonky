@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using PolyDoc.Core;
 
@@ -71,6 +72,21 @@ public sealed class IwpfReader : IDocumentReader
 
             var document = JsonSerializer.Deserialize<PolyDocument>(documentBytes, JsonDefaults.Options)
                 ?? throw new InvalidDataException("Failed to deserialize content/document.json.");
+
+            // 쓰기 잠금 — manifest.WriteLocked 이면 security/write-lock.json 을 읽어
+            // Metadata.Custom 에 보관한다. ViewModel 이 이를 꺼내 _writeLock 으로 저장한다.
+            if (manifest.WriteLocked)
+            {
+                var writeLockBytes = ReadEntry(archive, IwpfPaths.SecurityWriteLock);
+                if (writeLockBytes is not null)
+                {
+                    if (VerifyHashes && manifest.Parts.TryGetValue(IwpfPaths.SecurityWriteLock, out var wlEntry))
+                    {
+                        VerifyHash(IwpfPaths.SecurityWriteLock, writeLockBytes, wlEntry.Sha256);
+                    }
+                    document.Metadata.Custom["iwpf.writeLock"] = Encoding.UTF8.GetString(writeLockBytes);
+                }
+            }
 
             // styles 파트 (있을 때만 머지)
             var stylesBytes = ReadEntry(archive, IwpfPaths.StylesJson);

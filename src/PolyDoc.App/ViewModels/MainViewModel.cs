@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -23,10 +24,28 @@ public partial class MainViewModel : ObservableObject
     private PolyDocument _document = PolyDocument.Empty();
 
     /// <summary>
-    /// IWPF 암호화에 사용할 현재 문서의 비밀번호. null/빈 문자열이면 평문 저장.
+    /// 열기 보호(Read/Both)에 사용할 비밀번호. null/빈 문자열이면 평문 저장.
     /// 메모리 외 어디에도 저장되지 않는다 (ViewModel 인스턴스 생명 주기 내에서만 유효).
     /// </summary>
     private string? _documentPassword;
+
+    /// <summary>쓰기 보호(Write/Both)가 설정된 경우의 잠금 레코드. null 이면 쓰기 보호 없음.</summary>
+    private IwpfWriteLock? _writeLock;
+
+    /// <summary>
+    /// 쓰기 보호 비밀번호 캐시. 세션 내 최초 저장 시 검증 후 저장해 재입력을 방지한다.
+    /// LoadDocument 시 초기화. (Read 모드에서는 사용 안 함.)
+    /// </summary>
+    private string? _writePassword;
+
+    private PasswordMode CurrentPasswordMode =>
+        (!string.IsNullOrEmpty(_documentPassword), _writeLock is not null) switch
+        {
+            (true,  true)  => PasswordMode.Both,
+            (true,  false) => PasswordMode.Read,
+            (false, true)  => PasswordMode.Write,
+            _              => PasswordMode.None,
+        };
 
     [ObservableProperty]
     private Wpf.FlowDocument _flowDocument = new();
@@ -99,10 +118,13 @@ public partial class MainViewModel : ObservableObject
 
     private bool _suppressDirty;
 
-    private void LoadDocument(PolyDocument document, string? path, string? password = null)
+    private void LoadDocument(PolyDocument document, string? path,
+                              string? password = null, IwpfWriteLock? writeLock = null)
     {
         _document = document;
         _documentPassword = password;
+        _writeLock = writeLock;
+        _writePassword = null; // 파일 로드 시 항상 초기화 — 저장 전에 재검증 필요
         _suppressDirty = true;
         FlowDocument = FlowDocumentBuilder.Build(document);
         _suppressDirty = false;
@@ -180,7 +202,15 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        LoadDocument(doc, path, usedPassword);
+        // IwpfReader 가 Metadata.Custom 에 넣어둔 write-lock 데이터를 꺼낸다.
+        IwpfWriteLock? writeLock = null;
+        if (doc.Metadata.Custom.TryGetValue("iwpf.writeLock", out var wlJson))
+        {
+            writeLock = JsonSerializer.Deserialize<IwpfWriteLock>(wlJson, JsonDefaults.Options);
+            doc.Metadata.Custom.Remove("iwpf.writeLock");
+        }
+
+        LoadDocument(doc, path, usedPassword, writeLock);
         StatusMessage = BuildOpenStatusMessage(path, doc);
     }
 
@@ -320,7 +350,7 @@ public partial class MainViewModel : ObservableObject
             Format         = format,
             DataSize       = DocumentMeasurement.FormatBytes(bytes),
             DocTitle       = string.IsNullOrWhiteSpace(meta.Title) ? none : meta.Title,
-            Author         = meta.Author ?? string.Empty, // 편집 가능한 raw 값
+            Author         = meta.Author ?? string.Empty,
             Language       = meta.Language,
             Created        = meta.Created.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
             Modified       = meta.Modified.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
@@ -331,7 +361,7 @@ public partial class MainViewModel : ObservableObject
             SectionCount   = _document.Sections.Count.ToString("N0"),
             TableCount     = tables.ToString("N0"),
             ImageCount     = images.ToString("N0"),
-            HasPassword    = !string.IsNullOrEmpty(_documentPassword),
+            PasswordMode      = CurrentPasswordMode,
             WatermarkEnabled  = wm.Enabled,
             WatermarkText     = wm.Text,
             WatermarkColor    = wm.Color,
@@ -363,15 +393,34 @@ public partial class MainViewModel : ObservableObject
             dirty = true;
         }
 
-        // ── 비밀번호 ──
+        // ── 비밀번호 보호 모드 ──
         if (info.PasswordChanged)
         {
-            var newPwd = string.IsNullOrEmpty(info.NewPassword) ? null : info.NewPassword;
-            if (!string.Equals(_documentPassword, newPwd, StringComparison.Ordinal))
+            var pwd = string.IsNullOrEmpty(info.NewPassword) ? null : info.NewPassword;
+            switch (info.PasswordMode)
             {
-                _documentPassword = newPwd;
-                dirty = true; // 다음 저장 때 암호화 적용
+                case PasswordMode.None:
+                    _documentPassword = null;
+                    _writePassword    = null;
+                    _writeLock        = null;
+                    break;
+                case PasswordMode.Read:
+                    _documentPassword = pwd;
+                    _writePassword    = null;
+                    _writeLock        = null;
+                    break;
+                case PasswordMode.Write:
+                    _documentPassword = null;
+                    _writePassword    = pwd;    // 평문 캐시 — 저장 시 재사용
+                    _writeLock        = pwd is not null ? IwpfEncryption.CreateWriteLock(pwd) : null;
+                    break;
+                case PasswordMode.Both:
+                    _documentPassword = pwd;
+                    _writePassword    = pwd;
+                    _writeLock        = pwd is not null ? IwpfEncryption.CreateWriteLock(pwd) : null;
+                    break;
             }
+            dirty = true;
         }
 
         // ── 워터마크 ──
@@ -486,6 +535,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        // 쓰기 보호가 설정된 경우 저장 전에 비밀번호를 검증한다.
+        if (writer is IwpfWriter && _writeLock is not null)
+        {
+            if (!VerifyWritePassword()) return; // 사용자 취소 또는 불일치 반복
+        }
+
         // CurrentFilePath 가 비어 있으면 디스크에 한 번도 안 쓰여진 신규 문서 — 작성일 갱신.
         var isFirstSave = string.IsNullOrEmpty(CurrentFilePath);
         var now = DateTimeOffset.UtcNow;
@@ -505,11 +560,13 @@ public partial class MainViewModel : ObservableObject
                 rebuilt.Metadata.Modified = now;
             }
 
-            // IWPF 이고 비밀번호가 설정되어 있으면 암호화 모드의 writer 로 교체.
+            // IWPF writer 에 현재 보호 모드와 비밀번호를 지정한다.
             var actualWriter = writer;
-            if (writer is IwpfWriter && !string.IsNullOrEmpty(_documentPassword))
+            if (writer is IwpfWriter)
             {
-                actualWriter = new IwpfWriter { Password = _documentPassword };
+                var mode = CurrentPasswordMode;
+                if (mode != PasswordMode.None)
+                    actualWriter = BuildIwpfWriter(mode);
             }
 
             using var fs = File.Create(path);
@@ -525,6 +582,42 @@ public partial class MainViewModel : ObservableObject
         {
             ReportError(SR.DlgSaveError, ex);
         }
+    }
+
+    /// <summary>
+    /// 쓰기 보호 비밀번호를 프롬프트로 입력받아 _writeLock 과 대조한다.
+    /// 이 세션에서 이미 검증됐으면 (_writePassword != null) 즉시 true 반환.
+    /// 사용자가 [취소] 를 누르면 false 반환.
+    /// </summary>
+    private bool VerifyWritePassword()
+    {
+        if (_writePassword is not null) return true; // 세션 내 이미 검증됨
+
+        string? errorMessage = null;
+        while (true)
+        {
+            var prompt = new PasswordPromptWindow { Owner = Application.Current.MainWindow };
+            prompt.SetMessage(SR.PwdWritePromptMessage);
+            if (errorMessage is not null) prompt.ShowError(errorMessage);
+            if (prompt.ShowDialog() != true) return false;
+
+            if (IwpfEncryption.VerifyWriteLock(prompt.EnteredPassword, _writeLock!))
+            {
+                _writePassword = prompt.EnteredPassword; // 이후 저장 시 재사용
+                return true;
+            }
+
+            errorMessage = SR.PwdWrong;
+        }
+    }
+
+    private IwpfWriter BuildIwpfWriter(PasswordMode mode)
+    {
+        // Read: _documentPassword 로 AES 암호화.
+        // Write: _writePassword 로 write-lock 해시 생성.
+        // Both: _documentPassword (== _writePassword) 로 AES 암호화 + write-lock.
+        var pwd = mode == PasswordMode.Write ? _writePassword : _documentPassword;
+        return new IwpfWriter { PasswordMode = mode, Password = pwd };
     }
 
     private bool ConfirmDiscardChanges()

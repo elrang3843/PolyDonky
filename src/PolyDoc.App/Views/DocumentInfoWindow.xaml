@@ -182,7 +182,7 @@
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
                                    Text="{Binding DocInfoPwdStatus, Source={x:Static svc:LocalizedStrings.Instance}}" />
                         <TextBlock x:Name="PasswordStatusText" Grid.Column="1"
-                                   Style="{StaticResource FieldValue}" />
+                                   Style="{StaticResource FieldValue}" FontWeight="SemiBold" />
                     </Grid>
 
                     <Button Content="{Binding DocInfoPwdChange, Source={x:Static svc:LocalizedStrings.Instance}}"
@@ -191,7 +191,7 @@
 
                     <TextBlock Text="{Binding DocInfoPwdHint, Source={x:Static svc:LocalizedStrings.Instance}}"
                                Foreground="{DynamicResource OnSurfaceMuted}"
-                               TextWrapping="Wrap" Margin="0,18,0,0" />
+                               TextWrapping="Wrap" Margin="0,18,0,0" FontSize="11" />
                     <TextBlock Text="{Binding DocInfoPwdNotIwpf, Source={x:Static svc:LocalizedStrings.Instance}}"
                                Foreground="{DynamicResource OnSurfaceMuted}"
                                TextWrapping="Wrap" Margin="0,8,0,0" FontSize="11" />
