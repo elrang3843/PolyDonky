@@ -402,7 +402,7 @@ public partial class CharFormatWindow : Window
 
     private void ApplyTypographicProps(double widthPercent, double letterSpacingPx)
     {
-        var sel = _editor.Selection;
+        var sel = _editor!.Selection;
         if (sel.IsEmpty) return;
 
         var inlines = CollectLeafInlines(sel);
@@ -559,7 +559,7 @@ public partial class CharFormatWindow : Window
 
     private Inline? GetFirstInlineInSelection()
     {
-        var sel = _editor.Selection;
+        var sel = _editor!.Selection;
 
         // per-char IUC 안에 캐럿이 있으면 부모 Span 을 우선 반환 — 자간/글자폭 값을 그쪽 Tag 에서 읽기.
         Inline? Lift(object? elem)
