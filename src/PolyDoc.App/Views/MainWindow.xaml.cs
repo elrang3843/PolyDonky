@@ -120,8 +120,10 @@ public partial class MainWindow : Window
     {
         if (page is null) return;
 
-        // 용지 너비 (세로·가로 방향 보정)
-        PaperBorder.Width = PolyDoc.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveWidthMm);
+        // 용지 너비·높이 (세로·가로 방향 보정).
+        // Height 는 MinHeight 로 지정해 빈 문서도 한 페이지 분량으로 보이고, 본문이 길어지면 늘어난다.
+        PaperBorder.Width     = PolyDoc.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveWidthMm);
+        PaperBorder.MinHeight = PolyDoc.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveHeightMm);
 
         // 용지 배경색 — 지정된 경우 SolidColorBrush, 없으면 테마 Surface 동적 리소스
         if (!string.IsNullOrEmpty(page.PaperColor))
