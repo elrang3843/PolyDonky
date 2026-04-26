@@ -268,7 +268,7 @@ public static class FlowDocumentBuilder
         }
     }
 
-    /// <summary>글자폭 != 100% 또는 자간 != 0 이면 InlineUIContainer, 그 외에는 Run 반환.</summary>
+    /// <summary>글자폭 != 100% 또는 자간 != 0 이면 Span(per-char InlineUIContainer 들), 그 외에는 Run 반환.</summary>
     public static Wpf.Inline BuildInline(Run run)
     {
         var s = run.Style;
@@ -310,45 +310,35 @@ public static class FlowDocumentBuilder
     private static bool NeedsContainer(RunStyle s)
         => Math.Abs(s.WidthPercent - 100) > 0.5 || Math.Abs(s.LetterSpacingPx) > 0.01;
 
-    /// <summary>글자폭·자간을 InlineUIContainer(TextBlock 또는 StackPanel)으로 시각화.</summary>
-    public static Wpf.InlineUIContainer BuildScaledContainer(Run run)
+    /// <summary>
+    /// 글자폭·자간을 시각화. WPF 의 Run 은 LayoutTransform/RenderTransform 을 직접 지원하지 않으므로
+    /// InlineUIContainer 가 필요하다. 단, 한 Run 전체를 하나의 IUC 로 감싸면 atomic 요소가 되어
+    /// 선택이 통째로 묶여 캐럿이 안으로 못 들어가는 UX 문제가 생긴다.
+    /// 그래서 문자별로 IUC 를 분리하고 같은 부모 Span 아래에 묶어, WPF 가 IUC 사이에
+    /// 캐럿 위치·줄바꿈·문자 단위 선택을 정상적으로 처리하게 한다.
+    /// Span.Tag, 각 IUC.Tag 모두 원본 PolyDoc.Run 을 가리켜 라운드트립 머지의 단서가 된다.
+    /// </summary>
+    public static Wpf.Span BuildScaledContainer(Run run)
     {
         var s = run.Style;
         var fontSize = PtToDip(s.FontSizePt > 0 ? s.FontSizePt : 11);
+        var span = new Wpf.Span { Tag = run };
 
-        System.Windows.UIElement child;
-        if (Math.Abs(s.LetterSpacingPx) > 0.01)
+        var text = run.Text.Length > 0 ? run.Text : " ";
+        bool hasSpacing = Math.Abs(s.LetterSpacingPx) > 0.01;
+        for (int i = 0; i < text.Length; i++)
         {
-            // 자간이 있으면 문자별 TextBlock 을 가로 StackPanel 로 배치
-            var panel = new System.Windows.Controls.StackPanel
+            var tb = BuildCharTextBlock(text[i].ToString(), s, fontSize);
+            // 마지막 문자 뒤 자간은 영역 끝의 군더더기 — 제거.
+            if (hasSpacing && i == text.Length - 1)
+                tb.Margin = new Thickness(0);
+            span.Inlines.Add(new Wpf.InlineUIContainer(tb)
             {
-                Orientation = System.Windows.Controls.Orientation.Horizontal,
-            };
-            foreach (char c in run.Text.Length > 0 ? run.Text : " ")
-            {
-                panel.Children.Add(BuildCharTextBlock(c.ToString(), s, fontSize));
-            }
-            child = panel;
+                BaselineAlignment = BaselineAlignment.Baseline,
+                Tag = run,
+            });
         }
-        else
-        {
-            child = BuildBodyTextBlock(run.Text, s, fontSize);
-        }
-
-        return new Wpf.InlineUIContainer(child)
-        {
-            BaselineAlignment = BaselineAlignment.Baseline,
-            Tag = run,
-        };
-    }
-
-    private static System.Windows.Controls.TextBlock BuildBodyTextBlock(string text, RunStyle s, double fontSize)
-    {
-        var tb = new System.Windows.Controls.TextBlock { Text = text, FontSize = fontSize };
-        if (Math.Abs(s.WidthPercent - 100) > 0.5)
-            tb.LayoutTransform = new WpfMedia.ScaleTransform(s.WidthPercent / 100.0, 1.0);
-        ApplyStyleToTextBlock(tb, s);
-        return tb;
+        return span;
     }
 
     private static System.Windows.Controls.TextBlock BuildCharTextBlock(string ch, RunStyle s, double fontSize)

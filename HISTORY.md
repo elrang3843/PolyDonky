@@ -45,6 +45,7 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- **Fixed** — 글자폭·자간이 적용된 영역이 통째로 atomic 요소로 잡혀 클릭만 해도 전체 범위가 다시 선택되고 캐럿이 안으로 들어가지 못하던 문제. `FlowDocumentBuilder.BuildScaledContainer` 가 더 이상 한 Run 전체를 하나의 `InlineUIContainer` (TextBlock/StackPanel) 로 감싸지 않고, **Span 안에 문자별 InlineUIContainer 를 나열**하도록 변경. 각 IUC 와 부모 Span 모두 같은 `PolyDoc.Run` 을 Tag 로 가져 라운드트립 머지 단서가 된다. `FlowDocumentParser` 의 Span 케이스에 `TryMergePerCharSpan` 추가 — 모든 자식이 같은 Tag 의 per-char IUC 면 한 Run 으로 머지하고, 사용자 편집(중간에 Run 삽입 등)이 있으면 자식별 fallback. `CharFormatWindow.CollectLeafInlines` / `GetFirstInlineInSelection` / `ApplyTypographicProps` 도 Span 단위 교체를 인식하도록 갱신.
 - **Fixed** — 글자 서식 적용 후 InlineUIContainer 가 atomic 요소로 잡혀 선택 영역이 시각상 묶여 보이고 자동 해제되지 않던 문제. `CharFormatWindow.OnOk` 에서 적용 직후 `_editor.Selection.Select(end, end)` 으로 캐럿을 끝으로 collapse.
 - **Fixed** — IWPF 옛 / 누락 discriminator 호환. `BlockJsonConverter` 신설 — 읽기 시 `$type` (현행) 외에 `kind` (29c09bd 시기 옛 빌드) 도 인식하고, 둘 다 없으면 `Paragraph` 로 폴백. 사용자가 옛 빌드로 저장한 iwpf 를 신 빌드에서 그대로 열 수 있다. 쓰기는 항상 `$type` 로 출력. xUnit 회귀 테스트 2건 추가 (legacy `kind` / 누락 discriminator).
 - **Fixed** — 테마 변경이 메인 윈도우에 적용되지 않던 문제. `MainWindow` / `AboutWindow` / `FindReplaceWindow` / `SettingsWindow` 의 모든 테마 리소스 참조를 `StaticResource` → `DynamicResource` 로 교체. (StaticResource 는 로드 시 한 번만 해석되어 사전 교체 후에도 옛 값을 유지.)

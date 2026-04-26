@@ -121,17 +121,19 @@ public partial class CharFormatWindow : Window
             TxtWidthPercent.Text  = "100";
             TxtLetterSpacing.Text = "0";
             var firstInline = GetFirstInlineInSelection();
-            if (firstInline is Run wr && wr.Tag is PolyDoc.Core.Run pr)
+            var taggedRun = firstInline switch
             {
-                if (Math.Abs(pr.Style.WidthPercent - 100) > 0.1)
-                    TxtWidthPercent.Text = pr.Style.WidthPercent.ToString("0.#");
-                if (Math.Abs(pr.Style.LetterSpacingPx) > 0.01)
-                    TxtLetterSpacing.Text = pr.Style.LetterSpacingPx.ToString("0.##");
-            }
-            else if (firstInline is InlineUIContainer { Tag: PolyDoc.Core.Run scaledRun })
+                Run r                                       => r.Tag as PolyDoc.Core.Run,
+                Span sp                                     => sp.Tag as PolyDoc.Core.Run,
+                InlineUIContainer iuc                       => iuc.Tag as PolyDoc.Core.Run,
+                _                                           => null,
+            };
+            if (taggedRun != null)
             {
-                TxtWidthPercent.Text  = scaledRun.Style.WidthPercent.ToString("0.#");
-                TxtLetterSpacing.Text = scaledRun.Style.LetterSpacingPx.ToString("0.##");
+                if (Math.Abs(taggedRun.Style.WidthPercent - 100) > 0.1)
+                    TxtWidthPercent.Text = taggedRun.Style.WidthPercent.ToString("0.#");
+                if (Math.Abs(taggedRun.Style.LetterSpacingPx) > 0.01)
+                    TxtLetterSpacing.Text = taggedRun.Style.LetterSpacingPx.ToString("0.##");
             }
         }
         finally
@@ -321,7 +323,6 @@ public partial class CharFormatWindow : Window
 
     private void ApplyTypographicProps(double widthPercent, double letterSpacingPx)
     {
-        bool needsContainer = Math.Abs(widthPercent - 100) > 0.5 || Math.Abs(letterSpacingPx) > 0.01;
         var sel = _editor.Selection;
         if (sel.IsEmpty) return;
 
@@ -332,27 +333,28 @@ public partial class CharFormatWindow : Window
             // PolyDoc Run 추출 (Tag 우선, 없으면 WPF 속성에서 역산)
             PolyDoc.Core.Run polyRun = inline switch
             {
-                Run r                     => r.Tag as PolyDoc.Core.Run ?? ExtractPolyRun(r),
+                Run r when r.Tag is PolyDoc.Core.Run pr => pr,
+                Run r                                   => ExtractPolyRun(r),
+                Span sp when sp.Tag is PolyDoc.Core.Run pr => pr,
                 InlineUIContainer { Tag: PolyDoc.Core.Run pr } => pr,
-                InlineUIContainer iuc     => ExtractPolyRunFromContainer(iuc),
-                _                         => null!,
+                InlineUIContainer iuc                   => ExtractPolyRunFromContainer(iuc),
+                _                                       => null!,
             };
             if (polyRun is null) continue;
 
             polyRun.Style.WidthPercent     = widthPercent;
             polyRun.Style.LetterSpacingPx  = letterSpacingPx;
 
-            var newInline = needsContainer
-                ? (Inline)FlowDocumentBuilder.BuildScaledContainer(polyRun)
-                : FlowDocumentBuilder.BuildInline(polyRun);
-
+            var newInline = FlowDocumentBuilder.BuildInline(polyRun);
             ReplaceInline(inline, newInline);
         }
     }
 
     /// <summary>
-    /// 선택 영역의 모든 Run / InlineUIContainer 를 중복 없이 수집.
-    /// sel.Start 가 Run 내부(Text 컨텍스트)에 위치할 때 ElementStart 를 볼 수 없으므로
+    /// 선택 영역의 모든 Run / Span / InlineUIContainer 를 중복 없이 수집.
+    /// per-char IUC 가 Span(Tag=Run) 안에 들어 있는 경우는 IUC 들을 묶어 Span 단위로 한 번만 추가
+    /// — 그래야 ApplyTypographicProps 가 Span 한 덩어리를 새로운 Span 으로 통째 교체할 수 있다.
+    /// sel.Start 가 Run/IUC 내부(Text 컨텍스트)에 있을 때 ElementStart 가 안 보이므로
     /// 루프 전에 sel.Start.Parent 를 먼저 확인한다.
     /// </summary>
     private static System.Collections.Generic.List<Inline> CollectLeafInlines(TextSelection sel)
@@ -361,11 +363,20 @@ public partial class CharFormatWindow : Window
 
         void TryAdd(object? obj)
         {
+            // per-char IUC 가 PolyDoc.Run-tagged Span 안에 있으면 Span 자체를 단위로 잡는다.
+            if (obj is InlineUIContainer iuc
+                && iuc.Parent is Span parentSpan
+                && parentSpan.Tag is PolyDoc.Core.Run
+                && ReferenceEquals(parentSpan.Tag, iuc.Tag))
+            {
+                if (!result.Contains(parentSpan)) result.Add(parentSpan);
+                return;
+            }
             if (obj is Run r && !result.Contains(r)) result.Add(r);
-            else if (obj is InlineUIContainer iuc && !result.Contains(iuc)) result.Add(iuc);
+            else if (obj is InlineUIContainer i && !result.Contains(i)) result.Add(i);
+            else if (obj is Span s && s.Tag is PolyDoc.Core.Run && !result.Contains(s)) result.Add(s);
         }
 
-        // sel.Start 가 Run/IUC 내부를 가리킬 때 (TextPointerContext.Text) 해당 요소를 선추가
         TryAdd(sel.Start.Parent);
 
         var ptr = sel.Start;
@@ -470,9 +481,20 @@ public partial class CharFormatWindow : Window
     private Inline? GetFirstInlineInSelection()
     {
         var sel = _editor.Selection;
-        // sel.Start.Parent が Run/IUC なら即返す (Text コンテキストで ElementStart が見えないケース対策)
-        if (sel.Start.Parent is Run or InlineUIContainer)
-            return (Inline)sel.Start.Parent;
+
+        // per-char IUC 안에 캐럿이 있으면 부모 Span 을 우선 반환 — 자간/글자폭 값을 그쪽 Tag 에서 읽기.
+        Inline? Lift(object? elem)
+        {
+            if (elem is InlineUIContainer iuc
+                && iuc.Parent is Span parent
+                && parent.Tag is PolyDoc.Core.Run
+                && ReferenceEquals(parent.Tag, iuc.Tag))
+                return parent;
+            return elem as Inline;
+        }
+
+        if (sel.Start.Parent is Run or InlineUIContainer or Span)
+            return Lift(sel.Start.Parent);
 
         var ptr = sel.Start;
         while (ptr != null && ptr.CompareTo(sel.End) < 0)
@@ -480,8 +502,8 @@ public partial class CharFormatWindow : Window
             if (ptr.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.ElementStart)
             {
                 var elem = ptr.GetAdjacentElement(LogicalDirection.Forward);
-                if (elem is Run or InlineUIContainer)
-                    return (Inline)elem;
+                if (elem is Run or InlineUIContainer or Span)
+                    return Lift(elem);
             }
             ptr = ptr.GetNextContextPosition(LogicalDirection.Forward);
         }

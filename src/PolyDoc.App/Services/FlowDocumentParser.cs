@@ -277,6 +277,13 @@ public static class FlowDocumentParser
                 break;
             case Wpf.Span span:
             {
+                // 글자폭·자간 시각화 Span — Tag 가 PolyDoc.Run 이고 자식이 모두 같은 Tag 의 per-char IUC 면
+                // 한 덩어리로 머지해 원본 Run 의 비-FlowDocument 속성(WidthPercent / LetterSpacingPx) 보존.
+                if (span.Tag is Run spanRun && TryMergePerCharSpan(span, spanRun, out var mergedText))
+                {
+                    p.AddText(mergedText, Clone(spanRun.Style));
+                    break;
+                }
                 var spanStyle = Clone(baseStyle);
                 MergeInlineProperties(spanStyle, span);
                 foreach (var child in span.Inlines)
@@ -286,6 +293,31 @@ public static class FlowDocumentParser
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// per-char IUC Span 의 자식이 모두 같은 Run Tag 를 공유하는 IUC 면 텍스트를 모아 반환.
+    /// 사용자 편집(중간에 Run 삽입, 일부 IUC 제거 등)이 있으면 false — fallback 으로 자식별 파싱.
+    /// </summary>
+    private static bool TryMergePerCharSpan(Wpf.Span span, Run spanRun, out string text)
+    {
+        var sb = new StringBuilder();
+        foreach (var child in span.Inlines)
+        {
+            if (child is Wpf.InlineUIContainer iuc
+                && ReferenceEquals(iuc.Tag, spanRun)
+                && iuc.Child is System.Windows.Controls.TextBlock ctb)
+            {
+                sb.Append(ctb.Text);
+            }
+            else
+            {
+                text = string.Empty;
+                return false;
+            }
+        }
+        text = sb.ToString();
+        return text.Length > 0;
     }
 
     private static void ExtractRunStyle(Wpf.Run wpfRun, RunStyle s)
