@@ -458,7 +458,7 @@ public sealed class HwpxWriter : IDocumentWriter
                 target.Add(BuildImageHostingParagraph(img, ctx));
                 break;
             case OpaqueBlock op:
-                target.Add(BuildParagraph(Paragraph.Of(op.DisplayLabel), ctx));
+                target.Add(BuildOpaqueHostingParagraph(op, ctx));
                 break;
         }
     }
@@ -504,6 +504,30 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("paraPrIDRef", "0"),
             new XAttribute("styleIDRef", "0"),
             new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")));
+
+    // ── opaque island ────────────────────────────────────────────────────────
+
+    private XElement BuildOpaqueHostingParagraph(OpaqueBlock op, WriteContext ctx)
+    {
+        // hwpx 포맷 + XML 있으면 원본 재출력; 그 외 포맷은 placeholder 단락.
+        if (op.Format == "hwpx" && !string.IsNullOrEmpty(op.Xml))
+        {
+            try
+            {
+                var shapeElem = XElement.Parse(op.Xml);
+                var run = new XElement(Hp + "run", new XAttribute("charPrIDRef", "0"), shapeElem);
+                return new XElement(Hp + "p",
+                    new XAttribute("paraPrIDRef", "0"),
+                    new XAttribute("styleIDRef",  "0"),
+                    run);
+            }
+            catch (System.Xml.XmlException)
+            {
+                // 파싱 실패 시 placeholder 로 fallback.
+            }
+        }
+        return BuildParagraph(Paragraph.Of(op.DisplayLabel), ctx);
+    }
 
     // ── table ────────────────────────────────────────────────────────────────
 

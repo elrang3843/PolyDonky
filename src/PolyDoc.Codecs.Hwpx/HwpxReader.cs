@@ -23,6 +23,23 @@ public sealed class HwpxReader : IDocumentReader
     private static readonly XNamespace Hp = HwpxNamespaces.Paragraph;
     private static readonly XNamespace Hs = HwpxNamespaces.Section;
 
+    private static readonly HashSet<string> s_shapeLocalNames = new(StringComparer.Ordinal)
+    {
+        "rect", "line", "ellipse", "arc", "polygon", "textBox", "connector",
+    };
+
+    private static string ShapeDisplayLabel(string localName) => localName switch
+    {
+        "rect"      => "[사각형]",
+        "line"      => "[선]",
+        "ellipse"   => "[타원]",
+        "arc"       => "[호]",
+        "polygon"   => "[다각형]",
+        "textBox"   => "[글상자]",
+        "connector" => "[연결선]",
+        _           => $"[도형:{localName}]",
+    };
+
     public PolyDocument Read(Stream input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -387,13 +404,23 @@ public sealed class HwpxReader : IDocumentReader
             {
                 case "p":
                     section.Blocks.Add(ReadParagraph(elem, ctx.Header));
-                    // paragraph 안에 인라인 그림이 있을 수 있어 별도 ImageBlock 으로 추출.
+                    // paragraph 안에 인라인 그림·도형이 있을 수 있어 별도 블록으로 추출.
                     foreach (var pic in elem.Descendants().Where(d => d.Name.LocalName == "pic"))
                     {
                         if (seenPics.Add(pic) && TryReadPicture(pic, ctx, out var img))
                         {
                             section.Blocks.Add(img);
                         }
+                    }
+                    foreach (var shape in elem.Descendants().Where(d => s_shapeLocalNames.Contains(d.Name.LocalName)))
+                    {
+                        section.Blocks.Add(new OpaqueBlock
+                        {
+                            Format = "hwpx",
+                            Kind = shape.Name.LocalName,
+                            Xml = shape.ToString(SaveOptions.DisableFormatting),
+                            DisplayLabel = ShapeDisplayLabel(shape.Name.LocalName),
+                        });
                     }
                     break;
                 case "tbl":

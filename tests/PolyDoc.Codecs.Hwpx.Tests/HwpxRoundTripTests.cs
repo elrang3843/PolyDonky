@@ -301,6 +301,57 @@ public class HwpxRoundTripTests
         Assert.Equal(new Color(200, 50, 50), run.Style.Foreground);
     }
 
+    [Fact]
+    public void RoundTrip_PreservesHwpxOpaqueShape()
+    {
+        // hp:rect 모양의 최소 XML — 실제 한컴 hwpx 도형 구조 시뮬레이션.
+        const string rectXml = "<hp:rect xmlns:hp=\"http://www.hancom.co.kr/hwpml/2011/paragraph\" " +
+                                "width=\"5000\" height=\"3000\" />";
+
+        var doc = new PolyDocument();
+        var section = new Section();
+        doc.Sections.Add(section);
+        section.Blocks.Add(Paragraph.Of("앞"));
+        section.Blocks.Add(new OpaqueBlock
+        {
+            Format = "hwpx",
+            Kind = "rect",
+            Xml = rectXml,
+            DisplayLabel = "[사각형]",
+        });
+        section.Blocks.Add(Paragraph.Of("뒤"));
+
+        var roundTripped = WriteThenRead(doc);
+        var blocks = roundTripped.Sections[0].Blocks;
+
+        // OpaqueBlock 이 보존되어 중간에 살아남아야 한다.
+        var opaque = blocks.OfType<OpaqueBlock>().SingleOrDefault();
+        Assert.NotNull(opaque);
+        Assert.Equal("hwpx", opaque.Format);
+        Assert.Equal("rect", opaque.Kind);
+        Assert.NotNull(opaque.Xml);
+        Assert.Contains("rect", opaque.Xml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RoundTrip_NonHwpxOpaqueBecomesPlaceholderParagraph()
+    {
+        var doc = new PolyDocument();
+        var section = new Section();
+        doc.Sections.Add(section);
+        section.Blocks.Add(new OpaqueBlock
+        {
+            Format = "docx",
+            Kind = "sdt",
+            Xml = "<w:sdt/>",
+            DisplayLabel = "[SDT]",
+        });
+
+        // docx 포맷 OpaqueBlock 은 HWPX 에 placeholder 단락으로 변환된다 — 예외 없이 완료돼야 한다.
+        var roundTripped = WriteThenRead(doc);
+        Assert.NotEmpty(roundTripped.EnumerateParagraphs());
+    }
+
     private static byte[] WriteToBytes(PolyDocument doc)
     {
         using var ms = new MemoryStream();
