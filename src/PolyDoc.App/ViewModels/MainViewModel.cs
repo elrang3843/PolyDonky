@@ -307,7 +307,7 @@ public partial class MainViewModel : ObservableObject
             Title = SR.DlgFileSaveTitle,
             FileName = string.IsNullOrEmpty(CurrentFilePath)
                 ? SR.DlgDefaultFileName
-                : Path.GetFileName(CurrentFilePath),
+                : Path.GetFileNameWithoutExtension(CurrentFilePath),
         };
         if (dlg.ShowDialog() != true) return;
 

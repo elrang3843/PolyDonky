@@ -52,6 +52,9 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 - **Fixed** — 설정 창 조용한 종료. `OnThemeChecked` 가 `InitializeComponent` 중 `ThemeDark`/`ThemeSoft` 가 아직 null 인 상태에서 호출돼 `NullReferenceException`. null guard 추가.
 - **Fixed** — B 폴리싱 4종 빌드 오류 수정 (2226861 에서 미적용). `Properties/Resources.Designer.cs` 누락으로 `dotnet build` 가 실패해 새 기능이 배포되지 않던 문제 해결 — Designer.cs 수동 생성 (`ResourceManager` + 정적 속성). 드래그&드롭: `RichTextBox` 가 `DragOver`를 가로채 파일 드롭 이벤트가 윈도우에 도달하지 않던 문제 — Window 이벤트를 `Drop`/`DragOver` → `PreviewDrop`/`PreviewDragOver` 로 변경, 파일 드롭만 처리 후 `Handled=true`.
 
+### Fixed
+- **Fixed** — 다른 이름으로 저장 시 형식을 바꿔도 원본 파일명(확장자 포함)이 그대로 남아 "이미 있습니다" 경고가 뜨던 문제. `SaveFileDialog.FileName` 초기값을 `GetFileName` → `GetFileNameWithoutExtension` 으로 변경 — 선택한 필터의 확장자가 자동 적용된다.
+
 ### Added
 - **Added** — 암호 설정 다이얼로그를 체크박스 기반으로 재설계. 열기·쓰기 암호를 독립적으로 설정 가능 — 같이사용 체크 시 단일 입력란, 미체크 시 열기/쓰기 각각 다른 입력란 활성화. `IwpfWriter.WritePassword` 추가로 Both 모드에서 열기와 쓰기 암호를 별도로 지정 지원.
 - **Added** — 쓰기 보호 자동 잠금 해제 UX. 쓰기 보호된 IWPF 를 열면 `RichTextBox.IsReadOnly=true` 로 시작 + 상태 표시줄에 "쓰기 보호됨" 인디케이터(주황). 사용자가 첫 편집(타이핑·Backspace·Delete·Enter·Tab·Ctrl+V/X)을 시도하면 즉시 비밀번호 프롬프트. 정답이면 같은 세션 내 추가 입력·저장 시 재입력 요구하지 않음.
