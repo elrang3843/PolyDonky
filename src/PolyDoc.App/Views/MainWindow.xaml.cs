@@ -133,24 +133,18 @@ public partial class MainWindow : Window
         _suppressTextChanged = true;
         try
         {
-            BodyEditor.Document      = fd;
-            // FlowDirection 을 RichTextBox 컨테이너에도 반영 — 진정한 RTL 입력(새 글자가 *왼쪽* 에 붙음)을
-            // 얻으려면 컨테이너 자체가 RTL 이어야 한다. FlowDocument 만 RTL 이면 Latin/Hangul 같은
-            // Bidi-약방향 문자가 우측 정렬된 LTR run 으로 표시될 뿐 실제 입력 방향은 LTR.
-            BodyEditor.FlowDirection = fd.FlowDirection;
+            BodyEditor.Document = fd;
+            // BodyEditor 컨테이너의 FlowDirection 은 LTR 로 유지한다.
+            // 컨테이너를 RTL 로 바꾸면 WPF 가 Control.Padding 의 Left/Right 를
+            // 시각적으로 뒤집어 code 로 설정한 padR(우측 여백) 이 시각 좌측에 적용되어
+            // 텍스트가 페이지 우측 경계선에 붙는 문제가 발생한다.
+            // RTL 단락 정렬은 fd.FlowDirection(FlowDocument 속성)이 담당하고,
+            // RTL 시각 순서는 paragraph 시작의 U+202E RLO 마커가 담당한다.
+            BodyEditor.FlowDirection = FlowDirection.LeftToRight;
         }
         finally
         {
             _suppressTextChanged = false;
-        }
-
-        // RTL 인 경우 레이아웃 패스 직후 스크롤 원점을 우측(텍스트 시작점)으로 이동.
-        if (fd.FlowDirection == FlowDirection.RightToLeft)
-        {
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                FindVisualChild<ScrollViewer>(BodyEditor)?.ScrollToRightEnd();
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         // 용지 크기·색상을 PaperBorder 에 반영
@@ -210,7 +204,7 @@ public partial class MainWindow : Window
 
         // RTL 모드면 새 paragraph (Enter 등) 시작에 RLO 자동 보충 — 그래야 그 문단도
         // 첫 글자부터 우→좌 방향으로 표시된다.
-        if (BodyEditor.FlowDirection == FlowDirection.RightToLeft)
+        if (BodyEditor.Document.FlowDirection == FlowDirection.RightToLeft)
             EnsureRloInBodyEditorParagraphs();
 
         _viewModel?.MarkDirty();
@@ -220,27 +214,31 @@ public partial class MainWindow : Window
     {
         const char rlo = '\u202E';
         var rloStr = PolyDoc.App.Services.FlowDocumentBuilder.RtlOverrideMark;
+
+        // .ToList() 로 먼저 스냅샷 — r.Text 수정 시 WPF 내부에서 컬렉션이 변경돼
+        // 이터레이터가 InvalidOperationException 을 던지는 것을 방지.
+        var paragraphs = BodyEditor.Document.Blocks
+            .OfType<System.Windows.Documents.Paragraph>()
+            .ToList();
+
         _suppressTextChanged = true;
         try
         {
-            foreach (var block in BodyEditor.Document.Blocks)
+            foreach (var p in paragraphs)
             {
-                if (block is System.Windows.Documents.Paragraph p)
+                var first = p.Inlines.FirstInline;
+                if (first is System.Windows.Documents.Run r)
                 {
-                    var first = p.Inlines.FirstInline;
-                    if (first is System.Windows.Documents.Run r)
-                    {
-                        if (r.Text.Length == 0 || r.Text[0] != rlo)
-                            r.Text = rloStr + r.Text;
-                    }
-                    else if (first == null)
-                    {
-                        p.Inlines.Add(new System.Windows.Documents.Run(rloStr));
-                    }
-                    else
-                    {
-                        p.Inlines.InsertBefore(first, new System.Windows.Documents.Run(rloStr));
-                    }
+                    if (r.Text.Length == 0 || r.Text[0] != rlo)
+                        r.Text = rloStr + r.Text;
+                }
+                else if (first == null)
+                {
+                    p.Inlines.Add(new System.Windows.Documents.Run(rloStr));
+                }
+                else
+                {
+                    p.Inlines.InsertBefore(first, new System.Windows.Documents.Run(rloStr));
                 }
             }
         }
@@ -332,7 +330,7 @@ public partial class MainWindow : Window
     private void OnEditorPreviewKeyDown(object sender, KeyEventArgs e)
     {
         // RTL 모드: Left↔Right 커맨드를 뒤집어 시각 방향 이동이 되도록 교정
-        if (BodyEditor.FlowDirection == FlowDirection.RightToLeft &&
+        if (BodyEditor.Document.FlowDirection == FlowDirection.RightToLeft &&
             (e.Key == Key.Left || e.Key == Key.Right))
         {
             e.Handled = true;
@@ -634,15 +632,4 @@ public partial class MainWindow : Window
         _selectedOverlay = null;
     }
 
-    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
-    {
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
-        {
-            var child = VisualTreeHelper.GetChild(parent, i);
-            if (child is T t) return t;
-            var result = FindVisualChild<T>(child);
-            if (result != null) return result;
-        }
-        return null;
-    }
 }

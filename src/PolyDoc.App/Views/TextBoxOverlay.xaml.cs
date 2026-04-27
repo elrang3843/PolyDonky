@@ -7,7 +7,6 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Media3D;
 using System.Windows.Shapes;
 using PolyDoc.Core;
 using WpfMedia = System.Windows.Media;
@@ -352,8 +351,8 @@ public partial class TextBoxOverlay : UserControl
         // 진정한 RTL 입력(새 글자가 기존 글자 *왼쪽* 에 붙음)을 얻으려면 RichTextBox 자체를
         // RightToLeft 로 두어야 한다. 문서에만 적용하면 Latin/Hangul 같은 Bidi-약방향 문자는
         // 우→좌 흐름이 아닌 우측 정렬된 LTR run 으로 표시되기 때문.
-        // 단, 컨테이너만 RTL 로 두면 초기 스크롤 원점이 좌측이라 처음 몇 글자가 안 보이는
-        // 부작용이 있어 레이아웃 패스 직후 ScrollToRightEnd 로 원점을 우측으로 이동시킨다.
+        // InnerEditor.Margin="6" 이 글상자 테두리 안쪽 6px 여백을 물리적으로 보장하므로
+        // FlowDirection 설정 후 별도의 스크롤 조정은 불필요 (HorizontalScrollBar="Disabled").
         var newFlowDir = (Model.TextOrientation == TextOrientation.Horizontal &&
                           Model.TextProgression == TextProgression.Leftward)
             ? FlowDirection.RightToLeft
@@ -363,10 +362,6 @@ public partial class TextBoxOverlay : UserControl
         if (newFlowDir == FlowDirection.RightToLeft)
         {
             EnsureRloInAllParagraphs();
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                FindVisualChild<ScrollViewer>(InnerEditor)?.ScrollToRightEnd();
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
         else
         {
@@ -465,14 +460,17 @@ public partial class TextBoxOverlay : UserControl
 
     private void EnsureRloInAllParagraphs()
     {
+        // .ToList() 로 먼저 스냅샷 — EnsureRloAtParagraphStart 에서 r.Text 를 수정할 때
+        // WPF 내부에서 컬렉션 변경이 트리거되어 InvalidOperationException 이 발생하는 것을 방지.
+        var paragraphs = InnerEditor.Document.Blocks
+            .OfType<System.Windows.Documents.Paragraph>()
+            .ToList();
+
         _suppressTextChanged = true;
         try
         {
-            foreach (var block in InnerEditor.Document.Blocks)
-            {
-                if (block is System.Windows.Documents.Paragraph p)
-                    EnsureRloAtParagraphStart(p);
-            }
+            foreach (var p in paragraphs)
+                EnsureRloAtParagraphStart(p);
         }
         finally { _suppressTextChanged = false; }
     }
@@ -497,18 +495,19 @@ public partial class TextBoxOverlay : UserControl
 
     private void RemoveRloFromAllParagraphs()
     {
+        var paragraphs = InnerEditor.Document.Blocks
+            .OfType<System.Windows.Documents.Paragraph>()
+            .ToList();
+
         _suppressTextChanged = true;
         try
         {
-            foreach (var block in InnerEditor.Document.Blocks)
+            foreach (var p in paragraphs)
             {
-                if (block is System.Windows.Documents.Paragraph p)
+                foreach (var inline in p.Inlines.ToList())
                 {
-                    foreach (var inline in p.Inlines.ToList())
-                    {
-                        if (inline is System.Windows.Documents.Run r && r.Text.Contains(RlOverrideChar))
-                            r.Text = r.Text.Replace(RtlOverrideMark, string.Empty);
-                    }
+                    if (inline is System.Windows.Documents.Run r && r.Text.Contains(RlOverrideChar))
+                        r.Text = r.Text.Replace(RtlOverrideMark, string.Empty);
                 }
             }
         }
@@ -796,15 +795,4 @@ public partial class TextBoxOverlay : UserControl
         return double.IsNaN(v) ? 0 : v;
     }
 
-    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
-    {
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
-        {
-            var child = VisualTreeHelper.GetChild(parent, i);
-            if (child is T t) return t;
-            var result = FindVisualChild<T>(child);
-            if (result != null) return result;
-        }
-        return null;
-    }
 }
