@@ -35,7 +35,13 @@ public partial class MainWindow : Window
         BodyEditor.TextChanged += OnEditorTextChanged;
         // 상태 표시줄 Insert/CapsLock/NumLock 갱신을 위해 윈도우 레벨 키 입력 가로채기.
         PreviewKeyDown += OnPreviewKeyDown;
+        // 마지막으로 키보드 포커스를 가졌던 텍스트 편집기를 추적 — 메뉴 클릭 시 포커스가
+        // 메뉴로 옮겨가도 직전 편집 컨텍스트(BodyEditor 또는 글상자 InnerEditor) 를 잃지 않게.
+        BodyEditor.GotKeyboardFocus += (_, _) => _lastTextEditor = BodyEditor;
     }
+
+    /// <summary>가장 최근에 키보드 포커스를 가졌던 RichTextBox.</summary>
+    private RichTextBox? _lastTextEditor;
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -247,13 +253,12 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 글자/문단 속성 다이얼로그가 적용해야 할 활성 RichTextBox 를 결정한다.
-    /// 글상자 안쪽 본문에 키보드 포커스가 있으면 그 InnerEditor, 아니면 BodyEditor.
-    /// 메뉴(서식 → 글자 속성/문단 속성) 가 글상자 편집 중에도 정확한 대상에 적용되도록 보장.
+    /// 메뉴 클릭은 포커스를 메뉴로 옮기므로 IsKeyboardFocusWithin 만으로는 글상자
+    /// 편집 중인지 감지할 수 없다. `_lastTextEditor` 에 추적해둔 마지막 편집 대상을
+    /// 우선 사용하고, 없으면 본문으로 폴백.
     /// </summary>
     private RichTextBox GetActiveTextEditor()
-        => (_selectedOverlay is { } ov && ov.InnerEditor.IsKeyboardFocusWithin)
-            ? ov.InnerEditor
-            : BodyEditor;
+        => _lastTextEditor ?? BodyEditor;
 
     private void OnFormatChar(object sender, RoutedEventArgs e)
     {
@@ -606,6 +611,8 @@ public partial class MainWindow : Window
     {
         FloatingCanvas.Children.Clear();
         _selectedOverlay = null;
+        // 옛 InnerEditor 참조는 기각 — 다시 만들 overlay 의 InnerEditor 가 GotKeyboardFocus 시 갱신.
+        _lastTextEditor = null;
         var section = _viewModel?.Document.Sections.FirstOrDefault();
         if (section is null) return;
         foreach (var obj in section.FloatingObjects.OfType<TextBoxObject>())
@@ -623,6 +630,10 @@ public partial class MainWindow : Window
         overlay.Height = model.HeightMm * TextBoxOverlay.DipsPerMm;
 
         overlay.Selected += (_, _) => SelectOverlay(overlay);
+        // 마지막 포커스 추적 — 사용자가 메뉴(서식 → 글자 속성 등) 를 누르면 포커스가 메뉴로
+        // 이동해 IsKeyboardFocusWithin 이 false 가 된다. _lastTextEditor 에 미리 기억해두면
+        // 메뉴에서 연 다이얼로그가 정확한 편집 대상을 잡을 수 있다.
+        overlay.InnerEditor.GotKeyboardFocus += (_, _) => _lastTextEditor = overlay.InnerEditor;
 
         overlay.BringForwardRequested += (_, _) =>
         {
@@ -670,6 +681,7 @@ public partial class MainWindow : Window
             FloatingCanvas.Children.Remove(overlay);
             _viewModel?.RemoveFloatingObject(model);
             if (ReferenceEquals(_selectedOverlay, overlay)) _selectedOverlay = null;
+            if (ReferenceEquals(_lastTextEditor, overlay.InnerEditor)) _lastTextEditor = null;
             BodyEditor.Focus();
         };
 

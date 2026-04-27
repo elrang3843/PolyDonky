@@ -45,7 +45,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
-- **Fixed** — 메뉴 **서식 → 글자 속성 / 문단 속성** 이 글상자 편집 중에도 항상 본문(`BodyEditor`) 에만 적용되던 버그. 활성 RichTextBox 를 헬퍼(`GetActiveTextEditor`) 로 결정해, 글상자 InnerEditor 에 키보드 포커스가 있을 때는 그 InnerEditor 로, 그 외에는 `BodyEditor` 로 다이얼로그 라우팅. 글상자 컨텍스트 메뉴(`OnContextMenuCharFormat`) 는 처음부터 InnerEditor 를 썼지만, 본문 메뉴는 잘못된 대상을 잡아 "로드된 글상자 글자 속성 변경 안됨" 증상으로 보였다.
+- **Fixed** — 메뉴 **서식 → 글자 속성 / 문단 속성** 을 글상자 편집 중에 열어도 본문(`BodyEditor`) 에만 적용되던 버그(2차 수정). 1차 수정에서 `IsKeyboardFocusWithin` 검사를 추가했지만, 메뉴를 클릭하는 순간 포커스가 메뉴로 이동하면서 InnerEditor 의 `IsKeyboardFocusWithin` 이 false 로 떨어져 여전히 `BodyEditor` 로 폴백하던 회귀. `BodyEditor.GotKeyboardFocus` / 각 `TextBoxOverlay.InnerEditor.GotKeyboardFocus` 에 훅을 걸어 **마지막으로 키보드 포커스를 가졌던 RichTextBox** 를 `_lastTextEditor` 에 추적하고, `GetActiveTextEditor()` 가 이 값을 우선 사용하도록 변경. 메뉴 클릭으로 인한 일시적 포커스 이전이 있어도 직전 편집 컨텍스트가 보존된다. 글상자 삭제·문서 재로드 시 stale 참조는 자동 정리.
 - **Fixed** — `TryPasteFloatingObject` 가 `BodyEditor.IsKeyboardFocusWithin` 단독 검사로 본문 편집기에 캐럿이 있는 모든 경우 일반 텍스트 붙여넣기에 양보 → 사용자가 글상자를 복사한 직후 Ctrl+V 를 눌러도 plain-text fallback 만 본문에 들어가던 문제. **텍스트 선택이 있을 때만** 일반 붙여넣기에 양보하도록 수정 — 캐럿만 위치한 경우(BodyEditor / InnerEditor 무관) 는 글상자 클립보드 데이터를 우선 적용해 새 글상자 한 개를 캔버스에 띄운다.
 
 - **Fixed** — 글상자 안쪽 텍스트의 **글자 속성(폰트·크기·볼드·이탤릭·밑줄·글자색·배경색 등) 이 저장→재로드 시 사라지고, 로드 후 글자 속성 변경이 반영되지 않던 버그**. `TextBoxOverlay.LoadModelTextToEditor` 가 만드는 `Wpf.Run` 에 원본 `PolyDonky.Run` 을 `Tag` 로 심어, `FlowDocumentParser.ParseInline` 이 Tag 우선 시드(`Clone(original.Style)`) 로 라운드트립 — WPF 의 inheritance 로 인한 속성 drift(폰트 패밀리 자동 stamping 등) 와 비-Wpf 속성(LetterSpacingPx, WidthPercent) 까지 정확히 복원. 더불어 본문 라운드트립용 `FlowDocumentBuilder.BuildInline(Run)` / `FlowDocumentParser.Parse(FlowDocument)` 재사용 (이전 plain-text 전용 변환 → 글자 속성 통째 유실 문제도 해결).
