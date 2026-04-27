@@ -253,16 +253,34 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 글자/문단 속성 다이얼로그가 적용해야 할 활성 RichTextBox 를 결정한다.
-    /// 메뉴 클릭은 포커스를 메뉴로 옮기므로 IsKeyboardFocusWithin 만으로는 글상자
-    /// 편집 중인지 감지할 수 없다. `_lastTextEditor` 에 추적해둔 마지막 편집 대상을
-    /// 우선 사용하고, 없으면 본문으로 폴백.
+    /// 우선순위:
+    /// 1) 글상자가 선택된 상태(`_selectedOverlay != null`) — 사용자가 chrome 만 선택했든
+    ///    안쪽 본문을 편집 중이었든 의도는 그 글상자에 작업하는 것. 해당 InnerEditor 사용.
+    /// 2) 마지막으로 키보드 포커스를 가졌던 RichTextBox — 메뉴 클릭으로 포커스가 일시
+    ///    이동한 경우에도 직전 편집 대상을 보존.
+    /// 3) BodyEditor — 기본 폴백.
     /// </summary>
     private RichTextBox GetActiveTextEditor()
-        => _lastTextEditor ?? BodyEditor;
+        => _selectedOverlay?.InnerEditor ?? _lastTextEditor ?? BodyEditor;
+
+    /// <summary>
+    /// 글상자 InnerEditor 를 다이얼로그 대상으로 잡았는데 안쪽 selection 이 비어 있으면
+    /// 전체 선택해서 적용 — chrome 만 선택한 사용자도 눈에 보이는 결과를 얻을 수 있게.
+    /// 본문(BodyEditor) 에는 적용하지 않는다 — 본문에서 빈 selection 은 "다음 입력에
+    /// 적용" 의미가 명확.
+    /// </summary>
+    private static void EnsureInnerSelectionForDialog(RichTextBox editor, TextBoxOverlay? overlay)
+    {
+        if (overlay is null) return;
+        if (!ReferenceEquals(editor, overlay.InnerEditor)) return;
+        if (!editor.Selection.IsEmpty) return;
+        editor.SelectAll();
+    }
 
     private void OnFormatChar(object sender, RoutedEventArgs e)
     {
         var editor = GetActiveTextEditor();
+        EnsureInnerSelectionForDialog(editor, _selectedOverlay);
         var dlg = new CharFormatWindow(editor) { Owner = this };
         if (dlg.ShowDialog() == true)
         {
@@ -274,6 +292,7 @@ public partial class MainWindow : Window
     private void OnFormatPara(object sender, RoutedEventArgs e)
     {
         var editor = GetActiveTextEditor();
+        EnsureInnerSelectionForDialog(editor, _selectedOverlay);
         var dlg = new ParaFormatWindow(editor) { Owner = this };
         if (dlg.ShowDialog() == true)
         {

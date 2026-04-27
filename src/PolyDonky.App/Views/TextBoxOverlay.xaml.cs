@@ -473,6 +473,9 @@ public partial class TextBoxOverlay : UserControl
         // Focus 를 미리 복귀시키면 inactive selection 이 collapse 되므로
         // 다이얼로그에 InnerEditor 를 그대로 전달 — Selection 포인터는 포커스
         // 없이도 유효하게 유지된다.
+        // selection 이 비어 있으면 안쪽 텍스트 전체에 적용 — chrome 우클릭 흐름에서
+        // 사용자가 아무것도 선택 안 했어도 시각적으로 결과가 나오도록.
+        if (InnerEditor.Selection.IsEmpty) InnerEditor.SelectAll();
         var dlg = new CharFormatWindow(InnerEditor) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
@@ -485,6 +488,7 @@ public partial class TextBoxOverlay : UserControl
 
     private void OnContextMenuParaFormat(object sender, RoutedEventArgs e)
     {
+        if (InnerEditor.Selection.IsEmpty) InnerEditor.SelectAll();
         var dlg = new ParaFormatWindow(InnerEditor) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
