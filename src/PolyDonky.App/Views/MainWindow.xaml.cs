@@ -207,13 +207,21 @@ public partial class MainWindow : Window
             var ctrl = Services.FlowDocumentBuilder.BuildOverlayImageControl(img);
             if (ctrl is null) continue;
 
-            ctrl.Tag = img;   // 우클릭 → 속성 라우팅용
+            ctrl.Tag = img;
             System.Windows.Controls.Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(img.OverlayXMm));
             System.Windows.Controls.Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(img.OverlayYMm));
             ctrl.Cursor = System.Windows.Input.Cursors.SizeAll;
 
-            // 우클릭 → 속성 다이얼로그
-            ctrl.MouseRightButtonDown += OnOverlayImageRightClick;
+            // 우클릭 컨텍스트 메뉴 — ContextMenu 를 요소에 직접 설정해 WPF ContextMenuService 가
+            // 처리하도록 한다. MouseRightButtonDown 수동 처리와 달리 BodyEditor 의
+            // ContextMenuOpening 과 충돌하지 않는다.
+            var captured  = img;   // 클로저 캡처
+            var ctxMenu   = new System.Windows.Controls.ContextMenu();
+            var propsItem = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
+            propsItem.Click += (_, _) => OpenOverlayImageProperties(captured);
+            ctxMenu.Items.Add(propsItem);
+            ctrl.ContextMenu = ctxMenu;
+
             // 좌클릭 → 드래그 시작 또는 더블클릭 시 속성 다이얼로그
             ctrl.MouseLeftButtonDown += OnOverlayImageMouseDown;
 
@@ -230,21 +238,6 @@ public partial class MainWindow : Window
     private double _overlayDragStartLeft;
     private double _overlayDragStartTop;
     private bool   _overlayDragMoved;
-
-    private void OnOverlayImageRightClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (sender is not System.Windows.FrameworkElement fe ||
-            fe.Tag is not PolyDonky.Core.ImageBlock img) return;
-
-        var menu  = new System.Windows.Controls.ContextMenu();
-        var item  = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
-        item.Click += (_, _) => OpenOverlayImageProperties(img);
-        menu.Items.Add(item);
-        menu.PlacementTarget = fe;
-        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
-        menu.IsOpen = true;
-        e.Handled = true;
-    }
 
     private void OnOverlayImageMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
@@ -314,13 +307,22 @@ public partial class MainWindow : Window
     private void OpenOverlayImageProperties(PolyDonky.Core.ImageBlock img)
     {
         var dlg = new ImagePropertiesWindow(img) { Owner = this };
-        if (dlg.ShowDialog() == true)
+        if (dlg.ShowDialog() != true) return;
+
+        // WrapMode 가 InFrontOfText/BehindText 이외로 바뀔 수 있으므로 플레이스홀더를
+        // 새 Block 으로 교체한다. _viewModel.Document(저장 시 재구축)가 아니라
+        // live FlowDocument 를 직접 수정해야 편집 중인 이미지가 누락되지 않는다.
+        var placeholder = BodyEditor.Document.Blocks
+            .FirstOrDefault(b => ReferenceEquals(b.Tag, img));
+        if (placeholder is not null)
         {
-            // 속성 변경 — 본문 흐름의 placeholder 도, 캔버스 오버레이도 모두 갱신 필요.
-            // 가장 안전한 방법: FlowDocument 전체 재빌드.
-            _viewModel?.RebuildFlowDocument();
-            _viewModel?.MarkDirty();
+            var newBlock = Services.FlowDocumentBuilder.BuildImage(img);
+            BodyEditor.Document.Blocks.InsertBefore(placeholder, newBlock);
+            BodyEditor.Document.Blocks.Remove(placeholder);
         }
+
+        RebuildOverlayImages();
+        _viewModel?.MarkDirty();
     }
 
     private void ApplyPageSettings(PolyDonky.Core.PageSettings? page)
