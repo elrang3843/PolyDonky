@@ -352,17 +352,14 @@ public partial class TextBoxOverlay : UserControl
         // 진정한 RTL 입력(새 글자가 기존 글자 *왼쪽* 에 붙음)을 얻으려면 RichTextBox 자체를
         // RightToLeft 로 두어야 한다. 문서에만 적용하면 Latin/Hangul 같은 Bidi-약방향 문자는
         // 우→좌 흐름이 아닌 우측 정렬된 LTR run 으로 표시되기 때문.
-        // InnerEditor.Margin="6" 이 글상자 테두리 안쪽 6px 여백을 물리적으로 보장한다.
-        // InnerEditor 컨테이너는 항상 LTR 로 유지 — RTL 로 두면 WPF 가 Margin/Padding 을
-        // 시각적으로 뒤집어 여백이 반대편에 적용된다.
-        // RTL 정렬은 FlowDocument.FlowDirection 이 담당하고, 시각 글자 순서는 U+202E RLO 가 담당.
+        // InnerEditor.Margin="6" 이 글상자 테두리 안쪽 6px 여백을 물리적으로 보장하므로
+        // FlowDirection 설정 후 별도의 스크롤 조정은 불필요 (HorizontalScrollBar="Disabled").
         var newFlowDir = (Model.TextOrientation == TextOrientation.Horizontal &&
                           Model.TextProgression == TextProgression.Leftward)
             ? FlowDirection.RightToLeft
             : FlowDirection.LeftToRight;
 
-        InnerEditor.FlowDirection = FlowDirection.LeftToRight;
-        InnerEditor.Document.FlowDirection = newFlowDir;
+        InnerEditor.FlowDirection = newFlowDir;
         if (newFlowDir == FlowDirection.RightToLeft)
         {
             EnsureRloInAllParagraphs();
@@ -409,7 +406,6 @@ public partial class TextBoxOverlay : UserControl
         var prefix = isRtl ? RtlOverrideMark : string.Empty;
 
         var doc = new System.Windows.Documents.FlowDocument();
-        if (isRtl) doc.FlowDirection = FlowDirection.RightToLeft;
         foreach (var block in Model.Content)
         {
             if (block is PolyDoc.Core.Paragraph cp)
@@ -456,7 +452,7 @@ public partial class TextBoxOverlay : UserControl
     {
         if (_suppressTextChanged) return;
         // RTL 모드면 새로 생긴 paragraph (Enter 등) 시작에 RLO 자동 보충.
-        if (InnerEditor.Document.FlowDirection == FlowDirection.RightToLeft)
+        if (InnerEditor.FlowDirection == FlowDirection.RightToLeft)
             EnsureRloInAllParagraphs();
         SyncEditorToModel();
         Model.Status = NodeStatus.Modified;
@@ -750,7 +746,7 @@ public partial class TextBoxOverlay : UserControl
     // 사용자는 시각 방향 이동을 기대하므로 Left↔Right 커맨드를 뒤집는다.
     private void OnInnerEditorPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (InnerEditor.Document.FlowDirection != FlowDirection.RightToLeft) return;
+        if (InnerEditor.FlowDirection != FlowDirection.RightToLeft) return;
         if (e.Key != Key.Left && e.Key != Key.Right) return;
 
         e.Handled = true;

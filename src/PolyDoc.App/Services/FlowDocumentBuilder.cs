@@ -35,22 +35,14 @@ public static class FlowDocumentBuilder
         // 첫 번째 섹션의 PageSettings 를 FlowDocument 기본으로 사용
         var page = document.Sections.FirstOrDefault()?.Page ?? new PageSettings();
 
-        double wDip  = MmToDip(page.EffectiveWidthMm);
-        double padL  = MmToDip(page.MarginLeftMm);
-        double padT  = MmToDip(page.MarginTopMm);
-        double padR  = MmToDip(page.MarginRightMm);
-        double padB  = MmToDip(page.MarginBottomMm);
+        double wDip = MmToDip(page.EffectiveWidthMm);
 
         var fd = new Wpf.FlowDocument
         {
             FontFamily  = new WpfMedia.FontFamily("맑은 고딕, Malgun Gothic, Segoe UI"),
             FontSize    = PtToDip(11),
             PageWidth   = wDip,
-            // PagePadding 이 RichTextBox 내에서 실제 여백을 담당한다.
-            // FlowDirection 이 RTL 일 때 paragraph 우측 정렬 기준점이 PageWidth 끝(용지 경계)
-            // 이 되지 않도록, PagePadding.Right 로 오른쪽 여백을 FlowDocument 내부에서 확보한다.
-            // LTR 에서도 BodyEditor.Padding 대신 이 값이 실질 여백을 제공한다.
-            PagePadding = new Thickness(padL, padT, padR, padB),
+            PagePadding = new Thickness(0),
         };
 
         // 글자 방향 — 가로쓰기는 FlowDirection 으로 처리.

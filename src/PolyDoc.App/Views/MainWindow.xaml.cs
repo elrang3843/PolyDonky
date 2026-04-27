@@ -169,9 +169,8 @@ public partial class MainWindow : Window
         PaperBorder.Width     = PolyDoc.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveWidthMm);
         PaperBorder.MinHeight = PolyDoc.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveHeightMm);
 
-        // 여백은 FlowDocument.PagePadding 이 담당 (FlowDocumentBuilder 에서 설정).
-        // BodyEditor.Padding 은 0 으로 두어 PagePadding 과 이중 계산되지 않게 한다.
-        BodyEditor.Padding = new Thickness(0);
+        // 여백을 RichTextBox Padding 으로 반영 — FlowDocument.PagePadding 은 RichTextBox 컨텍스트에서 무시됨
+        BodyEditor.Padding = new Thickness(padL, padT, padR, padB);
 
         // 여백 안내선 위치 갱신
         MarginGuideRect.Margin     = new Thickness(padL, padT, padR, padB);
