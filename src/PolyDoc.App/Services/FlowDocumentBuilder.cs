@@ -354,9 +354,13 @@ public static class FlowDocumentBuilder
             wpfPara.LineHeight = wpfPara.FontSize * style.LineHeightFactor;
     }
 
-    /// <summary>글자폭 != 100% 또는 자간 != 0 이면 Span(per-char InlineUIContainer 들), 그 외에는 Run 반환.</summary>
+    /// <summary>글자폭 != 100% 또는 자간 != 0 이면 Span(per-char InlineUIContainer 들), 그 외에는 Run 반환.
+    /// LatexSource 가 있으면 WpfMath FormulaControl 로 렌더링.</summary>
     public static Wpf.Inline BuildInline(Run run)
     {
+        if (run.LatexSource is { Length: > 0 } latex)
+            return BuildEquationInline(run, latex);
+
         var s = run.Style;
         if (NeedsContainer(s))
             return BuildScaledContainer(run);
@@ -391,6 +395,29 @@ public static class FlowDocumentBuilder
 
         wpfRun.Tag = run;
         return wpfRun;
+    }
+
+    private static Wpf.Inline BuildEquationInline(Run run, string latex)
+    {
+        try
+        {
+            var formula = new WpfMath.Controls.FormulaControl
+            {
+                Formula = latex,
+                Scale   = run.IsDisplayEquation ? 18.0 : 14.0,
+            };
+            return new Wpf.InlineUIContainer(formula)
+            {
+                Tag               = run,
+                BaselineAlignment = BaselineAlignment.Center,
+            };
+        }
+        catch
+        {
+            // LaTeX 파싱 실패 시 plain-text 폴백
+            var fallback = new Wpf.Run(run.Text) { Tag = run };
+            return fallback;
+        }
     }
 
     private static bool NeedsContainer(RunStyle s)
