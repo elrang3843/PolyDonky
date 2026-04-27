@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using PolyDonky.App.Services;
 using PolyDonky.Core;
+using CoreRun = PolyDonky.Core.Run;
 
 namespace PolyDonky.App.Views;
 
@@ -14,7 +15,7 @@ public partial class EmojiPropertiesWindow : Window
 {
     private readonly Image              _img;
     private readonly InlineUIContainer  _iuc;
-    private readonly Run                _run;
+    private readonly CoreRun            _run;
 
     private static readonly (EmojiAlignment Value, string Label)[] AlignOptions =
     {
@@ -24,7 +25,7 @@ public partial class EmojiPropertiesWindow : Window
         (EmojiAlignment.Baseline,   "기준선 (Baseline)"),
     };
 
-    public EmojiPropertiesWindow(Image img, InlineUIContainer iuc, Run run)
+    public EmojiPropertiesWindow(Image img, InlineUIContainer iuc, CoreRun run)
     {
         InitializeComponent();
         _img = img;
