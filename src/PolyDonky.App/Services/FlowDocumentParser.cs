@@ -252,6 +252,7 @@ public static class FlowDocumentParser
                         LatexSource       = origRun.LatexSource,
                         IsDisplayEquation = origRun.IsDisplayEquation,
                         EmojiKey          = origRun.EmojiKey,
+                        EmojiAlignment    = origRun.EmojiAlignment,
                     });
                 }
                 else if (iuc.Child is System.Windows.Controls.StackPanel panel)

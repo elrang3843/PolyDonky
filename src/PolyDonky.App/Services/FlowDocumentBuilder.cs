@@ -182,7 +182,17 @@ public static class FlowDocumentBuilder
 
     internal static Wpf.BlockUIContainer BuildImage(ImageBlock image)
     {
-        var container = new Wpf.BlockUIContainer { Tag = image };
+        var container = new Wpf.BlockUIContainer
+        {
+            Tag           = image,
+            Margin        = new Thickness(0, MmToDip(image.MarginTopMm), 0, MmToDip(image.MarginBottomMm)),
+            TextAlignment = image.HAlign switch
+            {
+                ImageHAlign.Center => TextAlignment.Center,
+                ImageHAlign.Right  => TextAlignment.Right,
+                _                  => TextAlignment.Left,
+            },
+        };
 
         if (image.Data.Length == 0)
         {
@@ -204,24 +214,32 @@ public static class FlowDocumentBuilder
 
         var control = new System.Windows.Controls.Image
         {
-            Source = bitmap,
+            Source  = bitmap,
             Stretch = WpfMedia.Stretch.Uniform,
-            HorizontalAlignment = HorizontalAlignment.Left,
+            Tag     = container,   // 우클릭 속성 다이얼로그 라우팅: Image → BlockUIContainer → ImageBlock
         };
-        if (image.WidthMm > 0)
+        if (image.WidthMm > 0)  control.Width  = MmToDip(image.WidthMm);
+        if (image.HeightMm > 0) control.Height = MmToDip(image.HeightMm);
+        if (!string.IsNullOrEmpty(image.Description)) control.ToolTip = image.Description;
+
+        // 테두리
+        UIElement child = control;
+        if (!string.IsNullOrEmpty(image.BorderColor) && image.BorderThicknessPt > 0)
         {
-            control.Width = MmToDip(image.WidthMm);
-        }
-        if (image.HeightMm > 0)
-        {
-            control.Height = MmToDip(image.HeightMm);
-        }
-        if (!string.IsNullOrEmpty(image.Description))
-        {
-            control.ToolTip = image.Description;
+            WpfMedia.Brush borderBrush;
+            try { borderBrush = new WpfMedia.SolidColorBrush(
+                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.BorderColor)!); }
+            catch { borderBrush = WpfMedia.Brushes.Black; }
+
+            child = new System.Windows.Controls.Border
+            {
+                Child           = control,
+                BorderBrush     = borderBrush,
+                BorderThickness = new Thickness(PtToDip(image.BorderThicknessPt)),
+            };
         }
 
-        container.Child = control;
+        container.Child = child;
         return container;
     }
 
@@ -428,11 +446,19 @@ public static class FlowDocumentBuilder
         if (img is null)
             return new Wpf.Run($"[{emojiKey}]") { Tag = run };
 
-        return new Wpf.InlineUIContainer(img)
+        var iuc = new Wpf.InlineUIContainer(img)
         {
             Tag               = run,
-            BaselineAlignment = BaselineAlignment.Center,
+            BaselineAlignment = run.EmojiAlignment switch
+            {
+                EmojiAlignment.TextTop    => BaselineAlignment.TextTop,
+                EmojiAlignment.TextBottom => BaselineAlignment.TextBottom,
+                EmojiAlignment.Baseline   => BaselineAlignment.Baseline,
+                _                         => BaselineAlignment.Center,
+            },
         };
+        img.Tag = iuc;   // 우클릭 속성 라우팅: Image → InlineUIContainer → Run
+        return iuc;
     }
 
     /// <summary>

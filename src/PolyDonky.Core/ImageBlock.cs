@@ -1,5 +1,8 @@
 namespace PolyDonky.Core;
 
+/// <summary>블록 단위 이미지 정렬.</summary>
+public enum ImageHAlign { Left, Center, Right }
+
 /// <summary>
 /// 임베드된 이미지(블록 단위). 인라인 이미지는 후속 사이클에서 Run 추상화 확장 후 추가된다.
 /// 바이너리는 <see cref="Data"/> 에 직접 보관되지만, IWPF 패키징 시
@@ -24,4 +27,19 @@ public sealed class ImageBlock : Block
 
     /// <summary>접근성·검색용 대체 텍스트.</summary>
     public string? Description { get; set; }
+
+    /// <summary>블록 내 가로 정렬.</summary>
+    public ImageHAlign HAlign { get; set; } = ImageHAlign.Left;
+
+    /// <summary>위 여백 (mm).</summary>
+    public double MarginTopMm { get; set; }
+
+    /// <summary>아래 여백 (mm).</summary>
+    public double MarginBottomMm { get; set; }
+
+    /// <summary>테두리 색상 hex (예: "#FF0000"). null 이면 테두리 없음.</summary>
+    public string? BorderColor { get; set; }
+
+    /// <summary>테두리 두께 (pt). 0 이하면 테두리 없음.</summary>
+    public double BorderThicknessPt { get; set; }
 }

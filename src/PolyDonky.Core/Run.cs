@@ -15,7 +15,13 @@ public sealed class Run
     /// <summary>이모지 키 ("{Section}_{name}", 예: "Status_done"). null 이면 일반 텍스트 Run.
     /// Resources/Emojis/{Section}/{name}.png 와 일대일 대응. 라운드트립 시 보존.</summary>
     public string? EmojiKey { get; set; }
+
+    /// <summary>이모지 기준선 정렬. null 이면 Center.</summary>
+    public EmojiAlignment? EmojiAlignment { get; set; }
 }
+
+/// <summary>이모지 인라인 이미지의 기준선 정렬.</summary>
+public enum EmojiAlignment { TextTop, Center, TextBottom, Baseline }
 
 public sealed class RunStyle
 {

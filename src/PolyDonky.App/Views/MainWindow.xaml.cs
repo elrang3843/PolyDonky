@@ -64,6 +64,10 @@ public partial class MainWindow : Window
             if (!_drawingTextBox) DeselectAllOverlays();
         };
 
+        // 이모지·이미지 우클릭 → 속성 컨텍스트 메뉴, 더블클릭 → 속성 다이얼로그
+        BodyEditor.PreviewMouseRightButtonDown += OnEmbeddedObjectRightClick;
+        BodyEditor.PreviewMouseDoubleClick     += OnEmbeddedObjectDoubleClick;
+
         _statusTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(1),
@@ -357,6 +361,87 @@ public partial class MainWindow : Window
         {
             _viewModel?.MarkDirty();
             BodyEditor.Focus();
+        }
+    }
+
+    // ── 이모지·이미지 속성 편집 ─────────────────────────────────────────
+
+    private void OnEmbeddedObjectRightClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (FindEmbeddedObjectAtSource(e.OriginalSource) is not var (imgControl, container))
+            return;
+
+        var menu = BuildEmbeddedObjectMenu(imgControl, container);
+        if (menu is null) return;
+
+        menu.PlacementTarget = BodyEditor;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void OnEmbeddedObjectDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (FindEmbeddedObjectAtSource(e.OriginalSource) is not var (imgControl, container))
+            return;
+
+        OpenEmbeddedObjectProperties(imgControl, container);
+        e.Handled = true;
+    }
+
+    /// <summary>OriginalSource 에서 이모지·이미지 Image 컨트롤과 컨테이너(IUC/BUC) 를 탐색한다.</summary>
+    private static (System.Windows.Controls.Image img, object container)? FindEmbeddedObjectAtSource(object source)
+    {
+        var dep = source as System.Windows.DependencyObject;
+        while (dep is not null)
+        {
+            if (dep is System.Windows.Controls.Image img)
+            {
+                // 이미지 블록: img.Tag = BlockUIContainer, buc.Tag = ImageBlock
+                if (img.Tag is System.Windows.Documents.BlockUIContainer buc && buc.Tag is PolyDonky.Core.ImageBlock)
+                    return (img, buc);
+                // 이모지 인라인: img.Tag = InlineUIContainer, iuc.Tag = CoreRun
+                if (img.Tag is System.Windows.Documents.InlineUIContainer iuc &&
+                    iuc.Tag is PolyDonky.Core.Run { EmojiKey: { Length: > 0 } })
+                    return (img, iuc);
+            }
+            dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+        }
+        return null;
+    }
+
+    private System.Windows.Controls.ContextMenu? BuildEmbeddedObjectMenu(
+        System.Windows.Controls.Image imgControl, object container)
+    {
+        var menu = new System.Windows.Controls.ContextMenu();
+        var item = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
+        item.Click += (_, _) => OpenEmbeddedObjectProperties(imgControl, container);
+        menu.Items.Add(item);
+        return menu;
+    }
+
+    private void OpenEmbeddedObjectProperties(System.Windows.Controls.Image imgControl, object container)
+    {
+        if (container is System.Windows.Documents.InlineUIContainer iuc &&
+            iuc.Tag is PolyDonky.Core.Run emojiRun)
+        {
+            var dlg = new EmojiPropertiesWindow(imgControl, iuc, emojiRun) { Owner = this };
+            if (dlg.ShowDialog() == true)
+                _viewModel?.MarkDirty();
+        }
+        else if (container is System.Windows.Documents.BlockUIContainer buc &&
+                 buc.Tag is PolyDonky.Core.ImageBlock imageBlock)
+        {
+            var dlg = new ImagePropertiesWindow(imageBlock) { Owner = this };
+            if (dlg.ShowDialog() == true)
+            {
+                // 속성 변경 → BlockUIContainer 재빌드 후 교체
+                var newBuc = Services.FlowDocumentBuilder.BuildImage(imageBlock);
+                var doc    = BodyEditor.Document;
+                doc.Blocks.InsertBefore(buc, newBuc);
+                doc.Blocks.Remove(buc);
+                _viewModel?.MarkDirty();
+            }
         }
     }
 

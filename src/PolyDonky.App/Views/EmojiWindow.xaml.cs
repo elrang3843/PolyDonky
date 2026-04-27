@@ -27,7 +27,7 @@ public partial class EmojiWindow : Window
         Loaded += OnLoaded;
     }
 
-    private static readonly (double Pt, string Label)[] SizeOptions =
+    internal static readonly (double Pt, string Label)[] SizeOptions =
     {
         (12, "12pt — 소형"),
         (16, "16pt — 중형"),
@@ -167,6 +167,7 @@ public partial class EmojiWindow : Window
             Tag               = modelRun,
             BaselineAlignment = BaselineAlignment.Center,
         };
+        img.Tag = iuc;   // 우클릭 속성 라우팅: Image → InlineUIContainer → Run
         editor.CaretPosition = iuc.ElementEnd;
         editor.Focus();
     }
