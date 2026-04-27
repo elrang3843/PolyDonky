@@ -196,12 +196,11 @@ public partial class MainWindow : Window
         OverlayImageCanvas.Children.Clear();
         UnderlayImageCanvas.Children.Clear();
 
-        if (_viewModel?.Document is null) return;
-
-        foreach (var section in _viewModel.Document.Sections)
-        foreach (var block in section.Blocks)
+        // 모델(_viewModel.Document)은 저장 시에만 FlowDocument 로부터 재구축되므로
+        // 편집 중에는 반드시 live FlowDocument(BodyEditor.Document) 를 직접 순회해야 한다.
+        foreach (var block in BodyEditor.Document.Blocks)
         {
-            if (block is not PolyDonky.Core.ImageBlock img) continue;
+            if (block.Tag is not PolyDonky.Core.ImageBlock img) continue;
             if (img.WrapMode is not (PolyDonky.Core.ImageWrapMode.InFrontOfText
                                   or PolyDonky.Core.ImageWrapMode.BehindText)) continue;
 
