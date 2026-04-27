@@ -53,7 +53,6 @@
                      HorizontalAlignment="Stretch"
                      SpellCheck.IsEnabled="False"
                      TextChanged="OnInnerTextChanged"
-                     PreviewKeyDown="OnInnerEditorPreviewKeyDown"
                      FontFamily="{DynamicResource UiFont}">
             <RichTextBox.Resources>
                 <!-- RichTextBox 기본 포커스 테두리 제거 -->

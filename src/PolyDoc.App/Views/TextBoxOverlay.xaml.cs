@@ -223,14 +223,6 @@ public partial class TextBoxOverlay : UserControl
 
     private bool _suppressTextChanged;
 
-    // U+202E Right-to-Left Override.
-    // WPF FlowDirection.RightToLeft 만으로는 한글/라틴 같은 Bidi-약방향 문자가
-    // LTR run 으로 묶여 시각 순서가 좌→우로 유지된다. paragraph 시작에 RLO 를
-    // 박아두면 문단 내 모든 글자가 강제로 RTL 방향으로 표시되어, 새로 입력한
-    // 글자가 시각적으로 기존 글자의 왼쪽에 붙는 진짜 "왼쪽 진행" 동작이 된다.
-    private const char RlOverrideChar = '\u202E';
-    private const string RtlOverrideMark = "\u202E";
-
     public TextBoxOverlay(TextBoxObject model)
     {
         Model = model ?? throw new ArgumentNullException(nameof(model));
@@ -349,28 +341,15 @@ public partial class TextBoxOverlay : UserControl
         };
 
         // ── 글자 방향 (가로 LTR/RTL 만 시각 적용; 세로는 모델 보존만, 다음 사이클에서 렌더링) ──
-        // 진정한 RTL 입력(새 글자가 기존 글자 *왼쪽* 에 붙음)을 얻으려면 InnerEditor 자체를
-        // RightToLeft 로 두어야 한다. 그래야 캐럿 이동·Backspace·클릭 위치가 모두 시각 방향과
-        // 일치한다. (Document.FlowDirection 만 RTL 로 두면 시각은 RTL 처럼 보이나 캐럿/Backspace
-        // 는 논리 LTR 로 움직여 사용자 혼란을 일으킨다.)
+        // InnerEditor.FlowDirection 이 RTL 이면 단락이 우측 정렬되고 WPF 의 자체 Bidi 알고리즘이
+        // RTL run 은 우→좌, LTR run 은 자연 순서로 처리한다.
         // 페이지 서식의 FlowDirection 이 글상자에 중복 적용되는 것은 TextBoxOverlay UserControl
         // 자체의 FlowDirection="LeftToRight" 명시(XAML)로 차단한다 — 부모 트리의 RTL 상속이
         // InnerEditor 까지 내려오지 않으므로 model.TextProgression 만 InnerEditor 방향을 결정한다.
-        // InnerEditor.Margin="6" 은 균일값이라 RTL 시 좌/우 뒤집어져도 시각적 차이 없음.
-        var newFlowDir = (Model.TextOrientation == TextOrientation.Horizontal &&
-                          Model.TextProgression == TextProgression.Leftward)
+        InnerEditor.FlowDirection = (Model.TextOrientation == TextOrientation.Horizontal &&
+                                     Model.TextProgression == TextProgression.Leftward)
             ? FlowDirection.RightToLeft
             : FlowDirection.LeftToRight;
-
-        InnerEditor.FlowDirection = newFlowDir;
-        if (newFlowDir == FlowDirection.RightToLeft)
-        {
-            EnsureRloInAllParagraphs();
-        }
-        else
-        {
-            RemoveRloFromAllParagraphs();
-        }
 
         // ── 회전 ───────────────────────────────────────────────────────
         // 박스 중심을 피벗으로 모양·본문 모두 함께 회전. 0이면 transform 제거.
@@ -406,7 +385,6 @@ public partial class TextBoxOverlay : UserControl
         // 모델의 plain text → FlowDocument paragraphs
         var isRtl = Model.TextOrientation == TextOrientation.Horizontal &&
                     Model.TextProgression == TextProgression.Leftward;
-        var prefix = isRtl ? RtlOverrideMark : string.Empty;
 
         var doc = new System.Windows.Documents.FlowDocument();
         if (isRtl) doc.FlowDirection = FlowDirection.RightToLeft;
@@ -414,17 +392,12 @@ public partial class TextBoxOverlay : UserControl
         {
             if (block is PolyDoc.Core.Paragraph cp)
             {
-                var para = new System.Windows.Documents.Paragraph(
-                    new System.Windows.Documents.Run(prefix + cp.GetPlainText()));
-                doc.Blocks.Add(para);
+                doc.Blocks.Add(new System.Windows.Documents.Paragraph(
+                    new System.Windows.Documents.Run(cp.GetPlainText())));
             }
         }
         if (!doc.Blocks.Any())
-        {
-            var p = new System.Windows.Documents.Paragraph();
-            if (isRtl) p.Inlines.Add(new System.Windows.Documents.Run(prefix));
-            doc.Blocks.Add(p);
-        }
+            doc.Blocks.Add(new System.Windows.Documents.Paragraph());
 
         InnerEditor.Document = doc;
     }
@@ -440,8 +413,7 @@ public partial class TextBoxOverlay : UserControl
             {
                 var range = new System.Windows.Documents.TextRange(para.ContentStart, para.ContentEnd);
                 var cp = new PolyDoc.Core.Paragraph();
-                // RLO override 마커는 디스플레이 전용 — 모델에 저장하지 않는다.
-                var text = range.Text.TrimEnd('\r', '\n').Replace(RtlOverrideMark, string.Empty);
+                var text = range.Text.TrimEnd('\r', '\n');
                 if (text.Length > 0) cp.AddText(text);
                 Model.Content.Add(cp);
             }
@@ -455,69 +427,11 @@ public partial class TextBoxOverlay : UserControl
     private void OnInnerTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_suppressTextChanged) return;
-        // RTL 모드면 새로 생긴 paragraph (Enter 등) 시작에 RLO 자동 보충.
-        if (InnerEditor.FlowDirection == FlowDirection.RightToLeft)
-            EnsureRloInAllParagraphs();
         SyncEditorToModel();
         Model.Status = NodeStatus.Modified;
         ContentChangedCommitted?.Invoke(this, EventArgs.Empty);
     }
 
-    private void EnsureRloInAllParagraphs()
-    {
-        // .ToList() 로 먼저 스냅샷 — EnsureRloAtParagraphStart 에서 r.Text 를 수정할 때
-        // WPF 내부에서 컬렉션 변경이 트리거되어 InvalidOperationException 이 발생하는 것을 방지.
-        var paragraphs = InnerEditor.Document.Blocks
-            .OfType<System.Windows.Documents.Paragraph>()
-            .ToList();
-
-        _suppressTextChanged = true;
-        try
-        {
-            foreach (var p in paragraphs)
-                EnsureRloAtParagraphStart(p);
-        }
-        finally { _suppressTextChanged = false; }
-    }
-
-    private static void EnsureRloAtParagraphStart(System.Windows.Documents.Paragraph p)
-    {
-        var first = p.Inlines.FirstInline;
-        if (first is System.Windows.Documents.Run r)
-        {
-            if (r.Text.Length > 0 && r.Text[0] == RlOverrideChar) return;
-            r.Text = RtlOverrideMark + r.Text;
-        }
-        else if (first == null)
-        {
-            p.Inlines.Add(new System.Windows.Documents.Run(RtlOverrideMark));
-        }
-        else
-        {
-            p.Inlines.InsertBefore(first, new System.Windows.Documents.Run(RtlOverrideMark));
-        }
-    }
-
-    private void RemoveRloFromAllParagraphs()
-    {
-        var paragraphs = InnerEditor.Document.Blocks
-            .OfType<System.Windows.Documents.Paragraph>()
-            .ToList();
-
-        _suppressTextChanged = true;
-        try
-        {
-            foreach (var p in paragraphs)
-            {
-                foreach (var inline in p.Inlines.ToList())
-                {
-                    if (inline is System.Windows.Documents.Run r && r.Text.Contains(RlOverrideChar))
-                        r.Text = r.Text.Replace(RtlOverrideMark, string.Empty);
-                }
-            }
-        }
-        finally { _suppressTextChanged = false; }
-    }
 
     // ── 컨텍스트 메뉴 ────────────────────────────────────────────────
 
@@ -742,34 +656,6 @@ public partial class TextBoxOverlay : UserControl
         {
             DeleteRequested?.Invoke(this, EventArgs.Empty);
             e.Handled = true;
-        }
-    }
-
-    // ── RTL 모드 화살표 키 방향 교정 ────────────────────────────────────
-    // WPF RTL 에서 Left 키 = 논리 이전(시각 오른쪽), Right 키 = 논리 다음(시각 왼쪽).
-    // 사용자는 시각 방향 이동을 기대하므로 Left↔Right 커맨드를 뒤집는다.
-    private void OnInnerEditorPreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (InnerEditor.FlowDirection != FlowDirection.RightToLeft) return;
-        if (e.Key != Key.Left && e.Key != Key.Right) return;
-
-        e.Handled = true;
-        var shift = (Keyboard.Modifiers & ModifierKeys.Shift)   != 0;
-        var ctrl  = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
-
-        if (e.Key == Key.Left)   // 시각 왼쪽 이동 = RTL 논리 다음 = Right 계열 커맨드
-        {
-            if (ctrl && shift) EditingCommands.SelectRightByWord.Execute(null, InnerEditor);
-            else if (ctrl)     EditingCommands.MoveRightByWord.Execute(null, InnerEditor);
-            else if (shift)    EditingCommands.SelectRightByCharacter.Execute(null, InnerEditor);
-            else               EditingCommands.MoveRightByCharacter.Execute(null, InnerEditor);
-        }
-        else                     // 시각 오른쪽 이동 = RTL 논리 이전 = Left 계열 커맨드
-        {
-            if (ctrl && shift) EditingCommands.SelectLeftByWord.Execute(null, InnerEditor);
-            else if (ctrl)     EditingCommands.MoveLeftByWord.Execute(null, InnerEditor);
-            else if (shift)    EditingCommands.SelectLeftByCharacter.Execute(null, InnerEditor);
-            else               EditingCommands.MoveLeftByCharacter.Execute(null, InnerEditor);
         }
     }
 

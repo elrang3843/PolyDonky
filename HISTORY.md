@@ -45,6 +45,7 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- **Fixed** — "왼쪽으로 진행" 모드에서 a~z 같은 라틴 문자가 시각적으로 역순으로 표시되던 버그(예: 입력 "abcdef" → 표시 "fedcba"). 그리고 글상자 안에서 a~g 입력 후 마우스 클릭으로 캐럿 이동, h~n 추가 입력 시 두 토막의 시각 방향이 어긋나 "hijklmngfedcba" 처럼 섞이던 버그. paragraph 시작에 강제로 박아두던 U+202E (RLO, Right-to-Left Override) 마커를 완전히 제거 — RLO 가 라틴/한글 같은 약방향 문자를 강제로 시각 역순으로 뒤집어 입력 순서와 표시 순서가 일치하지 않던 원인. 이제 `FlowDirection.RightToLeft` 만 사용해 WPF 의 자체 Bidi 알고리즘에 맡기며, LTR 스크립트는 자연 순서로 우측 정렬되고 RTL 스크립트(아랍어/히브리어)는 우→좌로 흐른다. `MainWindow`/`TextBoxOverlay` 의 화살표 키 Left↔Right 수동 매핑도 함께 제거 — RLO 가 사라지면서 WPF 기본 동작이 시각 방향과 맞으므로 더 이상 불필요.
 - **Fixed** — 글상자 진행 방향이 "왼쪽으로 진행"일 때 페이지 서식(Leftward)이 중복 적용되어 입력이 오른쪽으로 붙던 버그. `TextBoxOverlay` UserControl 자체에 `FlowDirection="LeftToRight"` 를 명시해 부모 트리의 RTL 상속을 InnerEditor 까지 내려오지 않도록 차단 — 글상자 방향은 오직 `model.TextProgression` 으로만 결정. `InnerEditor.FlowDirection` 은 진짜 RTL 로 두어 캐럿 이동·Backspace·클릭 위치가 시각 방향과 일치하도록 유지.
 - **Fixed** — RTL(왼쪽으로 진행) 페이지에서 단락 오른쪽 정렬이 유실되던 버그. `BodyEditor.FlowDirection = LTR` 강제 후 WPF 가 `FlowDocument.FlowDirection` 을 LTR 로 동기화할 수 있어 FlowDocumentBuilder 가 설정한 RTL 정렬이 사라지던 문제 수정 — 설정값을 저장 후 재적용.
 

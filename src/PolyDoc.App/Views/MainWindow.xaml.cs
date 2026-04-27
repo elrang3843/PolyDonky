@@ -137,8 +137,8 @@ public partial class MainWindow : Window
             // 컨테이너를 RTL 로 바꾸면 WPF 가 Control.Padding 의 Left/Right 를
             // 시각적으로 뒤집어 code 로 설정한 padR(우측 여백) 이 시각 좌측에 적용되어
             // 텍스트가 페이지 우측 경계선에 붙는 문제가 발생한다.
-            // RTL 단락 정렬은 fd.FlowDirection(FlowDocument 속성)이 담당하고,
-            // RTL 시각 순서는 paragraph 시작의 U+202E RLO 마커가 담당한다.
+            // RTL 단락 정렬·시각 흐름은 fd.FlowDirection(FlowDocument 속성)이 담당한다 —
+            // WPF 의 자체 Bidi 알고리즘이 LTR run 은 자연 순서로, RTL run 은 우→좌 순서로 처리.
             var targetDocFlowDir = fd.FlowDirection;
             BodyEditor.Document = fd;
             BodyEditor.FlowDirection = FlowDirection.LeftToRight;
@@ -207,48 +207,7 @@ public partial class MainWindow : Window
     private void OnEditorTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_suppressTextChanged) return;
-
-        // RTL 모드면 새 paragraph (Enter 등) 시작에 RLO 자동 보충 — 그래야 그 문단도
-        // 첫 글자부터 우→좌 방향으로 표시된다.
-        if (BodyEditor.Document.FlowDirection == FlowDirection.RightToLeft)
-            EnsureRloInBodyEditorParagraphs();
-
         _viewModel?.MarkDirty();
-    }
-
-    private void EnsureRloInBodyEditorParagraphs()
-    {
-        const char rlo = '\u202E';
-        var rloStr = PolyDoc.App.Services.FlowDocumentBuilder.RtlOverrideMark;
-
-        // .ToList() 로 먼저 스냅샷 — r.Text 수정 시 WPF 내부에서 컬렉션이 변경돼
-        // 이터레이터가 InvalidOperationException 을 던지는 것을 방지.
-        var paragraphs = BodyEditor.Document.Blocks
-            .OfType<System.Windows.Documents.Paragraph>()
-            .ToList();
-
-        _suppressTextChanged = true;
-        try
-        {
-            foreach (var p in paragraphs)
-            {
-                var first = p.Inlines.FirstInline;
-                if (first is System.Windows.Documents.Run r)
-                {
-                    if (r.Text.Length == 0 || r.Text[0] != rlo)
-                        r.Text = rloStr + r.Text;
-                }
-                else if (first == null)
-                {
-                    p.Inlines.Add(new System.Windows.Documents.Run(rloStr));
-                }
-                else
-                {
-                    p.Inlines.InsertBefore(first, new System.Windows.Documents.Run(rloStr));
-                }
-            }
-        }
-        finally { _suppressTextChanged = false; }
     }
 
     private void OnFindReplaceRequested(object? sender, EventArgs e)
@@ -335,30 +294,7 @@ public partial class MainWindow : Window
 
     private void OnEditorPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // RTL 모드: Left↔Right 커맨드를 뒤집어 시각 방향 이동이 되도록 교정
-        if (BodyEditor.Document.FlowDirection == FlowDirection.RightToLeft &&
-            (e.Key == Key.Left || e.Key == Key.Right))
-        {
-            e.Handled = true;
-            var shift = (Keyboard.Modifiers & ModifierKeys.Shift)   != 0;
-            var ctrl  = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
-            if (e.Key == Key.Left)
-            {
-                if (ctrl && shift) System.Windows.Documents.EditingCommands.SelectRightByWord.Execute(null, BodyEditor);
-                else if (ctrl)     System.Windows.Documents.EditingCommands.MoveRightByWord.Execute(null, BodyEditor);
-                else if (shift)    System.Windows.Documents.EditingCommands.SelectRightByCharacter.Execute(null, BodyEditor);
-                else               System.Windows.Documents.EditingCommands.MoveRightByCharacter.Execute(null, BodyEditor);
-            }
-            else
-            {
-                if (ctrl && shift) System.Windows.Documents.EditingCommands.SelectLeftByWord.Execute(null, BodyEditor);
-                else if (ctrl)     System.Windows.Documents.EditingCommands.MoveLeftByWord.Execute(null, BodyEditor);
-                else if (shift)    System.Windows.Documents.EditingCommands.SelectLeftByCharacter.Execute(null, BodyEditor);
-                else               System.Windows.Documents.EditingCommands.MoveLeftByCharacter.Execute(null, BodyEditor);
-            }
-            return;
-        }
-
+        // 화살표 키 방향: WPF RichTextBox 가 FlowDirection 에 맞춰 자체 처리하므로 별도 매핑 불필요.
         if (_viewModel?.IsWriteProtected != true) return;
         if (!IsEditingIntent(e)) return;
         e.Handled = true;
