@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/Handtech_1024.png" alt="HANDTECH" width="160" height="160" />
+  <img src="assets/PolyDonky_1024.png" alt="PolyDonky" width="160" height="160" />
 </p>
 
 <h1 align="center">PolyDonky</h1>
