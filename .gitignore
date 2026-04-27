@@ -480,3 +480,8 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+/Directory.Packages.props
+/src/PolyDoc.App/Services/FlowDocumentBuilder.cs
+/src/PolyDoc.App/Services/FlowDocumentParser.cs
+/src/PolyDoc.App/Views/CharFormatWindow.xaml.cs
+/.gitignore
