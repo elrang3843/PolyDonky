@@ -64,8 +64,11 @@ public sealed class TextBoxObject : FloatingObject
     public double PaddingRightMm  { get; set; } = 2.0;
 
     // ── 텍스트 정렬 ───────────────────────────────────────────────────────────
-    public TextBoxHAlign HAlign { get; set; } = TextBoxHAlign.Left;
-    public TextBoxVAlign VAlign { get; set; } = TextBoxVAlign.Top;
+    // 기본값: 가로 가운데 / 세로 가운데 — 글상자(특히 말풍선·구름·가시 등 비사각형
+    // 모양) 의 일반적 사용 패턴은 짧은 텍스트를 박스 한가운데 두는 것. Word·PowerPoint
+    // 의 기본 텍스트 상자 동작과 일치.
+    public TextBoxHAlign HAlign { get; set; } = TextBoxHAlign.Center;
+    public TextBoxVAlign VAlign { get; set; } = TextBoxVAlign.Middle;
 
     /// <summary>박스 전체 회전각 (도, 시계방향). 모양과 본문 모두 함께 회전. -360~360.</summary>
     public double RotationAngleDeg { get; set; }

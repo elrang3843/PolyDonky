@@ -45,7 +45,13 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- **Fixed** — 글상자 안쪽 텍스트의 **글자 속성(폰트·크기·볼드·이탤릭·밑줄·글자색·배경색 등) 이 입력 직후 사라지던 버그**. `TextBoxOverlay.LoadModelTextToEditor` / `SyncEditorToModel` 가 `Run.GetPlainText()` 만 사용해 RunStyle 을 무시한 채 plain-text 로만 라운드트립 → RichTextBox 의 서식이 다음 TextChanged 사이클에서 기본 Run 으로 덮여 씌워짐. 본문 라운드트립용 `FlowDocumentBuilder.BuildInline(Run)` 와 `FlowDocumentParser.Parse(FlowDocument)` 를 재사용하도록 교체 — 글상자 안쪽도 본문과 동일한 글자 속성 보존.
+- **Fixed** — 글상자 안쪽에 **불필요한 세로 스크롤바**가 표시되던 문제. `RichTextBox.VerticalScrollBarVisibility` 를 `Auto` → `Hidden` 으로 변경. 글상자는 그래픽 객체이므로 내용이 박스보다 길어지면 스크롤이 아니라 박스를 키워야 한다 (Word·PowerPoint 와 동일한 UX).
+- **Fixed** — 비사각형 글상자(말풍선·구름·가시별·번개) 에서 안쪽 텍스트가 **외곽 돌출부(꼬리·뭉게·가시) 영역까지 침범**하던 문제. `ComputeShapeInset()` 이 박스 크기에 비례해 꼬리·돌출부 영역을 보호하는 추가 인셋을 계산 (말풍선 꼬리 15%, 구름 10%, 가시별 22%, 번개 15/20%). `SizeChanged` 시 자동 재계산. 사용자 padding 위에 더해진다.
 - **Fixed** — 글상자(부유 객체) 가 저장 후 다시 열면 사라지던 데이터 손실 버그. `FlowDocumentParser.Parse` 가 새 `Section` 을 만들면서 원본 섹션의 `FloatingObjects` 컬렉션을 인계하지 않아 발생. 글상자는 본문 흐름(`Section.Blocks`) 과 별도 레이어이므로 FlowDocument 에서 파싱되지 않는데, 저장 직전 rebuilt 문서에 누락되면 IWPF 직렬화 단계에서 통째로 사라졌다. `originalForMerge.Sections[0].FloatingObjects` 를 새 섹션으로 복사하도록 수정. 같은 경로에서 `Watermark` 와 `OutlineStyles` (문서 수준 상태) 도 누락되던 것을 함께 인계하도록 보정.
+
+### Changed
+- **Changed** — 새 글상자의 **기본 텍스트 정렬을 좌상단 → 가운데 정렬**(가로 Center / 세로 Middle) 로 변경. 글상자(특히 말풍선·구름·가시 등 비사각형 모양) 의 일반적 사용 패턴은 짧은 텍스트를 박스 한가운데 두는 것 — Word · PowerPoint 의 기본 텍스트 상자 동작과 일치. **마이그레이션 주의**: 이전에 기본값(Top/Left) 으로 저장된 IWPF 파일은 JSON 에 `hAlign`/`vAlign` 필드가 생략되므로, 새 코드로 다시 열면 가운데 정렬로 표시된다 (pre-1.0 단계라 허용).
 
 ### Added
 - **Added** — 글상자(부유 객체) 자체의 복사/잘라내기/붙여넣기 지원. 글상자 chrome 이 선택된 상태(안쪽 본문 편집 중이 아님)에서 **Ctrl+C / Ctrl+X / Ctrl+V** 를 누르면 `TextBoxObject` 전체(모양·여백·정렬·색·내용 포함) 를 사용자 정의 클립보드 포맷 `PolyDonky.FloatingObject.v1` 로 직렬화/복원. 붙여넣기 시 위치를 (+5mm, +5mm) 오프셋해 원본 위에 겹치지 않게 복제. 안쪽 본문 또는 본문 편집기에 포커스가 있으면 가로채지 않고 일반 텍스트 클립보드 동작에 양보. plain-text 폴백을 함께 실어 다른 앱으로의 붙여넣기 시 안쪽 텍스트만 전달.
