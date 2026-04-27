@@ -149,7 +149,7 @@ public partial class MainWindow : Window
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                try { BodyEditor.ScrollToRightEnd(); } catch { }
+                FindVisualChild<ScrollViewer>(BodyEditor)?.ScrollToRightEnd();
             }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
@@ -595,5 +595,17 @@ public partial class MainWindow : Window
         if (_selectedOverlay is null) return;
         _selectedOverlay.IsSelected = false;
         _selectedOverlay = null;
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T t) return t;
+            var result = FindVisualChild<T>(child);
+            if (result != null) return result;
+        }
+        return null;
     }
 }
