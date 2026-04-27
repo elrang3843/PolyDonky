@@ -64,9 +64,15 @@
         </StackPanel>
 
         <StackPanel Grid.Row="4" Margin="0,16,0,0" HorizontalAlignment="Center">
-            <TextBlock Text="핸텍 (HANDTECH)"
-                       FontSize="14" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Image Source="pack://application:,,,/Assets/Handtech_1024.png"
+                       Width="20" Height="20"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0" />
+                <TextBlock Text="핸텍 (HANDTECH)"
+                           FontSize="14" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </StackPanel>
             <TextBlock Text="저작권자 / 메인테이너 — 노진문 (Noh JinMoon)"
                        Foreground="{DynamicResource OnSurfaceMuted}"
                        HorizontalAlignment="Center"
