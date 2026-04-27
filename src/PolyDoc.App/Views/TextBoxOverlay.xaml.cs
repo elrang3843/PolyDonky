@@ -349,19 +349,20 @@ public partial class TextBoxOverlay : UserControl
         };
 
         // ── 글자 방향 (가로 LTR/RTL 만 시각 적용; 세로는 모델 보존만, 다음 사이클에서 렌더링) ──
-        // 진정한 RTL 입력(새 글자가 기존 글자 *왼쪽* 에 붙음)을 얻으려면 FlowDocument.FlowDirection 을
-        // RightToLeft 로 두어야 한다.
-        // InnerEditor(RichTextBox) 자체는 항상 LTR 로 유지 — RTL 로 두면 WPF 가 Margin/Padding 을
-        // 시각적으로 뒤집어 여백이 반대편에 적용되고, 페이지 서식의 FlowDirection 이 중복 적용되어
-        // 방향이 반전되는 문제가 생긴다. FlowDocument.FlowDirection=RTL 이 정렬과 시각 흐름을 담당하고,
-        // U+202E RLO 가 Bidi-약방향 문자(한글·라틴)의 시각 순서를 보장한다.
+        // 진정한 RTL 입력(새 글자가 기존 글자 *왼쪽* 에 붙음)을 얻으려면 InnerEditor 자체를
+        // RightToLeft 로 두어야 한다. 그래야 캐럿 이동·Backspace·클릭 위치가 모두 시각 방향과
+        // 일치한다. (Document.FlowDirection 만 RTL 로 두면 시각은 RTL 처럼 보이나 캐럿/Backspace
+        // 는 논리 LTR 로 움직여 사용자 혼란을 일으킨다.)
+        // 페이지 서식의 FlowDirection 이 글상자에 중복 적용되는 것은 TextBoxOverlay UserControl
+        // 자체의 FlowDirection="LeftToRight" 명시(XAML)로 차단한다 — 부모 트리의 RTL 상속이
+        // InnerEditor 까지 내려오지 않으므로 model.TextProgression 만 InnerEditor 방향을 결정한다.
+        // InnerEditor.Margin="6" 은 균일값이라 RTL 시 좌/우 뒤집어져도 시각적 차이 없음.
         var newFlowDir = (Model.TextOrientation == TextOrientation.Horizontal &&
                           Model.TextProgression == TextProgression.Leftward)
             ? FlowDirection.RightToLeft
             : FlowDirection.LeftToRight;
 
-        InnerEditor.FlowDirection = FlowDirection.LeftToRight;
-        InnerEditor.Document.FlowDirection = newFlowDir;
+        InnerEditor.FlowDirection = newFlowDir;
         if (newFlowDir == FlowDirection.RightToLeft)
         {
             EnsureRloInAllParagraphs();
@@ -455,7 +456,7 @@ public partial class TextBoxOverlay : UserControl
     {
         if (_suppressTextChanged) return;
         // RTL 모드면 새로 생긴 paragraph (Enter 등) 시작에 RLO 자동 보충.
-        if (InnerEditor.Document.FlowDirection == FlowDirection.RightToLeft)
+        if (InnerEditor.FlowDirection == FlowDirection.RightToLeft)
             EnsureRloInAllParagraphs();
         SyncEditorToModel();
         Model.Status = NodeStatus.Modified;
@@ -749,7 +750,7 @@ public partial class TextBoxOverlay : UserControl
     // 사용자는 시각 방향 이동을 기대하므로 Left↔Right 커맨드를 뒤집는다.
     private void OnInnerEditorPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (InnerEditor.Document.FlowDirection != FlowDirection.RightToLeft) return;
+        if (InnerEditor.FlowDirection != FlowDirection.RightToLeft) return;
         if (e.Key != Key.Left && e.Key != Key.Right) return;
 
         e.Handled = true;

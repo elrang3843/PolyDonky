@@ -45,7 +45,7 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
-- **Fixed** — 글상자 진행 방향이 "왼쪽으로 진행"일 때 페이지 서식(Leftward)이 중복 적용되어 입력이 오른쪽으로 붙던 버그. 글상자 `InnerEditor(RichTextBox).FlowDirection` 을 항상 LTR 로 유지하고 `FlowDocument.FlowDirection` 만 모델의 `TextProgression` 으로 독립 관리하도록 변경. `TextBoxOverlay` UserControl 에 `FlowDirection="LeftToRight"` 를 명시해 페이지 서식으로부터 완전히 격리.
+- **Fixed** — 글상자 진행 방향이 "왼쪽으로 진행"일 때 페이지 서식(Leftward)이 중복 적용되어 입력이 오른쪽으로 붙던 버그. `TextBoxOverlay` UserControl 자체에 `FlowDirection="LeftToRight"` 를 명시해 부모 트리의 RTL 상속을 InnerEditor 까지 내려오지 않도록 차단 — 글상자 방향은 오직 `model.TextProgression` 으로만 결정. `InnerEditor.FlowDirection` 은 진짜 RTL 로 두어 캐럿 이동·Backspace·클릭 위치가 시각 방향과 일치하도록 유지.
 - **Fixed** — RTL(왼쪽으로 진행) 페이지에서 단락 오른쪽 정렬이 유실되던 버그. `BodyEditor.FlowDirection = LTR` 강제 후 WPF 가 `FlowDocument.FlowDirection` 을 LTR 로 동기화할 수 있어 FlowDocumentBuilder 가 설정한 RTL 정렬이 사라지던 문제 수정 — 설정값을 저장 후 재적용.
 
 ### Added
