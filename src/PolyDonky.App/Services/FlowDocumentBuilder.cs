@@ -182,13 +182,26 @@ public static class FlowDocumentBuilder
 
     /// <summary>
     /// ImageBlock 을 WPF Block 으로 빌드한다.
-    /// - WrapMode = Inline   → BlockUIContainer (자체 줄 차지, 가로 정렬만 적용)
-    /// - WrapMode = WrapLeft → Paragraph + Floater(왼쪽), 텍스트가 오른쪽으로 흐름
-    /// - WrapMode = WrapRight → Paragraph + Floater(오른쪽), 텍스트가 왼쪽으로 흐름
+    /// - WrapMode = Inline                → BlockUIContainer (자체 줄 차지, 가로 정렬만 적용)
+    /// - WrapMode = WrapLeft              → Paragraph + Floater(왼쪽), 텍스트가 오른쪽으로 흐름
+    /// - WrapMode = WrapRight             → Paragraph + Floater(오른쪽), 텍스트가 왼쪽으로 흐름
+    /// - WrapMode = InFrontOfText/BehindText → 빈 placeholder Paragraph (실제 렌더링은 MainWindow 의
+    ///                                        OverlayImageCanvas/UnderlayImageCanvas 에서 절대 위치로 처리)
     /// 반환된 Block 의 Tag 에 ImageBlock 이 심어져 라운드트립과 우클릭 라우팅에 사용된다.
     /// </summary>
     internal static Wpf.Block BuildImage(ImageBlock image)
     {
+        // ── 오버레이 모드 — 본문 흐름에는 위치만 차지하고 실제 그림은 캔버스에서 ──
+        if (image.WrapMode is ImageWrapMode.InFrontOfText or ImageWrapMode.BehindText)
+        {
+            // 0-높이 플레이스홀더 단락 — 본문 흐름 영향 최소화.
+            return new Wpf.Paragraph
+            {
+                Tag    = image,
+                Margin = new Thickness(0),
+            };
+        }
+
         // ── 미사용 Image 폴백 ────────────────────────────────────────
         if (image.Data.Length == 0)
         {
@@ -283,6 +296,49 @@ public static class FlowDocumentBuilder
             Margin = new Thickness(0),
         };
         return paragraph;
+    }
+
+    /// <summary>
+    /// ImageBlock 으로부터 캔버스 오버레이용 Image 컨트롤을 생성한다.
+    /// MainWindow 가 InFrontOfText/BehindText 모드 그림을 OverlayImageCanvas/UnderlayImageCanvas 에 배치할 때 사용.
+    /// 테두리·크기·툴팁(설명)을 적용하지만, 위치(OverlayXMm/OverlayYMm)는 호출측에서 Canvas.Left/Top 으로 설정.
+    /// </summary>
+    public static System.Windows.FrameworkElement? BuildOverlayImageControl(ImageBlock image)
+    {
+        if (image.Data.Length == 0) return null;
+
+        var bitmap = new WpfMedia.Imaging.BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+        bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
+        bitmap.EndInit();
+        bitmap.Freeze();
+
+        var control = new System.Windows.Controls.Image
+        {
+            Source  = bitmap,
+            Stretch = WpfMedia.Stretch.Fill,
+        };
+        if (image.WidthMm > 0)  control.Width  = MmToDip(image.WidthMm);
+        if (image.HeightMm > 0) control.Height = MmToDip(image.HeightMm);
+        if (!string.IsNullOrEmpty(image.Description)) control.ToolTip = image.Description;
+
+        if (!string.IsNullOrEmpty(image.BorderColor) && image.BorderThicknessPt > 0)
+        {
+            WpfMedia.Brush borderBrush;
+            try { borderBrush = new WpfMedia.SolidColorBrush(
+                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.BorderColor)!); }
+            catch { borderBrush = WpfMedia.Brushes.Black; }
+
+            return new System.Windows.Controls.Border
+            {
+                Child           = control,
+                BorderBrush     = borderBrush,
+                BorderThickness = new Thickness(PtToDip(image.BorderThicknessPt)),
+            };
+        }
+
+        return control;
     }
 
     private static Wpf.Paragraph BuildOpaquePlaceholder(OpaqueBlock opaque)

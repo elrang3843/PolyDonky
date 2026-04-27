@@ -309,6 +309,8 @@
                                           Opacity="0.38" Direction="270" Color="Black" />
                     </Border.Effect>
                     <Grid>
+                        <!-- 그림 오버레이(BehindText) — 본문 텍스트 뒤에 위치. IsHitTestVisible 은 코드에서 토글. -->
+                        <Canvas x:Name="UnderlayImageCanvas" />
                         <RichTextBox x:Name="BodyEditor"
                                      AcceptsReturn="True"
                                      AcceptsTab="True"
@@ -335,6 +337,8 @@
                              Background 미설정 → 빈 영역은 hit-test 통과해 RichTextBox 가 받음.
                              각 자식(TextBoxOverlay) 만 마우스를 받는다. -->
                         <Canvas x:Name="FloatingCanvas" />
+                        <!-- 그림 오버레이(InFrontOfText) — 본문 텍스트 위에 위치. -->
+                        <Canvas x:Name="OverlayImageCanvas" />
                         <!-- 드래그 생성 미리보기. 본 객체 위에 그려짐. -->
                         <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
                             <Rectangle x:Name="DrawPreviewRect"

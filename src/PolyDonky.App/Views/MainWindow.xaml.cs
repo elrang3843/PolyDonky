@@ -182,6 +182,83 @@ public partial class MainWindow : Window
 
         // 부유 객체 (글상자 등) 오버레이 재구축
         RebuildFloatingObjects();
+
+        // 그림 오버레이 재구축 (InFrontOfText / BehindText 모드)
+        RebuildOverlayImages();
+    }
+
+    /// <summary>
+    /// Document 모델을 순회해 InFrontOfText / BehindText 모드 ImageBlock 들을
+    /// OverlayImageCanvas / UnderlayImageCanvas 에 절대 위치로 배치한다.
+    /// </summary>
+    private void RebuildOverlayImages()
+    {
+        OverlayImageCanvas.Children.Clear();
+        UnderlayImageCanvas.Children.Clear();
+
+        if (_viewModel?.Document is null) return;
+
+        foreach (var section in _viewModel.Document.Sections)
+        foreach (var block in section.Blocks)
+        {
+            if (block is not PolyDonky.Core.ImageBlock img) continue;
+            if (img.WrapMode is not (PolyDonky.Core.ImageWrapMode.InFrontOfText
+                                  or PolyDonky.Core.ImageWrapMode.BehindText)) continue;
+
+            var ctrl = Services.FlowDocumentBuilder.BuildOverlayImageControl(img);
+            if (ctrl is null) continue;
+
+            ctrl.Tag = img;   // 우클릭 → 속성 라우팅용
+            System.Windows.Controls.Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(img.OverlayXMm));
+            System.Windows.Controls.Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(img.OverlayYMm));
+
+            // 우클릭 → 속성 다이얼로그
+            ctrl.MouseRightButtonDown += OnOverlayImageRightClick;
+            // 더블클릭 → 속성 다이얼로그
+            ctrl.MouseLeftButtonDown += OnOverlayImageMouseDown;
+
+            var canvas = img.WrapMode == PolyDonky.Core.ImageWrapMode.BehindText
+                ? UnderlayImageCanvas
+                : OverlayImageCanvas;
+            canvas.Children.Add(ctrl);
+        }
+    }
+
+    private void OnOverlayImageRightClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.FrameworkElement fe ||
+            fe.Tag is not PolyDonky.Core.ImageBlock img) return;
+
+        var menu  = new System.Windows.Controls.ContextMenu();
+        var item  = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
+        item.Click += (_, _) => OpenOverlayImageProperties(img);
+        menu.Items.Add(item);
+        menu.PlacementTarget = fe;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void OnOverlayImageMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2) return;
+        if (sender is System.Windows.FrameworkElement { Tag: PolyDonky.Core.ImageBlock img })
+        {
+            OpenOverlayImageProperties(img);
+            e.Handled = true;
+        }
+    }
+
+    private void OpenOverlayImageProperties(PolyDonky.Core.ImageBlock img)
+    {
+        var dlg = new ImagePropertiesWindow(img) { Owner = this };
+        if (dlg.ShowDialog() == true)
+        {
+            // 속성 변경 — 본문 흐름의 placeholder 도, 캔버스 오버레이도 모두 갱신 필요.
+            // 가장 안전한 방법: FlowDocument 전체 재빌드.
+            _viewModel?.RebuildFlowDocument();
+            _viewModel?.MarkDirty();
+        }
     }
 
     private void ApplyPageSettings(PolyDonky.Core.PageSettings? page)
@@ -464,12 +541,15 @@ public partial class MainWindow : Window
             var dlg = new ImagePropertiesWindow(imageBlock) { Owner = this };
             if (dlg.ShowDialog() == true)
             {
-                // WrapMode 변경 시 컨테이너 종류가 달라질 수 있음 (BlockUIContainer ↔ Paragraph+Floater).
+                // WrapMode 변경 시 컨테이너 종류가 달라질 수 있음
+                // (BlockUIContainer ↔ Paragraph+Floater ↔ 빈 placeholder for overlay).
                 // BuildImage 가 적절한 Block 타입을 반환하므로 그걸 그대로 교체.
                 var newBlock = Services.FlowDocumentBuilder.BuildImage(imageBlock);
                 var doc      = BodyEditor.Document;
                 doc.Blocks.InsertBefore(oldBlock, newBlock);
                 doc.Blocks.Remove(oldBlock);
+                // 캔버스 오버레이도 갱신 — 모드 전환(예: Inline → BehindText) 반영.
+                RebuildOverlayImages();
                 _viewModel?.MarkDirty();
             }
         }

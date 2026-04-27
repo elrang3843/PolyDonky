@@ -12,6 +12,10 @@ public enum ImageWrapMode
     WrapLeft,
     /// <summary>오른쪽 정렬 + 왼쪽으로 텍스트 흐름.</summary>
     WrapRight,
+    /// <summary>본문 텍스트 위로 그림이 떠있음 (절대 위치, 텍스트 위에 겹침).</summary>
+    InFrontOfText,
+    /// <summary>본문 텍스트 뒤로 그림이 깔림 (절대 위치, 텍스트 아래에 겹침).</summary>
+    BehindText,
 }
 
 /// <summary>
@@ -56,4 +60,10 @@ public sealed class ImageBlock : Block
 
     /// <summary>테두리 두께 (pt). 0 이하면 테두리 없음.</summary>
     public double BorderThicknessPt { get; set; }
+
+    /// <summary>오버레이 모드(InFrontOfText/BehindText) X 위치 (mm, 페이지 좌상단 기준).</summary>
+    public double OverlayXMm { get; set; }
+
+    /// <summary>오버레이 모드(InFrontOfText/BehindText) Y 위치 (mm, 페이지 좌상단 기준).</summary>
+    public double OverlayYMm { get; set; }
 }

@@ -18,9 +18,11 @@ public partial class ImagePropertiesWindow : Window
 
     private static readonly (ImageWrapMode Value, string Label)[] WrapOptions =
     {
-        (ImageWrapMode.Inline,    "본문 흐름 (텍스트 위·아래)"),
-        (ImageWrapMode.WrapLeft,  "왼쪽 배치 — 텍스트가 오른쪽으로 흐름"),
-        (ImageWrapMode.WrapRight, "오른쪽 배치 — 텍스트가 왼쪽으로 흐름"),
+        (ImageWrapMode.Inline,        "본문 흐름 (텍스트 위·아래)"),
+        (ImageWrapMode.WrapLeft,      "왼쪽 배치 — 텍스트가 오른쪽으로 흐름"),
+        (ImageWrapMode.WrapRight,     "오른쪽 배치 — 텍스트가 왼쪽으로 흐름"),
+        (ImageWrapMode.InFrontOfText, "텍스트 앞으로 — 그림이 위에 겹침"),
+        (ImageWrapMode.BehindText,    "텍스트 뒤로 — 그림이 아래에 깔림"),
     };
 
     public ImagePropertiesWindow(ImageBlock image)
@@ -44,6 +46,10 @@ public partial class ImagePropertiesWindow : Window
         foreach (var (_, label) in WrapOptions)
             WrapCombo.Items.Add(label);
         WrapCombo.SelectedIndex = Array.FindIndex(WrapOptions, w => w.Value == _image.WrapMode) is var i and >= 0 ? i : 0;
+
+        OverlayXBox.Text = _image.OverlayXMm.ToString("F1");
+        OverlayYBox.Text = _image.OverlayYMm.ToString("F1");
+        UpdateOverlayFieldsVisibility();
 
         MarginTopBox.Text    = _image.MarginTopMm.ToString("F1");
         MarginBottomBox.Text = _image.MarginBottomMm.ToString("F1");
@@ -82,6 +88,25 @@ public partial class ImagePropertiesWindow : Window
     private void OnBorderColorChanged(object sender, TextChangedEventArgs e)
         => UpdateBorderPreview();
 
+    private void OnWrapModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_suppressSync) UpdateOverlayFieldsVisibility();
+    }
+
+    private void UpdateOverlayFieldsVisibility()
+    {
+        if (WrapCombo.SelectedIndex < 0) return;
+        var mode = WrapOptions[WrapCombo.SelectedIndex].Value;
+        bool isOverlay = mode is ImageWrapMode.InFrontOfText or ImageWrapMode.BehindText;
+        var visibility = isOverlay ? Visibility.Visible : Visibility.Collapsed;
+
+        OverlayXLabel.Visibility = visibility;
+        OverlayXBox.Visibility   = visibility;
+        OverlayYLabel.Visibility = visibility;
+        OverlayYBox.Visibility   = visibility;
+        OverlayMmLabel.Visibility = visibility;
+    }
+
     private void UpdateBorderPreview()
     {
         try
@@ -116,6 +141,8 @@ public partial class ImagePropertiesWindow : Window
                         : ImageHAlign.Left;
         if (WrapCombo.SelectedIndex >= 0)
             _image.WrapMode = WrapOptions[WrapCombo.SelectedIndex].Value;
+        if (double.TryParse(OverlayXBox.Text, out double ox)) _image.OverlayXMm = Math.Max(0, ox);
+        if (double.TryParse(OverlayYBox.Text, out double oy)) _image.OverlayYMm = Math.Max(0, oy);
         _image.MarginTopMm    = Math.Max(0, mt);
         _image.MarginBottomMm = Math.Max(0, mb);
 
