@@ -245,23 +245,35 @@ public partial class MainWindow : Window
         dlg.ShowDialog();
     }
 
+    /// <summary>
+    /// 글자/문단 속성 다이얼로그가 적용해야 할 활성 RichTextBox 를 결정한다.
+    /// 글상자 안쪽 본문에 키보드 포커스가 있으면 그 InnerEditor, 아니면 BodyEditor.
+    /// 메뉴(서식 → 글자 속성/문단 속성) 가 글상자 편집 중에도 정확한 대상에 적용되도록 보장.
+    /// </summary>
+    private RichTextBox GetActiveTextEditor()
+        => (_selectedOverlay is { } ov && ov.InnerEditor.IsKeyboardFocusWithin)
+            ? ov.InnerEditor
+            : BodyEditor;
+
     private void OnFormatChar(object sender, RoutedEventArgs e)
     {
-        var dlg = new CharFormatWindow(BodyEditor) { Owner = this };
+        var editor = GetActiveTextEditor();
+        var dlg = new CharFormatWindow(editor) { Owner = this };
         if (dlg.ShowDialog() == true)
         {
             _viewModel?.MarkDirty();
-            BodyEditor.Focus();
+            editor.Focus();
         }
     }
 
     private void OnFormatPara(object sender, RoutedEventArgs e)
     {
-        var dlg = new ParaFormatWindow(BodyEditor) { Owner = this };
+        var editor = GetActiveTextEditor();
+        var dlg = new ParaFormatWindow(editor) { Owner = this };
         if (dlg.ShowDialog() == true)
         {
             _viewModel?.MarkDirty();
-            BodyEditor.Focus();
+            editor.Focus();
         }
     }
 
@@ -553,14 +565,15 @@ public partial class MainWindow : Window
 
     private bool TryPasteFloatingObject()
     {
-        // 안쪽 본문에 텍스트 선택이 있거나 캐럿 위치에 일반 텍스트를 넣고 있으면
-        // (즉, BodyEditor 가 활성) 일반 붙여넣기에 양보. 글상자 chrome 만 선택된
-        // 상태(InnerEditor 포커스 무관) 에서는 글상자 클립보드 데이터를 우선 적용.
-        if (BodyEditor.IsKeyboardFocusWithin) return false;
+        if (!Clipboard.ContainsData(FloatingObjectClipboardFormat)) return false;
+        // 텍스트 선택이 있을 때만 일반 텍스트 붙여넣기에 양보 (사용자 의도가 텍스트 교체).
+        // 캐럿만 위치한 경우(=텍스트 선택 없음) 는 BodyEditor 든 InnerEditor 든
+        // 글상자 클립보드 데이터를 우선 적용 — 사용자가 방금 글상자를 복사했다면
+        // Ctrl+V 의 자연스러운 결과는 새 글상자 한 개를 캔버스에 띄우는 것.
+        if (BodyEditor.IsKeyboardFocusWithin && !BodyEditor.Selection.IsEmpty) return false;
         if (_selectedOverlay?.InnerEditor.IsKeyboardFocusWithin == true
             && !_selectedOverlay.InnerEditor.Selection.IsEmpty)
             return false;
-        if (!Clipboard.ContainsData(FloatingObjectClipboardFormat)) return false;
 
         var json = Clipboard.GetData(FloatingObjectClipboardFormat) as string;
         if (string.IsNullOrEmpty(json)) return false;
