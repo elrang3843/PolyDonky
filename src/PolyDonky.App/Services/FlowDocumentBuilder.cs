@@ -195,11 +195,17 @@ public static class FlowDocumentBuilder
         // ── 오버레이 모드 — 본문 흐름에는 위치만 차지하고 실제 그림은 캔버스에서 ──
         if (image.WrapMode is ImageWrapMode.InFrontOfText or ImageWrapMode.BehindText)
         {
-            // 0-높이 플레이스홀더 단락 — 본문 흐름 영향 최소화.
+            // 투명·최소 높이 플레이스홀더 단락.
+            // - FontSize = 0.1 pt → 행 높이를 0에 가깝게 압축해 본문 레이아웃 영향 최소화.
+            // - Foreground/Background Transparent → 선택 하이라이트(파란 줄)가 시각적으로 안 보임.
+            // - IsEnabled = false 는 Paragraph 에 없으므로 Focusable 을 강제 불가 — 대신 크기로 억제.
             return new Wpf.Paragraph
             {
-                Tag    = image,
-                Margin = new Thickness(0),
+                Tag        = image,
+                Margin     = new Thickness(0),
+                FontSize   = 0.1,
+                Foreground = WpfMedia.Brushes.Transparent,
+                Background = WpfMedia.Brushes.Transparent,
             };
         }
 

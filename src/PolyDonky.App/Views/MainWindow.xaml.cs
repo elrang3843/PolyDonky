@@ -284,9 +284,8 @@ public partial class MainWindow : Window
         double dy = pos.Y - _overlayDragStart.Y;
         if (Math.Abs(dx) > 0.5 || Math.Abs(dy) > 0.5) _overlayDragMoved = true;
 
-        // 페이지 좌상단 기준 음수 좌표는 허용하지 않는다.
-        System.Windows.Controls.Canvas.SetLeft(fe, Math.Max(0, _overlayDragStartLeft + dx));
-        System.Windows.Controls.Canvas.SetTop (fe, Math.Max(0, _overlayDragStartTop  + dy));
+        System.Windows.Controls.Canvas.SetLeft(fe, _overlayDragStartLeft + dx);
+        System.Windows.Controls.Canvas.SetTop (fe, _overlayDragStartTop  + dy);
     }
 
     private void OnOverlayImageDragUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -305,8 +304,8 @@ public partial class MainWindow : Window
             double top  = System.Windows.Controls.Canvas.GetTop(fe);
             if (double.IsNaN(left)) left = 0;
             if (double.IsNaN(top))  top  = 0;
-            img.OverlayXMm = Math.Max(0, Services.FlowDocumentBuilder.DipToMm(left));
-            img.OverlayYMm = Math.Max(0, Services.FlowDocumentBuilder.DipToMm(top));
+            img.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
+            img.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
             _viewModel?.MarkDirty();
         }
         e.Handled = true;
