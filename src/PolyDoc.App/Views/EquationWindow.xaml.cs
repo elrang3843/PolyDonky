@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using PolyDoc.App.Services;
 using WpfMath.Controls;
 using CoreRun = PolyDoc.Core.Run;
 
@@ -107,7 +108,8 @@ public partial class EquationWindow : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
-    /// <summary>RichTextBox 캐럿 위치에 WpfMath FormulaControl 을 InlineUIContainer 로 삽입.
+    /// <summary>RichTextBox 캐럿 위치에 수식 이미지를 InlineUIContainer 로 삽입.
+    /// FormulaControl 은 XamlWriter.Save() 와 충돌하므로 오프스크린 렌더링 후 Image 로 변환한다.
     /// Tag 에 Core Run(LatexSource 포함)을 달아 FlowDocumentParser 가 라운드트립 가능하게 한다.</summary>
     private static void InsertEquationInline(RichTextBox editor, string latexSource, bool isDisplay)
     {
@@ -119,7 +121,6 @@ public partial class EquationWindow : Window
         var caret     = editor.CaretPosition;
         var insertPos = caret.GetInsertionPosition(LogicalDirection.Forward) ?? caret;
 
-        // Core 모델 객체 (round-trip 용)
         var (open, close) = isDisplay ? (@"\[", @"\]") : (@"\(", @"\)");
         var modelRun = new CoreRun
         {
@@ -128,16 +129,8 @@ public partial class EquationWindow : Window
             IsDisplayEquation = isDisplay,
         };
 
-        FormulaControl formula;
-        try
-        {
-            formula = new FormulaControl
-            {
-                Formula = latexSource,
-                Scale   = isDisplay ? 18.0 : 14.0,
-            };
-        }
-        catch
+        var img = FlowDocumentBuilder.RenderEquationToImage(latexSource, isDisplay ? 18.0 : 14.0);
+        if (img is null)
         {
             // 파싱 실패: plain-text 폴백
             SpecialCharWindow.InsertAtCaret(editor, modelRun.Text);
@@ -145,7 +138,7 @@ public partial class EquationWindow : Window
         }
 
         // InlineUIContainer(UIElement, TextPointer) 생성자가 지정 위치에 즉시 삽입한다.
-        var iuc = new InlineUIContainer(formula, insertPos)
+        var iuc = new InlineUIContainer(img, insertPos)
         {
             Tag               = modelRun,
             BaselineAlignment = BaselineAlignment.Center,
