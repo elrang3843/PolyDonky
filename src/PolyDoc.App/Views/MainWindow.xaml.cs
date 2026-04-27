@@ -133,20 +133,9 @@ public partial class MainWindow : Window
         _suppressTextChanged = true;
         try
         {
-            // BodyEditor 컨테이너의 FlowDirection 은 LTR 로 유지한다.
-            // 컨테이너를 RTL 로 바꾸면 WPF 가 Control.Padding 의 Left/Right 를
-            // 시각적으로 뒤집어 code 로 설정한 padR(우측 여백) 이 시각 좌측에 적용되어
-            // 텍스트가 페이지 우측 경계선에 붙는 문제가 발생한다.
-            // RTL 단락 정렬·시각 흐름은 fd.FlowDirection(FlowDocument 속성)이 담당한다 —
-            // WPF 의 자체 Bidi 알고리즘이 LTR run 은 자연 순서로, RTL run 은 우→좌 순서로 처리.
-            var targetDocFlowDir = fd.FlowDirection;
+            // 글자 방향은 추후 지원 예정 — 현재 항상 LTR.
             BodyEditor.Document = fd;
             BodyEditor.FlowDirection = FlowDirection.LeftToRight;
-            // WPF 는 RichTextBox.FlowDirection 변경 시 Document.FlowDirection 을 동기화할 수 있다.
-            // BodyEditor=LTR 로 강제한 후에도 FlowDocumentBuilder 가 설정한 FlowDirection 을
-            // FlowDocument 에 재적용해 RTL 페이지의 단락 우측 정렬을 보존한다.
-            if (fd.FlowDirection != targetDocFlowDir)
-                fd.FlowDirection = targetDocFlowDir;
         }
         finally
         {
@@ -294,7 +283,6 @@ public partial class MainWindow : Window
 
     private void OnEditorPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // 화살표 키 방향: WPF RichTextBox 가 FlowDirection 에 맞춰 자체 처리하므로 별도 매핑 불필요.
         if (_viewModel?.IsWriteProtected != true) return;
         if (!IsEditingIntent(e)) return;
         e.Handled = true;

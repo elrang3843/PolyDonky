@@ -82,9 +82,10 @@
                                          Checked="OnOrientationChanged" />
                         </StackPanel>
 
-                        <!-- 글자 방향 (가로/세로 + 진행 방향) -->
-                        <TextBlock Text="글자 방향" FontWeight="SemiBold" Margin="0,0,0,4" />
-                        <Grid Margin="0,0,0,10">
+                        <!-- 글자 방향 — 추후 지원 예정 -->
+                        <TextBlock Text="글자 방향 (추후 지원 예정)" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource OnSurfaceDisabled}" Margin="0,0,0,4" />
+                        <Grid Margin="0,0,0,10" IsEnabled="False" Opacity="0.45">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="8" />
@@ -96,7 +97,7 @@
                                       BorderBrush="{DynamicResource Divider}"
                                       SelectionChanged="OnTextDirectionChanged">
                                 <ComboBoxItem Content="가로 쓰기" />
-                                <ComboBoxItem Content="세로 쓰기 (모델만 저장, 표시 미지원)" />
+                                <ComboBoxItem Content="세로 쓰기" />
                             </ComboBox>
                             <ComboBox x:Name="CboTextProgression" Grid.Column="2"
                                       Background="{DynamicResource SurfaceAlt}"

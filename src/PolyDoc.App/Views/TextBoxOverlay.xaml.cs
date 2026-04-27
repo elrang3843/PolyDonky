@@ -340,16 +340,8 @@ public partial class TextBoxOverlay : UserControl
             _                    => VerticalAlignment.Stretch,
         };
 
-        // ── 글자 방향 (가로 LTR/RTL 만 시각 적용; 세로는 모델 보존만, 다음 사이클에서 렌더링) ──
-        // InnerEditor.FlowDirection 이 RTL 이면 단락이 우측 정렬되고 WPF 의 자체 Bidi 알고리즘이
-        // RTL run 은 우→좌, LTR run 은 자연 순서로 처리한다.
-        // 페이지 서식의 FlowDirection 이 글상자에 중복 적용되는 것은 TextBoxOverlay UserControl
-        // 자체의 FlowDirection="LeftToRight" 명시(XAML)로 차단한다 — 부모 트리의 RTL 상속이
-        // InnerEditor 까지 내려오지 않으므로 model.TextProgression 만 InnerEditor 방향을 결정한다.
-        InnerEditor.FlowDirection = (Model.TextOrientation == TextOrientation.Horizontal &&
-                                     Model.TextProgression == TextProgression.Leftward)
-            ? FlowDirection.RightToLeft
-            : FlowDirection.LeftToRight;
+        // 글자 방향은 추후 지원 예정 — 현재 항상 LTR.
+        InnerEditor.FlowDirection = FlowDirection.LeftToRight;
 
         // ── 회전 ───────────────────────────────────────────────────────
         // 박스 중심을 피벗으로 모양·본문 모두 함께 회전. 0이면 transform 제거.
@@ -382,12 +374,8 @@ public partial class TextBoxOverlay : UserControl
 
     private void LoadModelTextToEditor()
     {
-        // 모델의 plain text → FlowDocument paragraphs
-        var isRtl = Model.TextOrientation == TextOrientation.Horizontal &&
-                    Model.TextProgression == TextProgression.Leftward;
-
+        // 글자 방향은 추후 지원 예정 — 현재 항상 LTR.
         var doc = new System.Windows.Documents.FlowDocument();
-        if (isRtl) doc.FlowDirection = FlowDirection.RightToLeft;
         foreach (var block in Model.Content)
         {
             if (block is PolyDoc.Core.Paragraph cp)
