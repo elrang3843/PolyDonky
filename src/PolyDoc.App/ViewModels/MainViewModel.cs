@@ -339,6 +339,16 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void LicenseInfo()
+    {
+        var window = new LicenseInfoWindow
+        {
+            Owner = Application.Current.MainWindow,
+        };
+        window.ShowDialog();
+    }
+
+    [RelayCommand]
     private void DocInfo()
     {
         var text = _document.ToPlainText();

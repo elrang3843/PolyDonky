@@ -80,7 +80,7 @@
   <!-- Menu: Help -->
   <data name="MenuHelp" xml:space="preserve"><value>_Help</value></data>
   <data name="MenuHelpManual" xml:space="preserve"><value>_Manual</value></data>
-  <data name="MenuHelpLicense" xml:space="preserve"><value>_License</value></data>
+  <data name="MenuHelpLicense" xml:space="preserve"><value>_License &amp; References</value></data>
   <data name="MenuHelpAbout" xml:space="preserve"><value>_About PolyDoc</value></data>
 
   <!-- Find/Replace Dialog -->
@@ -214,7 +214,7 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
   <data name="AboutCompany" xml:space="preserve"><value>HANDTECH</value></data>
   <data name="AboutAuthor" xml:space="preserve"><value>Noh JinMoon</value></data>
-  <data name="AboutLicense" xml:space="preserve"><value>Apache License 2.0</value></data>
+  <data name="AboutLicense" xml:space="preserve"><value>Mozilla Public License 2.0</value></data>
   <data name="AboutDesc" xml:space="preserve"><value>A word processor that reads HWP, HWPX, DOCX, Markdown and TXT documents and saves them in IWPF format.</value></data>
 
   <!-- Settings -->

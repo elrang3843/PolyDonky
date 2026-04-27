@@ -46,7 +46,7 @@
                        Foreground="{DynamicResource OnSurfaceMuted}"
                        HorizontalAlignment="Center"
                        Margin="0,4,0,0" />
-            <TextBlock Text="© 2026 HANDTECH. Apache License 2.0."
+            <TextBlock Text="© 2026 HANDTECH. Mozilla Public License 2.0."
                        Foreground="{DynamicResource OnSurfaceMuted}"
                        HorizontalAlignment="Center"
                        Margin="0,4,0,0" />

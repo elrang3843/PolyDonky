@@ -80,7 +80,7 @@
   <!-- 메뉴: 도움말 -->
   <data name="MenuHelp" xml:space="preserve"><value>도움말(_H)</value></data>
   <data name="MenuHelpManual" xml:space="preserve"><value>사용 방법(_M)</value></data>
-  <data name="MenuHelpLicense" xml:space="preserve"><value>라이선스(_L)</value></data>
+  <data name="MenuHelpLicense" xml:space="preserve"><value>라이선스 및 참조(_L)</value></data>
   <data name="MenuHelpAbout" xml:space="preserve"><value>PolyDoc 정보(_A)</value></data>
 
   <!-- 찾기/바꾸기 다이얼로그 -->
@@ -214,7 +214,7 @@
   <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
   <data name="AboutCompany" xml:space="preserve"><value>핸텍 (HANDTECH)</value></data>
   <data name="AboutAuthor" xml:space="preserve"><value>노진문 (Noh JinMoon)</value></data>
-  <data name="AboutLicense" xml:space="preserve"><value>Apache License 2.0</value></data>
+  <data name="AboutLicense" xml:space="preserve"><value>Mozilla Public License 2.0</value></data>
   <data name="AboutDesc" xml:space="preserve"><value>HWP, HWPX, DOCX, Markdown, TXT 문서를 읽고 IWPF 포맷으로 저장하는 워드프로세서.</value></data>
 
   <!-- 설정 다이얼로그 -->

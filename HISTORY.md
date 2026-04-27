@@ -44,6 +44,14 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Security
+- **Security** — 라이선스를 Apache 2.0 에서 **Mozilla Public License 2.0** 으로 전환. 파일 수준 약(弱) 카피레프트로 PolyDoc 파일 자체의 수정 사항을 공유하도록 보장하면서 독점 확장 추가는 허용.
+- **Security** — `THIRD_PARTY_NOTICES.md` 신규 생성. 배포 포함 의존성(CommunityToolkit.Mvvm MIT / DocumentFormat.OpenXml MIT / Markdig BSD-2-Clause / .NET 10 MIT) 전문(全文) 라이선스 텍스트 포함. 테스트 전용 의존성(xUnit Apache-2.0 / coverlet MIT)은 별도 섹션으로 구분.
+- **Security** — `NOTICE` 파일 갱신. MPL-2.0 참조로 업데이트, 실제 배포 의존성 목록 반영, 파일 형식 명세 출처 섹션 추가(ECMA-376, [MS-DOC], OWPML/KS X 6101, HWP 5.0 공개 문서 — 한컴 권장 표기 문구 포함), 상표 섹션에 Hancom Inc.·Microsoft Corporation 명시.
+
+### Added
+- **Added** — 도움말 > **라이선스 및 참조** 다이얼로그 신규 추가(`LicenseInfoWindow`). 탭 4개: ① PolyDoc 라이선스(MPL-2.0 전문), ② 서드파티 라이선스 전문, ③ 의존성 목록(배포 포함/테스트 전용 분리), ④ 파일 형식 명세 참조(ECMA-376/[MS-DOC]/OWPML·KS X 6101/HWP 5.0). LICENSE 및 THIRD_PARTY_NOTICES.md 가 어셈블리 임베드 리소스로 내장되며, 개발 환경에서는 저장소 루트 파일로 폴백.
+
 ### Changed
 - **Changed** — 글자 방향(세로쓰기 / 왼쪽으로 진행) 기능을 "추후 지원 예정"으로 전환. 페이지 서식 및 글상자 속성의 글자 방향 콤보박스를 비활성화(Opacity 0.45, IsEnabled=False)하여 선택 불가 상태로 표시. 내부적으로는 항상 LTR 가로쓰기로 동작하며, 모델의 `TextOrientation`/`TextProgression` 필드는 값을 보존하여 추후 구현 시 데이터 마이그레이션 없이 재개 가능. U+202E RLO 오버라이드 마커 및 관련 FlowDirection 분기 코드 전체 제거.
 
