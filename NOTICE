@@ -1,0 +1,88 @@
+PolyDoc
+Copyright (c) 2026 HANDTECH (핸텍) — Noh JinMoon (노진문)
+
+This product includes software developed by HANDTECH (핸텍) and its
+contributors. The official maintainer is Noh JinMoon (노진문, GitHub:
+@elrang3843).
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+================================================================================
+Third-Party Software Notices
+================================================================================
+
+This product depends on third-party libraries. Full license texts and copyright
+notices for each shipped dependency are provided in THIRD_PARTY_NOTICES.md.
+
+Shipped dependencies (summary):
+
+  * .NET 10 Runtime / SDK
+      Copyright (c) .NET Foundation and Contributors
+      License: MIT — https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
+
+  * CommunityToolkit.Mvvm 8.4.0
+      Copyright (c) .NET Foundation and Contributors
+      License: MIT — https://github.com/CommunityToolkit/dotnet/blob/main/License.md
+
+  * DocumentFormat.OpenXml 3.5.1
+      Copyright (c) Microsoft Corporation and Contributors
+      License: MIT — https://github.com/dotnet/Open-XML-SDK/blob/main/LICENSE
+
+  * Markdig 0.42.0
+      Copyright (c) 2018-2025, Alexandre Mutel
+      License: BSD-2-Clause — https://github.com/xoofx/markdig/blob/master/license.txt
+
+Test-only dependencies (not distributed):
+
+  * xunit 2.9.3 / xunit.runner.visualstudio 3.1.4
+      Copyright (c) .NET Foundation and Contributors
+      License: Apache-2.0
+
+  * Microsoft.NET.Test.Sdk 17.14.1 / coverlet.collector 6.0.4
+      Copyright (c) Microsoft Corporation / tonerdo
+      License: MIT
+
+================================================================================
+File Format Specification References
+================================================================================
+
+PolyDoc reads and writes documents in formats defined by the following
+published specifications. These specifications are referenced for
+interoperability; their inclusion here does not imply endorsement by the
+respective standards bodies or companies.
+
+  * ECMA-376 (Office Open XML File Formats) / ISO/IEC 29500
+      ECMA International — https://ecma-international.org/publications-and-standards/standards/ecma-376/
+      Used for: DOCX read/write support.
+
+  * [MS-DOC]: Word (.doc) Binary File Format
+      Microsoft Open Specification Promise — https://docs.microsoft.com/openspecs/office_file_formats/ms-doc/
+      Used for: legacy DOC ingest (reference only; no binary reproduction).
+
+  * OWPML (Open Word Processor Markup Language) / KS X 6101
+      한국산업표준 (Korean Industrial Standard) — https://standard.go.kr/
+      Used for: HWPX read/write support.
+
+  * HWP 5.0 Binary File Format Specification
+      본 제품은 한글과컴퓨터의 HWP 문서 파일(.hwp) 공개 문서를 참고하여
+      개발하였습니다.
+      Used for: HWP 5.x binary ingest (reference only; no binary reproduction).
+
+================================================================================
+Trademarks
+================================================================================
+
+"HANDTECH" and "핸텍" are trademarks of HANDTECH (핸텍).
+
+"HWP", "HWPX", "한글", and "한글과컴퓨터" are trademarks of
+Hancom Inc. (한글과컴퓨터 주식회사).
+
+"Microsoft", "Word", "DOC", and "DOCX" are trademarks of
+Microsoft Corporation.
+
+"ECMA" is a trademark of Ecma International.
+
+All other trademarks and registered trademarks are the property of their
+respective owners and are used here for identification purposes only.
