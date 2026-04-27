@@ -44,6 +44,10 @@ PolyDoc의 모든 의미 있는 변경 사항을 이 파일에 기록합니다.
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Fixed
+- **Fixed** — 글상자 진행 방향이 "왼쪽으로 진행"일 때 페이지 서식(Leftward)이 중복 적용되어 입력이 오른쪽으로 붙던 버그. 글상자 `InnerEditor(RichTextBox).FlowDirection` 을 항상 LTR 로 유지하고 `FlowDocument.FlowDirection` 만 모델의 `TextProgression` 으로 독립 관리하도록 변경. `TextBoxOverlay` UserControl 에 `FlowDirection="LeftToRight"` 를 명시해 페이지 서식으로부터 완전히 격리.
+- **Fixed** — RTL(왼쪽으로 진행) 페이지에서 단락 오른쪽 정렬이 유실되던 버그. `BodyEditor.FlowDirection = LTR` 강제 후 WPF 가 `FlowDocument.FlowDirection` 을 LTR 로 동기화할 수 있어 FlowDocumentBuilder 가 설정한 RTL 정렬이 사라지던 문제 수정 — 설정값을 저장 후 재적용.
+
 ### Added
 - **Added** — 페이지 속성 / 글상자 속성에 글자 방향 설정 추가. `TextOrientation`(가로/세로 enum) + `TextProgression`(오른쪽으로/왼쪽으로 진행 enum) 을 `PageSettings` 와 `TextBoxObject` 양쪽에 도입. **가로쓰기 LTR/RTL** 은 `FlowDocument.FlowDirection` / `RichTextBox.FlowDirection` 으로 즉시 시각 반영 (왼쪽으로 진행 = RTL, 아랍어/히브리어 또는 옛 한글 가로). **세로쓰기** 는 모델만 보존 — WPF FlowDocument 가 native CJK 세로조판을 지원하지 않아 다음 사이클에서 커스텀 레이아웃으로 도입 예정. 페이지 속성 다이얼로그(용지 탭 → "글자 방향" 두 ComboBox) 와 글상자 속성 다이얼로그 모두 동일한 입력. IWPF 직렬화 자동 포함.
 - **Added** — 글상자에 회전 각도 (`RotationAngleDeg`, 기본 0, -360~360) 추가. 속성 대화상자의 "회전 / 각도(°)" 입력으로 박스를 시계방향으로 회전. 모양·테두리·본문 텍스트가 모두 박스 중심을 피벗으로 함께 회전. 번개상자를 15~30° 정도 기울이면 더 번개 같은 실루엣이 된다. (구현은 `RenderTransform` 이라 레이아웃 슬롯은 회전 전 사각형 — 회전 상태에서 핸들 리사이즈는 마우스 이동 방향과 변 방향이 어긋나 약간 어색하므로 회전 0으로 되돌려 조절을 권장.)

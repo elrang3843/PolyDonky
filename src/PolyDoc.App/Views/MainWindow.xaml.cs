@@ -133,14 +133,20 @@ public partial class MainWindow : Window
         _suppressTextChanged = true;
         try
         {
-            BodyEditor.Document = fd;
             // BodyEditor 컨테이너의 FlowDirection 은 LTR 로 유지한다.
             // 컨테이너를 RTL 로 바꾸면 WPF 가 Control.Padding 의 Left/Right 를
             // 시각적으로 뒤집어 code 로 설정한 padR(우측 여백) 이 시각 좌측에 적용되어
             // 텍스트가 페이지 우측 경계선에 붙는 문제가 발생한다.
             // RTL 단락 정렬은 fd.FlowDirection(FlowDocument 속성)이 담당하고,
             // RTL 시각 순서는 paragraph 시작의 U+202E RLO 마커가 담당한다.
+            var targetDocFlowDir = fd.FlowDirection;
+            BodyEditor.Document = fd;
             BodyEditor.FlowDirection = FlowDirection.LeftToRight;
+            // WPF 는 RichTextBox.FlowDirection 변경 시 Document.FlowDirection 을 동기화할 수 있다.
+            // BodyEditor=LTR 로 강제한 후에도 FlowDocumentBuilder 가 설정한 FlowDirection 을
+            // FlowDocument 에 재적용해 RTL 페이지의 단락 우측 정렬을 보존한다.
+            if (fd.FlowDirection != targetDocFlowDir)
+                fd.FlowDirection = targetDocFlowDir;
         }
         finally
         {
