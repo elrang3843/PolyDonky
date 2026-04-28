@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using PolyDonky.App.Services;
 using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
