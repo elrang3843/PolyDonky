@@ -32,11 +32,50 @@
                         Width="80" Height="28"
                         Margin="0,0,8,0"
                         Click="OnPrintClick" />
+
                 <Button DockPanel.Dock="Right"
                         Content="{Binding MenuFileClose, Source={x:Static svc:LocalizedStrings.Instance}}"
                         Width="64" Height="28"
                         IsCancel="True"
                         Click="OnCloseClick" />
+
+                <!-- 줌 컨트롤 -->
+                <Button DockPanel.Dock="Left"
+                        Content="−"
+                        Width="32" Height="28"
+                        FontSize="14" FontWeight="SemiBold"
+                        Margin="8,0,0,0"
+                        ToolTip="축소"
+                        Click="OnZoomOutClick" />
+                <Button DockPanel.Dock="Left"
+                        Content="+"
+                        Width="32" Height="28"
+                        FontSize="14" FontWeight="SemiBold"
+                        Margin="2,0,0,0"
+                        ToolTip="확대"
+                        Click="OnZoomInClick" />
+                <TextBlock x:Name="ZoomText"
+                           DockPanel.Dock="Left"
+                           Text="100%"
+                           VerticalAlignment="Center"
+                           Width="56"
+                           TextAlignment="Center"
+                           Margin="6,0,0,0"
+                           Foreground="{DynamicResource OnSurface}"
+                           FontSize="12" />
+                <Button DockPanel.Dock="Left"
+                        Content="쪽 맞춤"
+                        Width="68" Height="28"
+                        Margin="6,0,0,0"
+                        ToolTip="페이지 전체가 보이게"
+                        Click="OnFitPageClick" />
+                <Button DockPanel.Dock="Left"
+                        Content="폭 맞춤"
+                        Width="68" Height="28"
+                        Margin="2,0,12,0"
+                        ToolTip="가로 폭에 맞춤"
+                        Click="OnFitWidthClick" />
+
                 <!-- 페이지 정보 레이블 -->
                 <TextBlock x:Name="PageInfoText"
                            VerticalAlignment="Center"
