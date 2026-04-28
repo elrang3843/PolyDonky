@@ -46,7 +46,7 @@ public partial class MainWindow : Window
         // Alt + 클릭 → BehindText 그림(BodyEditor 뒤 UnderlayImageCanvas) 드래그 시작.
         // 일반 클릭은 본문 텍스트 선택을 위해 양보 — 텍스트 위에 그림이 깔린 영역에서도 편집 가능.
         if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0 &&
-            FindUnderlayImageAt(pt) is { } underlayCtrl)
+            FindCanvasChildAt(UnderlayImageCanvas, pt) is { } underlayCtrl)
         {
             StartUnderlayImageDrag(underlayCtrl, e);
             e.Handled = true;
@@ -449,16 +449,7 @@ public partial class MainWindow : Window
             System.Windows.Controls.Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(img.OverlayXMm));
             System.Windows.Controls.Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(img.OverlayYMm));
             ctrl.Cursor = System.Windows.Input.Cursors.SizeAll;
-
-            // 우클릭 컨텍스트 메뉴 — ContextMenu 를 요소에 직접 설정해 WPF ContextMenuService 가
-            // 처리하도록 한다. MouseRightButtonDown 수동 처리와 달리 BodyEditor 의
-            // ContextMenuOpening 과 충돌하지 않는다.
-            var captured  = img;   // 클로저 캡처
-            var ctxMenu   = new System.Windows.Controls.ContextMenu();
-            var propsItem = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
-            propsItem.Click += (_, _) => OpenOverlayImageProperties(captured);
-            ctxMenu.Items.Add(propsItem);
-            ctrl.ContextMenu = ctxMenu;
+            // 우클릭은 PaperBorder.PreviewMouseRightButtonDown 통합 핸들러가 처리 — 개별 ContextMenu 불필요.
 
             // 좌클릭 → 드래그 시작 또는 더블클릭 시 속성 다이얼로그
             ctrl.MouseLeftButtonDown += OnOverlayImageMouseDown;
@@ -795,34 +786,28 @@ public partial class MainWindow : Window
 
     // ── 이모지·이미지 속성 편집 ─────────────────────────────────────────
 
+    // BodyEditor 내 컨텐츠(표·인라인 이미지/이모지) 우클릭 전용.
+    // 오버레이/언더레이 객체는 OnPaperPreviewMouseRightButtonDown 에서 이미 처리했으므로
+    // 여기에 도달하면 반드시 BodyEditor 본문 영역 우클릭이다.
     private void OnEmbeddedObjectContextMenuOpening(object sender, System.Windows.Controls.ContextMenuEventArgs e)
     {
-        // 기본 컨텍스트 메뉴(잘라내기/복사/붙여넣기)를 그대로 두고,
-        // 이모지·이미지 위에서 우클릭한 경우에만 구분선 + 속성 항목을 동적으로 추가.
-        var pt = System.Windows.Input.Mouse.GetPosition(BodyEditor);
-
+        var pt   = System.Windows.Input.Mouse.GetPosition(BodyEditor);
         var menu = BodyEditor.ContextMenu;
         if (menu is null) return;
 
-        // BehindText 그림은 BodyEditor 뒤(UnderlayImageCanvas)에 있어 일반 hit-test 로 찾을 수 없다.
-        // BodyEditor 우클릭 시 마우스 위치 아래 underlay 그림이 있으면 그 그림 속성으로 라우팅.
-        if (FindUnderlayImageAt(pt) is { Tag: PolyDonky.Core.ImageBlock underlayImg })
-        {
-            AppendPropertyMenuItem(menu, () => OpenOverlayImageProperties(underlayImg), "그림 속성(_P)...");
-            return;
-        }
-
-        // 캐럿이 표 셀 안에 있으면 표/셀 속성 메뉴를 추가한다.
+        // 표 셀 — 셀 속성 + 표 속성 항목 추가
         if (FindTableCellAtCaret(out var wpfTable, out var wpfRow, out var wpfCell) &&
             wpfTable is not null && wpfCell is not null &&
             wpfTable.Tag is PolyDonky.Core.Table coreTable)
         {
             AppendTablePropertyMenuItems(menu, wpfTable, wpfRow, wpfCell, coreTable);
-            return;
         }
 
-        if (FindEmbeddedObjectAt(e.OriginalSource, pt) is not { } found) return;
-        AppendPropertyMenuItem(menu, () => OpenEmbeddedObjectProperties(found.img, found.container), "속성(_P)...");
+        // 인라인 이미지/이모지 — 속성 항목 추가 (표와 동시 존재 가능)
+        if (FindEmbeddedObjectAt(e.OriginalSource, pt) is { } found)
+        {
+            AppendPropertyMenuItem(menu, () => OpenEmbeddedObjectProperties(found.img, found.container), "속성(_P)...");
+        }
     }
 
     private bool FindTableCellAtCaret(
@@ -899,27 +884,6 @@ public partial class MainWindow : Window
         menu.Closed += Cleanup;
     }
 
-    /// <summary>UnderlayImageCanvas 자식 중 주어진 점(BodyEditor / PaperBorder 좌표) 아래에 있는 첫 객체를 반환.
-    /// BehindText 그림은 BodyEditor 뒤에 있어 일반 hit-test 로 찾을 수 없으므로 직접 bbox 검사로 라우팅한다.</summary>
-    private System.Windows.FrameworkElement? FindUnderlayImageAt(Point pt)
-    {
-        foreach (var child in UnderlayImageCanvas.Children)
-        {
-            if (child is not System.Windows.FrameworkElement fe) continue;
-            double left = System.Windows.Controls.Canvas.GetLeft(fe);
-            double top  = System.Windows.Controls.Canvas.GetTop(fe);
-            if (double.IsNaN(left)) left = 0;
-            if (double.IsNaN(top))  top  = 0;
-            double w = fe.ActualWidth  > 0 ? fe.ActualWidth  : fe.Width;
-            double h = fe.ActualHeight > 0 ? fe.ActualHeight : fe.Height;
-            if (double.IsNaN(w) || w <= 0) continue;
-            if (double.IsNaN(h) || h <= 0) continue;
-            if (pt.X >= left && pt.X <= left + w &&
-                pt.Y >= top  && pt.Y <= top  + h)
-                return fe;
-        }
-        return null;
-    }
 
     private void OnEmbeddedObjectDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
@@ -1362,35 +1326,64 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    // ── 통합 우클릭 핸들러 ──────────────────────────────────────────────────
+    // 커서 아래 객체 타입을 우선순위대로 감지하고 해당 컨텍스트 메뉴를 조립한다.
+    // 새 객체 타입 추가 시 여기에 else-if 블록만 추가하면 된다.
     private void OnPaperPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!_drawingPolyline_active) return;
+        // ① 폴리선/스플라인 입력 모드
+        if (_drawingPolyline_active)
+        {
+            OpenPolylineInputMenu();
+            e.Handled = true;
+            return;
+        }
 
-        // 우클릭 컨텍스트 메뉴 — 폴리선/스플라인 입력 제어
-        var menu = new ContextMenu { PlacementTarget = PaperBorder };
+        var pt = e.GetPosition(BodyEditor);
 
+        // ② 오버레이 도형 (InFrontOfText 우선, BehindText 차선)
+        var hitShape = (FindCanvasChildAt(OverlayShapeCanvas, pt)
+                     ?? FindCanvasChildAt(UnderlayShapeCanvas, pt))?.Tag as PolyDonky.Core.ShapeObject;
+        if (hitShape is not null)
+        {
+            OpenContextMenu(BuildShapeMenu(hitShape));
+            e.Handled = true;
+            return;
+        }
+
+        // ③ 오버레이 이미지 (InFrontOfText 우선, BehindText 차선)
+        var hitImage = (FindCanvasChildAt(OverlayImageCanvas, pt)
+                     ?? FindCanvasChildAt(UnderlayImageCanvas, pt))?.Tag as PolyDonky.Core.ImageBlock;
+        if (hitImage is not null)
+        {
+            OpenContextMenu(BuildOverlayImageMenu(hitImage));
+            e.Handled = true;
+            return;
+        }
+
+        // ④ BodyEditor 내 컨텐츠 — ContextMenuOpening 이 처리 (e.Handled = false)
+    }
+
+    private void OpenPolylineInputMenu()
+    {
         int finishMin = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
-        var itemFinish = new MenuItem { Header = "완료(_F)" };
-        itemFinish.IsEnabled = _drawingPolyline_points.Count >= finishMin;
+
+        var itemFinish = new MenuItem { Header = "완료(_F)", IsEnabled = _drawingPolyline_points.Count >= finishMin };
         itemFinish.Click += (_, _) => FinishPolylineShape();
 
-        var itemUndo = new MenuItem { Header = "마지막 점 취소(_Z)" };
-        itemUndo.IsEnabled = _drawingPolyline_points.Count >= 1;
+        var itemUndo = new MenuItem { Header = "마지막 점 취소(_Z)", IsEnabled = _drawingPolyline_points.Count >= 1 };
         itemUndo.Click += (_, _) =>
         {
             if (_drawingPolyline_points.Count > 0)
             {
                 _drawingPolyline_points.RemoveAt(_drawingPolyline_points.Count - 1);
                 var curPos = Mouse.GetPosition(PaperBorder);
-                if (_drawingPolyline_points.Count > 0)
-                    UpdatePolylinePreview(curPos);
-                else
-                    ClearPolylinePreview();
+                if (_drawingPolyline_points.Count > 0) UpdatePolylinePreview(curPos);
+                else                                   ClearPolylinePreview();
             }
         };
 
-        var itemClose = new MenuItem { Header = "시작점에 닫기(_L)" };
-        itemClose.IsEnabled = _drawingPolyline_points.Count >= 3;
+        var itemClose = new MenuItem { Header = "시작점에 닫기(_L)", IsEnabled = _drawingPolyline_points.Count >= 3 };
         itemClose.Click += (_, _) =>
         {
             if (_drawingPolyline_points.Count >= 3)
@@ -1403,14 +1396,57 @@ public partial class MainWindow : Window
         var itemCancel = new MenuItem { Header = "전체 취소(_C)" };
         itemCancel.Click += (_, _) => EndDrawingMode();
 
+        var menu = new ContextMenu();
         menu.Items.Add(itemFinish);
         menu.Items.Add(itemUndo);
         menu.Items.Add(itemClose);
         menu.Items.Add(new Separator());
         menu.Items.Add(itemCancel);
-        menu.IsOpen = true;
+        OpenContextMenu(menu);
+    }
 
-        e.Handled = true;
+    private ContextMenu BuildShapeMenu(PolyDonky.Core.ShapeObject shape)
+    {
+        var menu  = new ContextMenu();
+        var props = new MenuItem { Header = "도형 속성(_P)..." };
+        props.Click += (_, _) => OpenOverlayShapeProperties(shape);
+        var del = new MenuItem { Header = "삭제(_D)" };
+        del.Click += (_, _) => DeleteOverlayShape(shape);
+        menu.Items.Add(props);
+        menu.Items.Add(del);
+        return menu;
+    }
+
+    private ContextMenu BuildOverlayImageMenu(PolyDonky.Core.ImageBlock img)
+    {
+        var menu  = new ContextMenu();
+        var props = new MenuItem { Header = "그림 속성(_P)..." };
+        props.Click += (_, _) => OpenOverlayImageProperties(img);
+        menu.Items.Add(props);
+        return menu;
+    }
+
+    private void OpenContextMenu(ContextMenu menu)
+    {
+        menu.PlacementTarget = PaperBorder;
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Canvas 자식 중 PaperBorder/BodyEditor 기준 좌표 pt 아래 첫 번째 요소를 반환.</summary>
+    private static FrameworkElement? FindCanvasChildAt(Canvas canvas, Point pt)
+    {
+        foreach (UIElement child in canvas.Children)
+        {
+            if (child is not FrameworkElement fe) continue;
+            double left = Canvas.GetLeft(fe); if (double.IsNaN(left)) left = 0;
+            double top  = Canvas.GetTop(fe);  if (double.IsNaN(top))  top  = 0;
+            double w = fe.ActualWidth  > 0 ? fe.ActualWidth  : fe.Width;
+            double h = fe.ActualHeight > 0 ? fe.ActualHeight : fe.Height;
+            if (double.IsNaN(w) || w <= 0 || double.IsNaN(h) || h <= 0) continue;
+            if (pt.X >= left && pt.X <= left + w && pt.Y >= top && pt.Y <= top + h)
+                return fe;
+        }
+        return null;
     }
 
     private void FinishPolylineShape()
@@ -1546,16 +1582,7 @@ public partial class MainWindow : Window
             Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(shape.OverlayYMm));
             ctrl.Cursor = Cursors.SizeAll;
 
-            var captured  = shape;
-            var ctxMenu   = new ContextMenu();
-            var propsItem = new MenuItem { Header = "도형 속성(_P)..." };
-            propsItem.Click += (_, _) => OpenOverlayShapeProperties(captured);
-            ctxMenu.Items.Add(propsItem);
-            var delItem = new MenuItem { Header = "삭제(_D)" };
-            delItem.Click += (_, _) => DeleteOverlayShape(captured);
-            ctxMenu.Items.Add(delItem);
-            ctrl.ContextMenu = ctxMenu;
-
+            // 우클릭은 PaperBorder.PreviewMouseRightButtonDown 통합 핸들러가 처리 — 개별 ContextMenu 불필요.
             ctrl.MouseLeftButtonDown += OnOverlayShapeMouseDown;
 
             var canvas = shape.WrapMode == PolyDonky.Core.ImageWrapMode.BehindText
