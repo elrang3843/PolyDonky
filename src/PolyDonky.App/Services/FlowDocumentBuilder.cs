@@ -190,21 +190,36 @@ public static class FlowDocumentBuilder
 
             foreach (var cell in row.Cells)
             {
+                var borderColor = TryParseColor(cell.BorderColor)
+                    ?? WpfMedia.Color.FromRgb(0xC8, 0xC8, 0xC8);
+                double borderDip = cell.BorderThicknessPt > 0
+                    ? PtToDip(cell.BorderThicknessPt) : PtToDip(0.75);
+                double padTop   = MmToDip(cell.PaddingTopMm    > 0 ? cell.PaddingTopMm    : 1.0);
+                double padBottom= MmToDip(cell.PaddingBottomMm > 0 ? cell.PaddingBottomMm : 1.0);
+                double padLeft  = MmToDip(cell.PaddingLeftMm   > 0 ? cell.PaddingLeftMm   : 1.5);
+                double padRight = MmToDip(cell.PaddingRightMm  > 0 ? cell.PaddingRightMm  : 1.5);
+
                 var wcell = new Wpf.TableCell
                 {
-                    BorderBrush = WpfMedia.Brushes.LightGray,
-                    BorderThickness = new Thickness(1),
-                    Padding = new Thickness(4),
-                    ColumnSpan = Math.Max(cell.ColumnSpan, 1),
-                    RowSpan = Math.Max(cell.RowSpan, 1),
+                    BorderBrush     = new WpfMedia.SolidColorBrush(borderColor),
+                    BorderThickness = new Thickness(borderDip),
+                    Padding         = new Thickness(padLeft, padTop, padRight, padBottom),
+                    ColumnSpan      = Math.Max(cell.ColumnSpan, 1),
+                    RowSpan         = Math.Max(cell.RowSpan, 1),
                 };
+
                 if (row.IsHeader)
                     wcell.FontWeight = FontWeights.SemiBold;
+
+                if (!string.IsNullOrEmpty(cell.BackgroundColor) &&
+                    TryParseColor(cell.BackgroundColor) is { } bg)
+                    wcell.Background = new WpfMedia.SolidColorBrush(bg);
+
                 AppendBlocks(wcell.Blocks, cell.Blocks, outlineStyles);
                 if (wcell.Blocks.Count == 0)
-                {
                     wcell.Blocks.Add(new Wpf.Paragraph(new Wpf.Run(string.Empty)));
-                }
+
+                ApplyCellTextAlign(wcell, cell.TextAlign);
                 wrow.Cells.Add(wcell);
             }
             rowGroup.Rows.Add(wrow);
@@ -212,6 +227,54 @@ public static class FlowDocumentBuilder
 
         wtable.Tag = table;
         return wtable;
+    }
+
+    internal static void ApplyCellPropertiesToWpf(
+        Wpf.TableCell wcell,
+        TableCell cell,
+        bool isHeader)
+    {
+        var borderColor = TryParseColor(cell.BorderColor)
+            ?? WpfMedia.Color.FromRgb(0xC8, 0xC8, 0xC8);
+        double borderDip = cell.BorderThicknessPt > 0
+            ? PtToDip(cell.BorderThicknessPt) : PtToDip(0.75);
+        wcell.BorderBrush     = new WpfMedia.SolidColorBrush(borderColor);
+        wcell.BorderThickness = new Thickness(borderDip);
+
+        double padTop   = MmToDip(cell.PaddingTopMm    > 0 ? cell.PaddingTopMm    : 1.0);
+        double padBottom= MmToDip(cell.PaddingBottomMm > 0 ? cell.PaddingBottomMm : 1.0);
+        double padLeft  = MmToDip(cell.PaddingLeftMm   > 0 ? cell.PaddingLeftMm   : 1.5);
+        double padRight = MmToDip(cell.PaddingRightMm  > 0 ? cell.PaddingRightMm  : 1.5);
+        wcell.Padding = new Thickness(padLeft, padTop, padRight, padBottom);
+
+        if (!string.IsNullOrEmpty(cell.BackgroundColor) &&
+            TryParseColor(cell.BackgroundColor) is { } bg)
+            wcell.Background = new WpfMedia.SolidColorBrush(bg);
+        else
+            wcell.Background = null;
+
+        wcell.FontWeight = isHeader ? FontWeights.SemiBold : FontWeights.Normal;
+        ApplyCellTextAlign(wcell, cell.TextAlign);
+    }
+
+    private static void ApplyCellTextAlign(Wpf.TableCell wcell, CellTextAlign align)
+    {
+        var wpfAlign = align switch
+        {
+            CellTextAlign.Center  => TextAlignment.Center,
+            CellTextAlign.Right   => TextAlignment.Right,
+            CellTextAlign.Justify => TextAlignment.Justify,
+            _                     => TextAlignment.Left,
+        };
+        foreach (var b in wcell.Blocks)
+            if (b is Wpf.Paragraph p) p.TextAlignment = wpfAlign;
+    }
+
+    private static WpfMedia.Color? TryParseColor(string? hex)
+    {
+        if (string.IsNullOrEmpty(hex)) return null;
+        try { return (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(hex)!; }
+        catch { return null; }
     }
 
     /// <summary>

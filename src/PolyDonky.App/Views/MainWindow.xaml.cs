@@ -812,8 +812,72 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 캐럿이 표 셀 안에 있으면 표/셀 속성 메뉴를 추가한다.
+        if (FindTableCellAtCaret(out var wpfTable, out var wpfRow, out var wpfCell) &&
+            wpfTable is not null && wpfCell is not null &&
+            wpfTable.Tag is PolyDonky.Core.Table coreTable)
+        {
+            AppendTablePropertyMenuItems(menu, wpfTable, wpfRow, wpfCell, coreTable);
+            return;
+        }
+
         if (FindEmbeddedObjectAt(e.OriginalSource, pt) is not { } found) return;
         AppendPropertyMenuItem(menu, () => OpenEmbeddedObjectProperties(found.img, found.container), "속성(_P)...");
+    }
+
+    private bool FindTableCellAtCaret(
+        out System.Windows.Documents.Table? wpfTable,
+        out System.Windows.Documents.TableRow? wpfRow,
+        out System.Windows.Documents.TableCell? wpfCell)
+    {
+        wpfTable = null; wpfRow = null; wpfCell = null;
+        var para = BodyEditor.CaretPosition.Paragraph;
+        if (para?.Parent is not System.Windows.Documents.TableCell tc) return false;
+        wpfCell = tc;
+        wpfRow  = tc.Parent as System.Windows.Documents.TableRow;
+        var rowGroup = wpfRow?.Parent as System.Windows.Documents.TableRowGroup;
+        wpfTable = rowGroup?.Parent as System.Windows.Documents.Table;
+        return wpfTable is not null;
+    }
+
+    private void AppendTablePropertyMenuItems(
+        System.Windows.Controls.ContextMenu menu,
+        System.Windows.Documents.Table wpfTable,
+        System.Windows.Documents.TableRow? wpfRow,
+        System.Windows.Documents.TableCell wpfCell,
+        PolyDonky.Core.Table coreTable)
+    {
+        // 행/열 인덱스로 코어 셀 찾기
+        var rowGroup = wpfTable.RowGroups.FirstOrDefault();
+        int rowIdx  = wpfRow  is not null && rowGroup is not null ? rowGroup.Rows.IndexOf(wpfRow) : -1;
+        int cellIdx = wpfRow  is not null ? wpfRow.Cells.IndexOf(wpfCell) : -1;
+        PolyDonky.Core.TableCell? coreCell =
+            rowIdx  >= 0 && rowIdx  < coreTable.Rows.Count &&
+            cellIdx >= 0 && cellIdx < coreTable.Rows[rowIdx].Cells.Count
+            ? coreTable.Rows[rowIdx].Cells[cellIdx]
+            : null;
+
+        if (coreCell is not null)
+        {
+            AppendPropertyMenuItem(menu, () =>
+            {
+                var dlg = new CellPropertiesWindow(coreCell) { Owner = this };
+                if (dlg.ShowDialog() == true)
+                {
+                    bool isHeader = rowIdx >= 0 && coreTable.Rows[rowIdx].IsHeader;
+                    PolyDonky.App.Services.FlowDocumentBuilder.ApplyCellPropertiesToWpf(
+                        wpfCell, coreCell, isHeader);
+                    _viewModel?.MarkDirty();
+                }
+            }, "셀 속성(_C)...");
+        }
+
+        AppendPropertyMenuItem(menu, () =>
+        {
+            var dlg = new TablePropertiesWindow(coreTable) { Owner = this };
+            if (dlg.ShowDialog() == true)
+                _viewModel?.MarkDirty();
+        }, "표 속성(_T)...");
     }
 
     /// <summary>BodyEditor 의 컨텍스트 메뉴에 구분선 + 속성 항목을 추가하고,

@@ -1,5 +1,11 @@
 namespace PolyDonky.Core;
 
+/// <summary>표 수평 정렬 (페이지 기준).</summary>
+public enum TableHAlign { Left, Center, Right }
+
+/// <summary>셀 텍스트 수평 정렬.</summary>
+public enum CellTextAlign { Left, Center, Right, Justify }
+
 /// <summary>
 /// 행·열 구조의 표. 셀은 임의의 Block(주로 Paragraph) 들을 포함한다.
 /// 셀 병합은 <see cref="TableCell.RowSpan"/> / <see cref="TableCell.ColumnSpan"/> 로 표현하고,
@@ -9,6 +15,9 @@ public sealed class Table : Block
 {
     public IList<TableColumn> Columns { get; set; } = new List<TableColumn>();
     public IList<TableRow> Rows { get; set; } = new List<TableRow>();
+
+    /// <summary>페이지 기준 수평 정렬. WPF 미리보기는 제한적으로 적용되며 변환 출력 시 완전 적용.</summary>
+    public TableHAlign HAlign { get; set; } = TableHAlign.Left;
 }
 
 public sealed class TableColumn
@@ -33,4 +42,23 @@ public sealed class TableCell
     public int ColumnSpan { get; set; } = 1;
     /// <summary>0 이하면 컬럼 정의 너비를 따른다.</summary>
     public double WidthMm { get; set; }
+
+    // ── 텍스트 정렬 ──────────────────────────────────────────────────────
+    public CellTextAlign TextAlign { get; set; } = CellTextAlign.Left;
+
+    // ── 여백 (mm). 0 이하면 렌더러 기본값(상하 1.0, 좌우 1.5) 사용 ───────
+    public double PaddingTopMm    { get; set; }
+    public double PaddingBottomMm { get; set; }
+    public double PaddingLeftMm   { get; set; }
+    public double PaddingRightMm  { get; set; }
+
+    // ── 테두리 ───────────────────────────────────────────────────────────
+    /// <summary>테두리 두께 (pt). 0 이하면 렌더러 기본값 (0.75pt) 사용.</summary>
+    public double BorderThicknessPt { get; set; }
+    /// <summary>테두리 색상 hex. null / 빈 문자열이면 기본 연회색 (#C8C8C8).</summary>
+    public string? BorderColor { get; set; }
+
+    // ── 배경색 ───────────────────────────────────────────────────────────
+    /// <summary>셀 배경색 hex. null / 빈 문자열이면 투명 (배경 없음).</summary>
+    public string? BackgroundColor { get; set; }
 }

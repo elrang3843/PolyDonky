@@ -127,8 +127,9 @@ public static class FlowDocumentParser
         var seed = wpfTable.Tag is Table original
             ? new Table
             {
-                Id = original.Id,
-                Status = original.Status,
+                Id      = original.Id,
+                Status  = original.Status,
+                HAlign  = original.HAlign,
                 Columns = new List<TableColumn>(original.Columns.Select(c => new TableColumn { WidthMm = c.WidthMm })),
             }
             : new Table();
@@ -151,9 +152,17 @@ public static class FlowDocumentParser
                 var origCell = (origRow is not null && cellIndex < origRow.Cells.Count) ? origRow.Cells[cellIndex] : null;
                 var cell = new TableCell
                 {
-                    ColumnSpan = wpfCell.ColumnSpan > 0 ? wpfCell.ColumnSpan : (origCell?.ColumnSpan ?? 1),
-                    RowSpan = wpfCell.RowSpan > 0 ? wpfCell.RowSpan : (origCell?.RowSpan ?? 1),
-                    WidthMm = origCell?.WidthMm ?? 0,
+                    ColumnSpan        = wpfCell.ColumnSpan > 0 ? wpfCell.ColumnSpan : (origCell?.ColumnSpan ?? 1),
+                    RowSpan           = wpfCell.RowSpan    > 0 ? wpfCell.RowSpan    : (origCell?.RowSpan    ?? 1),
+                    WidthMm           = origCell?.WidthMm           ?? 0,
+                    TextAlign         = origCell?.TextAlign         ?? CellTextAlign.Left,
+                    PaddingTopMm      = origCell?.PaddingTopMm      ?? 0,
+                    PaddingBottomMm   = origCell?.PaddingBottomMm   ?? 0,
+                    PaddingLeftMm     = origCell?.PaddingLeftMm     ?? 0,
+                    PaddingRightMm    = origCell?.PaddingRightMm    ?? 0,
+                    BorderThicknessPt = origCell?.BorderThicknessPt ?? 0,
+                    BorderColor       = origCell?.BorderColor,
+                    BackgroundColor   = origCell?.BackgroundColor,
                 };
                 ParseInto(cell.Blocks, wpfCell.Blocks);
                 if (cell.Blocks.Count == 0)
