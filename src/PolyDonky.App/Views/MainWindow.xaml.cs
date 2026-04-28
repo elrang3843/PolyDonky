@@ -798,10 +798,15 @@ public partial class MainWindow : Window
         var menu = BodyEditor.ContextMenu;
         if (menu is null) return;
 
-        // 표 셀 — 셀 속성 + 표 속성 항목 추가
-        if (FindTableCellAtCaret(out var wpfTable, out var wpfRow, out var wpfCell) &&
-            wpfTable is not null && wpfCell is not null &&
-            wpfTable.Tag is PolyDonky.Core.Table coreTable)
+        // 표 셀 — 멀티셀 선택 여부에 따라 다른 메뉴 추가
+        if (FindSelectedTableCells() is { Count: > 1 } multiCells)
+        {
+            // 멀티 셀 선택 — 병합·일괄 속성 메뉴
+            AppendMultiCellMenuItems(menu, multiCells);
+        }
+        else if (FindTableCellAtCaret(out var wpfTable, out var wpfRow, out var wpfCell) &&
+                 wpfTable is not null && wpfCell is not null &&
+                 wpfTable.Tag is PolyDonky.Core.Table coreTable)
         {
             AppendTablePropertyMenuItems(menu, wpfTable, wpfRow, wpfCell, coreTable);
         }
@@ -826,6 +831,206 @@ public partial class MainWindow : Window
         var rowGroup = wpfRow?.Parent as System.Windows.Documents.TableRowGroup;
         wpfTable = rowGroup?.Parent as System.Windows.Documents.Table;
         return wpfTable is not null;
+    }
+
+    // ── 멀티 셀 선택 감지 ──────────────────────────────────────────────────
+
+    private record SelectedCell(
+        System.Windows.Documents.Table WpfTable,
+        System.Windows.Documents.TableRowGroup RowGroup,
+        System.Windows.Documents.TableRow WpfRow,
+        System.Windows.Documents.TableCell WpfCell,
+        PolyDonky.Core.Table CoreTable,
+        PolyDonky.Core.TableCell CoreCell,
+        int RowIdx, int CellIdx);
+
+    private List<SelectedCell>? FindSelectedTableCells()
+    {
+        if (BodyEditor.Selection.IsEmpty) return null;
+
+        var startPara = BodyEditor.Selection.Start.Paragraph;
+        var endPara   = BodyEditor.Selection.End.Paragraph;
+
+        if (startPara?.Parent is not System.Windows.Documents.TableCell startWpfCell) return null;
+        if (endPara?.Parent is not System.Windows.Documents.TableCell endWpfCell) return null;
+        if (ReferenceEquals(startWpfCell, endWpfCell)) return null; // 단일 셀
+
+        var startRow  = startWpfCell.Parent as System.Windows.Documents.TableRow;
+        var rowGroup  = startRow?.Parent as System.Windows.Documents.TableRowGroup;
+        var wpfTable  = rowGroup?.Parent as System.Windows.Documents.Table;
+        if (wpfTable?.Tag is not PolyDonky.Core.Table coreTable || rowGroup is null || startRow is null)
+            return null;
+
+        // 끝 셀이 같은 표에 속하는지 확인
+        var endRow = endWpfCell.Parent as System.Windows.Documents.TableRow;
+        var endRowGroup = endRow?.Parent as System.Windows.Documents.TableRowGroup;
+        if (!ReferenceEquals(endRowGroup, rowGroup)) return null;
+
+        int startRowIdx  = rowGroup.Rows.IndexOf(startRow);
+        int startCellIdx = startRow.Cells.IndexOf(startWpfCell);
+        int endRowIdx    = rowGroup.Rows.IndexOf(endRow!);
+        int endCellIdx   = endRow!.Cells.IndexOf(endWpfCell);
+
+        int minRow  = Math.Min(startRowIdx, endRowIdx);
+        int maxRow  = Math.Max(startRowIdx, endRowIdx);
+        int minCell = Math.Min(startCellIdx, endCellIdx);
+        int maxCell = Math.Max(startCellIdx, endCellIdx);
+
+        var result = new List<SelectedCell>();
+        for (int r = minRow; r <= maxRow; r++)
+        {
+            if (r >= rowGroup.Rows.Count || r >= coreTable.Rows.Count) break;
+            var wRow  = rowGroup.Rows[r];
+            var coRow = coreTable.Rows[r];
+            for (int c = minCell; c <= maxCell; c++)
+            {
+                if (c >= wRow.Cells.Count || c >= coRow.Cells.Count) break;
+                result.Add(new SelectedCell(wpfTable, rowGroup, wRow, wRow.Cells[c],
+                                            coreTable, coRow.Cells[c], r, c));
+            }
+        }
+        return result.Count > 1 ? result : null;
+    }
+
+    // ── 멀티 셀 컨텍스트 메뉴 ─────────────────────────────────────────────
+
+    private void AppendMultiCellMenuItems(
+        System.Windows.Controls.ContextMenu menu,
+        List<SelectedCell> cells)
+    {
+        var items = new List<System.Windows.Controls.Control>();
+        var first = cells[0];
+
+        items.Add(new System.Windows.Controls.Separator());
+
+        // 선택 셀 병합
+        bool canMerge = cells.All(c => c.CoreCell.ColumnSpan == 1 && c.CoreCell.RowSpan == 1);
+        var mergeItem = MakeMenuItem($"선택 셀 {cells.Count}개 병합(_M)",
+            () => TableOp_MergeSelectedCells(cells));
+        mergeItem.IsEnabled = canMerge;
+        items.Add(mergeItem);
+
+        // 선택 셀 내용 지우기
+        items.Add(MakeMenuItem("선택 셀 내용 지우기(_E)", () =>
+        {
+            foreach (var sc in cells)
+            {
+                sc.WpfCell.Blocks.Clear();
+                sc.WpfCell.Blocks.Add(new System.Windows.Documents.Paragraph(
+                    new System.Windows.Documents.Run(string.Empty)));
+                sc.CoreCell.Blocks.Clear();
+                sc.CoreCell.Blocks.Add(PolyDonky.Core.Paragraph.Of(string.Empty));
+            }
+            _viewModel?.MarkDirty();
+        }));
+
+        // 선택 셀 배경색
+        items.Add(MakeMenuItem("선택 셀 배경색(_C)...", () =>
+        {
+            var dlg = new System.Windows.Forms.ColorDialog { FullOpen = true, AnyColor = true };
+            if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+            var c    = dlg.Color;
+            string hex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+            var brush = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(c.R, c.G, c.B));
+            foreach (var sc in cells)
+            {
+                sc.CoreCell.BackgroundColor = hex;
+                sc.WpfCell.Background = brush;
+            }
+            _viewModel?.MarkDirty();
+        }));
+
+        // 선택 셀 속성 (첫 번째 셀 기준으로 다이얼로그 열고, OK 시 전체 적용)
+        items.Add(MakeMenuItem($"선택 셀 속성(_P) [{cells.Count}개]...", () =>
+        {
+            var dlg = new CellPropertiesWindow(first.CoreCell) { Owner = this };
+            if (dlg.ShowDialog() != true) return;
+            bool isHdr = first.CoreTable.Rows[first.RowIdx].IsHeader;
+            // 첫 셀의 변경값을 나머지 셀에 복사
+            foreach (var sc in cells)
+            {
+                sc.CoreCell.TextAlign         = first.CoreCell.TextAlign;
+                sc.CoreCell.PaddingTopMm      = first.CoreCell.PaddingTopMm;
+                sc.CoreCell.PaddingBottomMm   = first.CoreCell.PaddingBottomMm;
+                sc.CoreCell.PaddingLeftMm     = first.CoreCell.PaddingLeftMm;
+                sc.CoreCell.PaddingRightMm    = first.CoreCell.PaddingRightMm;
+                sc.CoreCell.BorderThicknessPt = first.CoreCell.BorderThicknessPt;
+                sc.CoreCell.BorderColor       = first.CoreCell.BorderColor;
+                sc.CoreCell.BackgroundColor   = first.CoreCell.BackgroundColor;
+                bool cellIsHdr = first.CoreTable.Rows[sc.RowIdx].IsHeader;
+                PolyDonky.App.Services.FlowDocumentBuilder.ApplyCellPropertiesToWpf(
+                    sc.WpfCell, sc.CoreCell, cellIsHdr, sc.CoreTable);
+            }
+            _viewModel?.MarkDirty();
+        }));
+
+        // 표 속성 (표 전체)
+        items.Add(new System.Windows.Controls.Separator());
+        items.Add(MakeMenuItem("표 속성(_T)...", () =>
+        {
+            var dlg = new TablePropertiesWindow(first.CoreTable) { Owner = this };
+            if (dlg.ShowDialog() == true)
+            {
+                PolyDonky.App.Services.FlowDocumentBuilder.ApplyTableLevelPropertiesToWpf(
+                    first.WpfTable, first.CoreTable);
+                _viewModel?.MarkDirty();
+            }
+        }));
+
+        foreach (var item in items) menu.Items.Add(item);
+        void Cleanup(object? s, System.Windows.RoutedEventArgs _ev)
+        {
+            menu.Closed -= Cleanup;
+            foreach (var ctrl in items) menu.Items.Remove(ctrl);
+        }
+        menu.Closed += Cleanup;
+    }
+
+    // ── 선택 셀 병합 ──────────────────────────────────────────────────────
+
+    private void TableOp_MergeSelectedCells(List<SelectedCell> cells)
+    {
+        if (cells.Count < 2) return;
+        var coreTable = cells[0].CoreTable;
+        var rowGroup  = cells[0].RowGroup;
+
+        int minRow  = cells.Min(c => c.RowIdx);
+        int maxRow  = cells.Max(c => c.RowIdx);
+        int minCell = cells.Min(c => c.CellIdx);
+        int maxCell = cells.Max(c => c.CellIdx);
+        int newColSpan = maxCell - minCell + 1;
+        int newRowSpan = maxRow  - minRow  + 1;
+
+        // 첫 셀에 병합된 내용 집결
+        var firstWpf  = cells[0].WpfCell;
+        var firstCore = cells[0].CoreCell;
+
+        for (int i = 1; i < cells.Count; i++)
+        {
+            var sc = cells[i];
+            foreach (var b in sc.CoreCell.Blocks)
+                firstCore.Blocks.Add(b);
+            foreach (System.Windows.Documents.Block b in sc.WpfCell.Blocks.ToList())
+            {
+                sc.WpfCell.Blocks.Remove(b);
+                firstWpf.Blocks.Add(b);
+            }
+        }
+
+        firstWpf.ColumnSpan  = newColSpan;
+        firstWpf.RowSpan     = newRowSpan;
+        firstCore.ColumnSpan = newColSpan;
+        firstCore.RowSpan    = newRowSpan;
+
+        // 첫 셀 제외한 나머지 제거 (역순으로)
+        foreach (var sc in cells.Skip(1).Reverse())
+        {
+            sc.WpfRow.Cells.Remove(sc.WpfCell);
+            coreTable.Rows[sc.RowIdx].Cells.Remove(sc.CoreCell);
+        }
+
+        _viewModel?.MarkDirty();
     }
 
     // ── 표 컨텍스트 메뉴 조립 ──────────────────────────────────────────────
