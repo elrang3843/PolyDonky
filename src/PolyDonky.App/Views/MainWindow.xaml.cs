@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
@@ -10,6 +11,7 @@ using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
 using WpfMedia = System.Windows.Media;
+using WpfShapes = System.Windows.Shapes;
 
 namespace PolyDonky.App.Views;
 
@@ -215,6 +217,13 @@ public partial class MainWindow : Window
     private bool _drawingShape_active;
     private ShapeKind _drawingShape_kind = ShapeKind.Rectangle;
 
+    // ── 폴리선/스플라인 클릭 입력 상태 ───────────────────────────
+    // 각 클릭마다 점을 추가하고 더블클릭 또는 우클릭 메뉴로 마침.
+    private bool               _drawingPolyline_active;
+    private ShapeKind          _drawingPolyline_kind = ShapeKind.Polyline;
+    private List<Point>        _drawingPolyline_points = new();
+    private WpfShapes.Polyline? _polylinePreview;        // DrawPreviewCanvas 위의 고무줄 미리보기
+
     // ── 글상자 드래그 생성 / 선택 상태 ────────────────────────────
     private bool _drawingTextBox;
     private bool _drawingInProgress;
@@ -304,7 +313,7 @@ public partial class MainWindow : Window
                     DispatcherPriority.Input);
                 break;
             case Key.Escape:
-                if (_drawingTextBox || _drawingShape_active)
+                if (_drawingTextBox || _drawingShape_active || _drawingPolyline_active)
                 {
                     EndDrawingMode();
                     e.Handled = true;
@@ -323,6 +332,14 @@ public partial class MainWindow : Window
                     {
                         DeselectAllOverlays();
                     }
+                    e.Handled = true;
+                }
+                break;
+
+            case Key.Return:
+                if (_drawingPolyline_active && _drawingPolyline_points.Count >= 2)
+                {
+                    FinishPolylineShape();
                     e.Handled = true;
                 }
                 break;
@@ -1026,37 +1043,112 @@ public partial class MainWindow : Window
 
     private void OnInsertShapeRequested(object? sender, PolyDonky.Core.ShapeKind kind)
     {
-        _drawingShape_active = true;
-        _drawingShape_kind   = kind;
-        Mouse.OverrideCursor = Cursors.Cross;
-        if (_viewModel is not null)
-            _viewModel.StatusMessage = SR.StatusDrawShape;
+        if (kind is ShapeKind.Polyline or ShapeKind.Spline)
+        {
+            _drawingPolyline_active = true;
+            _drawingPolyline_kind   = kind;
+            _drawingPolyline_points.Clear();
+            Mouse.OverrideCursor = Cursors.Cross;
+            if (_viewModel is not null)
+                _viewModel.StatusMessage = SR.StatusDrawPolyline;
+        }
+        else
+        {
+            _drawingShape_active = true;
+            _drawingShape_kind   = kind;
+            Mouse.OverrideCursor = Cursors.Cross;
+            if (_viewModel is not null)
+                _viewModel.StatusMessage = SR.StatusDrawShape;
+        }
     }
 
     private void EndDrawingMode()
     {
-        _drawingTextBox    = false;
-        _drawingShape_active = false;
-        _drawingInProgress = false;
+        _drawingTextBox       = false;
+        _drawingShape_active  = false;
+        _drawingInProgress    = false;
+        _drawingPolyline_active = false;
+        _drawingPolyline_points.Clear();
+        ClearPolylinePreview();
         Mouse.OverrideCursor = null;
         DrawPreviewRect.Visibility = Visibility.Collapsed;
         if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
         if (_viewModel is not null) _viewModel.StatusMessage = SR.StatusReady;
     }
 
+    private void ClearPolylinePreview()
+    {
+        if (_polylinePreview is not null)
+        {
+            DrawPreviewCanvas.Children.Remove(_polylinePreview);
+            _polylinePreview = null;
+        }
+    }
+
+    private void UpdatePolylinePreview(Point mousePos)
+    {
+        // DrawPreviewCanvas 위에 커밋된 점들 + 마우스 위치를 잇는 Polyline 을 그린다.
+        if (_polylinePreview is null)
+        {
+            _polylinePreview = new WpfShapes.Polyline
+            {
+                Stroke = WpfMedia.Brushes.SteelBlue,
+                StrokeThickness = 1.5,
+                StrokeDashArray = new DoubleCollection { 4, 2 },
+                IsHitTestVisible = false,
+            };
+            DrawPreviewCanvas.Children.Add(_polylinePreview);
+        }
+
+        _polylinePreview.Points.Clear();
+        foreach (var pt in _drawingPolyline_points)
+            _polylinePreview.Points.Add(pt);
+        _polylinePreview.Points.Add(mousePos);
+    }
+
     private void OnPaperPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // ── 폴리선/스플라인 클릭 입력 모드 ──────────────────────────────
+        if (_drawingPolyline_active)
+        {
+            var pos = e.GetPosition(PaperBorder);
+            pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
+            pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+
+            if (e.ClickCount >= 2)
+            {
+                // 더블클릭: 마지막 점(앞서 단일 클릭에서 이미 추가됨) 제거 후 마감
+                // WPF 는 MouseDown ClickCount==1 → ClickCount==2 순으로 두 번 발생하므로
+                // ClickCount==2 직전에 이미 점이 추가되어 있음 → 중복 제거.
+                if (_drawingPolyline_points.Count >= 1)
+                    _drawingPolyline_points.RemoveAt(_drawingPolyline_points.Count - 1);
+                if (_drawingPolyline_points.Count >= 2)
+                    FinishPolylineShape();
+                else
+                    EndDrawingMode();
+            }
+            else
+            {
+                // 단일 클릭: 점 추가
+                _drawingPolyline_points.Add(pos);
+                UpdatePolylinePreview(pos);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (!_drawingTextBox && !_drawingShape_active) return;
 
-        var pos = e.GetPosition(PaperBorder);
-        pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-        pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+        var startPos = e.GetPosition(PaperBorder);
+        startPos.X = Math.Clamp(startPos.X, 0, PaperBorder.ActualWidth);
+        startPos.Y = Math.Clamp(startPos.Y, 0, PaperBorder.ActualHeight);
 
-        _drawStart = pos;
+        _drawStart = startPos;
         _drawingInProgress = true;
 
-        Canvas.SetLeft(DrawPreviewRect, pos.X);
-        Canvas.SetTop(DrawPreviewRect, pos.Y);
+        Canvas.SetLeft(DrawPreviewRect, startPos.X);
+        Canvas.SetTop(DrawPreviewRect, startPos.Y);
         DrawPreviewRect.Width = 0;
         DrawPreviewRect.Height = 0;
         DrawPreviewRect.Visibility = Visibility.Visible;
@@ -1067,16 +1159,25 @@ public partial class MainWindow : Window
 
     private void OnPaperPreviewMouseMove(object sender, MouseEventArgs e)
     {
+        if (_drawingPolyline_active && _drawingPolyline_points.Count > 0)
+        {
+            var pos = e.GetPosition(PaperBorder);
+            pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
+            pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+            UpdatePolylinePreview(pos);
+            return;
+        }
+
         if (!_drawingInProgress || (!_drawingTextBox && !_drawingShape_active)) return;
 
-        var pos = e.GetPosition(PaperBorder);
-        pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-        pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+        var pos2 = e.GetPosition(PaperBorder);
+        pos2.X = Math.Clamp(pos2.X, 0, PaperBorder.ActualWidth);
+        pos2.Y = Math.Clamp(pos2.Y, 0, PaperBorder.ActualHeight);
 
-        double x = Math.Min(_drawStart.X, pos.X);
-        double y = Math.Min(_drawStart.Y, pos.Y);
-        double w = Math.Abs(pos.X - _drawStart.X);
-        double h = Math.Abs(pos.Y - _drawStart.Y);
+        double x = Math.Min(_drawStart.X, pos2.X);
+        double y = Math.Min(_drawStart.Y, pos2.Y);
+        double w = Math.Abs(pos2.X - _drawStart.X);
+        double h = Math.Abs(pos2.Y - _drawStart.Y);
 
         Canvas.SetLeft(DrawPreviewRect, x);
         Canvas.SetTop(DrawPreviewRect, y);
@@ -1130,6 +1231,105 @@ public partial class MainWindow : Window
         overlay.BeginEditing();
 
         e.Handled = true;
+    }
+
+    private void OnPaperPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_drawingPolyline_active) return;
+
+        // 우클릭 컨텍스트 메뉴 — 폴리선/스플라인 입력 제어
+        var menu = new ContextMenu { PlacementTarget = PaperBorder };
+
+        var itemFinish = new MenuItem { Header = "완료(_F)" };
+        itemFinish.IsEnabled = _drawingPolyline_points.Count >= 2;
+        itemFinish.Click += (_, _) => FinishPolylineShape();
+
+        var itemUndo = new MenuItem { Header = "마지막 점 취소(_Z)" };
+        itemUndo.IsEnabled = _drawingPolyline_points.Count >= 1;
+        itemUndo.Click += (_, _) =>
+        {
+            if (_drawingPolyline_points.Count > 0)
+            {
+                _drawingPolyline_points.RemoveAt(_drawingPolyline_points.Count - 1);
+                var curPos = Mouse.GetPosition(PaperBorder);
+                if (_drawingPolyline_points.Count > 0)
+                    UpdatePolylinePreview(curPos);
+                else
+                    ClearPolylinePreview();
+            }
+        };
+
+        var itemClose = new MenuItem { Header = "시작점에 닫기(_L)" };
+        itemClose.IsEnabled = _drawingPolyline_points.Count >= 3;
+        itemClose.Click += (_, _) =>
+        {
+            if (_drawingPolyline_points.Count >= 3)
+            {
+                _drawingPolyline_points.Add(_drawingPolyline_points[0]);
+                FinishPolylineShape();
+            }
+        };
+
+        var itemCancel = new MenuItem { Header = "전체 취소(_C)" };
+        itemCancel.Click += (_, _) => EndDrawingMode();
+
+        menu.Items.Add(itemFinish);
+        menu.Items.Add(itemUndo);
+        menu.Items.Add(itemClose);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(itemCancel);
+        menu.IsOpen = true;
+
+        e.Handled = true;
+    }
+
+    private void FinishPolylineShape()
+    {
+        const double DipsPerMm = TextBoxOverlay.DipsPerMm;
+        var pts = _drawingPolyline_points;
+        if (pts.Count < 2) { EndDrawingMode(); return; }
+
+        // 바운딩박스 계산
+        double minX = double.MaxValue, minY = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue;
+        foreach (var pt in pts)
+        {
+            if (pt.X < minX) minX = pt.X;
+            if (pt.Y < minY) minY = pt.Y;
+            if (pt.X > maxX) maxX = pt.X;
+            if (pt.Y > maxY) maxY = pt.Y;
+        }
+        double wDip = Math.Max(maxX - minX, 1.0);
+        double hDip = Math.Max(maxY - minY, 1.0);
+
+        var kind  = _drawingPolyline_kind;
+        var shape = new PolyDonky.Core.ShapeObject
+        {
+            Kind              = kind,
+            WrapMode          = PolyDonky.Core.ImageWrapMode.InFrontOfText,
+            WidthMm           = wDip / DipsPerMm,
+            HeightMm          = hDip / DipsPerMm,
+            OverlayXMm        = minX / DipsPerMm,
+            OverlayYMm        = minY / DipsPerMm,
+            StrokeColor       = "#2C3E50",
+            StrokeThicknessPt = 1.5,
+            FillColor         = null,
+            FillOpacity       = 0.7,
+            Status            = NodeStatus.Modified,
+        };
+
+        // 점들을 바운딩박스 기준 상대 좌표(mm) 로 저장
+        foreach (var pt in pts)
+        {
+            shape.Points.Add(new PolyDonky.Core.ShapePoint
+            {
+                X = (pt.X - minX) / DipsPerMm,
+                Y = (pt.Y - minY) / DipsPerMm,
+            });
+        }
+
+        EndDrawingMode();
+        InsertShapeBlock(shape);
     }
 
     private void FinishShapeDraw(double xDip, double yDip, double wDip, double hDip)

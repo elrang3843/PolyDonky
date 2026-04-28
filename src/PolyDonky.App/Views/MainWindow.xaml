@@ -314,7 +314,8 @@
                         BorderThickness="0.5"
                         PreviewMouseLeftButtonDown="OnPaperPreviewMouseLeftButtonDown"
                         PreviewMouseMove="OnPaperPreviewMouseMove"
-                        PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp">
+                        PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp"
+                        PreviewMouseRightButtonDown="OnPaperPreviewMouseRightButtonDown">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="18" ShadowDepth="6"
                                           Opacity="0.38" Direction="270" Color="Black" />

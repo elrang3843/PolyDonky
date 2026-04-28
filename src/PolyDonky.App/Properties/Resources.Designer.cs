@@ -99,6 +99,7 @@ namespace PolyDonky.App.Properties
         internal static string StatusDocClosed       => Get(nameof(StatusDocClosed));
         internal static string StatusDrawTextBox     => Get(nameof(StatusDrawTextBox));
         internal static string StatusDrawShape       => Get(nameof(StatusDrawShape));
+        internal static string StatusDrawPolyline   => Get(nameof(StatusDrawPolyline));
 
         // ── 다이얼로그 공통 ─────────────────────────────────────────
         internal static string DlgOK                    => Get(nameof(DlgOK));
