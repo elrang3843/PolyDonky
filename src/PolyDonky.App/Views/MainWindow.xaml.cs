@@ -325,7 +325,9 @@ public partial class MainWindow : Window
         BodyEditor.PreviewMouseMove           += OnEditorPreviewMouseMoveBlockDrag;
         BodyEditor.PreviewMouseLeftButtonUp   += OnEditorPreviewMouseUpEmbedded;
 
-        // 이모지·이미지 우클릭 → 속성 컨텍스트 메뉴, 더블클릭 → 속성 다이얼로그
+        // BodyEditor 우클릭 통합 — XAML 의 정적 메뉴 대신, ContextMenuOpening 이
+        // 매번 메뉴를 처음부터 빌드한다. ContextMenu 인스턴스가 있어야 이벤트가 발생.
+        BodyEditor.ContextMenu             = new System.Windows.Controls.ContextMenu();
         BodyEditor.ContextMenuOpening      += OnEmbeddedObjectContextMenuOpening;
         BodyEditor.PreviewMouseDoubleClick += OnEmbeddedObjectDoubleClick;
         BodyEditor.MouseLeave += (_, _) =>
@@ -991,21 +993,37 @@ public partial class MainWindow : Window
         _viewModel?.MarkDirty();
     }
 
-    // ── 이모지·이미지 속성 편집 ─────────────────────────────────────────
-
-    // BodyEditor 내 컨텐츠(표·인라인 이미지/이모지) 우클릭 전용.
-    // 오버레이/언더레이 객체는 OnPaperPreviewMouseRightButtonDown 에서 이미 처리했으므로
-    // 여기에 도달하면 반드시 BodyEditor 본문 영역 우클릭이다.
+    // ── BodyEditor 우클릭 통합 핸들러 ──────────────────────────────────────
+    //
+    // BodyEditor 본문 영역의 우클릭 메뉴는 모두 이 한 곳에서 빌드한다.
+    // (오버레이/언더레이 캔버스 객체는 OnPaperPreviewMouseRightButtonDown 이
+    //  e.Handled = true 로 가로채므로 여기에 도달하지 않는다.)
+    //
+    // 매번 메뉴를 비우고 처음부터 다시 빌드 → 같은 선택 상태에서는 항상 같은 메뉴.
     private void OnEmbeddedObjectContextMenuOpening(object sender, System.Windows.Controls.ContextMenuEventArgs e)
     {
-        var pt   = System.Windows.Input.Mouse.GetPosition(BodyEditor);
         var menu = BodyEditor.ContextMenu;
         if (menu is null) return;
 
-        // 표 셀 — 멀티셀 선택 여부에 따라 다른 메뉴 추가
+        menu.Items.Clear();
+
+        // ① 기본 클립보드 메뉴 (모든 컨텍스트 공통)
+        menu.Items.Add(new System.Windows.Controls.MenuItem
+        {
+            Header = "잘라내기(_T)", Command = ApplicationCommands.Cut,   InputGestureText = "Ctrl+X"
+        });
+        menu.Items.Add(new System.Windows.Controls.MenuItem
+        {
+            Header = "복사(_C)",     Command = ApplicationCommands.Copy,  InputGestureText = "Ctrl+C"
+        });
+        menu.Items.Add(new System.Windows.Controls.MenuItem
+        {
+            Header = "붙여넣기(_P)", Command = ApplicationCommands.Paste, InputGestureText = "Ctrl+V"
+        });
+
+        // ② 표 컨텍스트 — 멀티 셀 선택이 우선, 없으면 캐럿 위치 셀
         if (FindSelectedTableCells() is { Count: > 1 } multiCells)
         {
-            // 멀티 셀 선택 — 병합·일괄 속성 메뉴
             AppendMultiCellMenuItems(menu, multiCells);
         }
         else if (FindTableCellAtCaret(out var wpfTable, out var wpfRow, out var wpfCell) &&
@@ -1015,7 +1033,8 @@ public partial class MainWindow : Window
             AppendTablePropertyMenuItems(menu, wpfTable, wpfRow, wpfCell, coreTable);
         }
 
-        // 인라인 이미지/이모지 — 속성 항목 추가 (표와 동시 존재 가능)
+        // ③ 인라인 이미지/이모지 — 속성 항목
+        var pt = System.Windows.Input.Mouse.GetPosition(BodyEditor);
         if (FindEmbeddedObjectAt(e.OriginalSource, pt) is { } found)
         {
             AppendPropertyMenuItem(menu, () => OpenEmbeddedObjectProperties(found.img, found.container), "속성(_P)...");
@@ -1048,15 +1067,29 @@ public partial class MainWindow : Window
         PolyDonky.Core.TableCell CoreCell,
         int RowIdx, int CellIdx);
 
+    /// <summary>TextPointer 의 조상 체인에서 가장 가까운 TableCell 을 찾는다 (List·Span 등 중간 컨테이너 통과).</summary>
+    private static System.Windows.Documents.TableCell? FindAncestorCell(System.Windows.Documents.TextPointer? tp)
+    {
+        if (tp == null) return null;
+        DependencyObject? cur = tp.Parent;
+        while (cur is System.Windows.FrameworkContentElement fce)
+        {
+            if (cur is System.Windows.Documents.TableCell tc) return tc;
+            cur = fce.Parent;
+        }
+        return null;
+    }
+
     private List<SelectedCell>? FindSelectedTableCells()
     {
         if (BodyEditor.Selection.IsEmpty) return null;
 
-        var startPara = BodyEditor.Selection.Start.Paragraph;
-        var endPara   = BodyEditor.Selection.End.Paragraph;
+        // Paragraph.Parent 직접 검사 대신 조상 체인을 끝까지 거슬러 올라간다.
+        // (List · Span · 중첩 Block 등으로 중간 단계가 있을 수 있음)
+        var startWpfCell = FindAncestorCell(BodyEditor.Selection.Start);
+        var endWpfCell   = FindAncestorCell(BodyEditor.Selection.End);
 
-        if (startPara?.Parent is not System.Windows.Documents.TableCell startWpfCell) return null;
-        if (endPara?.Parent is not System.Windows.Documents.TableCell endWpfCell) return null;
+        if (startWpfCell == null || endWpfCell == null) return null;
         if (ReferenceEquals(startWpfCell, endWpfCell)) return null; // 단일 셀
 
         var startRow  = startWpfCell.Parent as System.Windows.Documents.TableRow;
