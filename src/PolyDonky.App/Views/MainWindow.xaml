@@ -328,6 +328,8 @@
                         <Canvas x:Name="UnderlayImageCanvas" />
                         <!-- 도형 오버레이(BehindText) — 그림 뒤, 본문 텍스트 뒤. -->
                         <Canvas x:Name="UnderlayShapeCanvas" />
+                        <!-- 표 오버레이(BehindText) — 텍스트 뒤. -->
+                        <Canvas x:Name="UnderlayTableCanvas" />
                         <RichTextBox x:Name="BodyEditor"
                                      AcceptsReturn="True"
                                      AcceptsTab="True"
@@ -358,6 +360,8 @@
                         <Canvas x:Name="OverlayImageCanvas" />
                         <!-- 도형 오버레이(InFrontOfText) — 그림 위. -->
                         <Canvas x:Name="OverlayShapeCanvas" />
+                        <!-- 표 오버레이(InFrontOfText/Fixed) — 도형 위. -->
+                        <Canvas x:Name="OverlayTableCanvas" />
                         <!-- 드래그 생성 미리보기. 본 객체 위에 그려짐. -->
                         <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
                             <Rectangle x:Name="DrawPreviewRect"

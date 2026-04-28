@@ -3,6 +3,19 @@ namespace PolyDonky.Core;
 /// <summary>표 수평 정렬 (페이지 기준).</summary>
 public enum TableHAlign { Left, Center, Right }
 
+/// <summary>표와 본문 텍스트의 배치 관계.</summary>
+public enum TableWrapMode
+{
+    /// <summary>본문 흐름 — 표가 단독 블록을 차지 (기본값). HAlign 으로 좌/가/우 정렬.</summary>
+    Block,
+    /// <summary>텍스트 위로 겹치기 (절대 위치, OverlayXMm/OverlayYMm 사용).</summary>
+    InFrontOfText,
+    /// <summary>텍스트 아래로 겹치기 (절대 위치, OverlayXMm/OverlayYMm 사용).</summary>
+    BehindText,
+    /// <summary>페이지 기준 위치 고정 — 본문 텍스트 흐름과 독립 (절대 위치).</summary>
+    Fixed,
+}
+
 /// <summary>셀 텍스트 수평 정렬.</summary>
 public enum CellTextAlign { Left, Center, Right, Justify }
 
@@ -16,8 +29,17 @@ public sealed class Table : Block
     public IList<TableColumn> Columns { get; set; } = new List<TableColumn>();
     public IList<TableRow> Rows { get; set; } = new List<TableRow>();
 
-    /// <summary>페이지 기준 수평 정렬.</summary>
+    /// <summary>본문 배치 방식 (Block 이면 HAlign 적용, 나머지는 OverlayXMm/OverlayYMm 사용).</summary>
+    public TableWrapMode WrapMode { get; set; } = TableWrapMode.Block;
+
+    /// <summary>페이지 기준 수평 정렬 (WrapMode=Block 일 때만 적용).</summary>
     public TableHAlign HAlign { get; set; } = TableHAlign.Left;
+
+    // ── 오버레이 위치 (InFrontOfText/BehindText/Fixed) ───────────────
+    /// <summary>오버레이 모드 X 위치 (mm, 페이지 좌상단 기준).</summary>
+    public double OverlayXMm { get; set; }
+    /// <summary>오버레이 모드 Y 위치 (mm, 페이지 좌상단 기준).</summary>
+    public double OverlayYMm { get; set; }
 
     // ── 표 배경색 ────────────────────────────────────────────────────────
     /// <summary>표 전체 배경색 hex. null 이면 투명.</summary>

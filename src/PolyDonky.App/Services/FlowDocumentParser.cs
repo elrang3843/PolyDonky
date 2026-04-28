@@ -72,6 +72,11 @@ public static class FlowDocumentParser
                     target.Add(wrappedShape);
                     break;
 
+                // 오버레이(InFrontOfText/BehindText/Fixed) 모드 표 앵커 단락 — Tag 로 원본 Table 을 회수.
+                case Wpf.Paragraph wrappedTablePara when wrappedTablePara.Tag is Table wrappedTable:
+                    target.Add(wrappedTable);
+                    break;
+
                 case Wpf.Paragraph wpfPara:
                     target.Add(ParseParagraph(wpfPara, listMarker: null));
                     break;
@@ -129,7 +134,10 @@ public static class FlowDocumentParser
             {
                 Id      = original.Id,
                 Status  = original.Status,
-                HAlign  = original.HAlign,
+                WrapMode  = original.WrapMode,
+                HAlign    = original.HAlign,
+                OverlayXMm = original.OverlayXMm,
+                OverlayYMm = original.OverlayYMm,
                 BackgroundColor              = original.BackgroundColor,
                 DefaultCellPaddingTopMm      = original.DefaultCellPaddingTopMm,
                 DefaultCellPaddingBottomMm   = original.DefaultCellPaddingBottomMm,

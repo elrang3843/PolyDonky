@@ -423,6 +423,9 @@ public partial class MainWindow : Window
 
         // 도형 오버레이 재구축
         RebuildOverlayShapes();
+
+        // 표 오버레이 재구축
+        RebuildOverlayTables();
     }
 
     /// <summary>
@@ -907,7 +910,26 @@ public partial class MainWindow : Window
             var dlg = new TablePropertiesWindow(coreTable) { Owner = this };
             if (dlg.ShowDialog() == true)
             {
-                PolyDonky.App.Services.FlowDocumentBuilder.ApplyTableLevelPropertiesToWpf(wpfTable, coreTable);
+                if (coreTable.WrapMode == PolyDonky.Core.TableWrapMode.Block)
+                {
+                    // Block 모드 유지 → WPF Table 에 직접 적용
+                    PolyDonky.App.Services.FlowDocumentBuilder.ApplyTableLevelPropertiesToWpf(wpfTable, coreTable);
+                }
+                else
+                {
+                    // 오버레이 모드로 전환 — FlowDocument 내 WPF Table 을 앵커 단락으로 교체
+                    var anchor = new System.Windows.Documents.Paragraph
+                    {
+                        Tag        = coreTable,
+                        Margin     = new Thickness(0),
+                        FontSize   = 0.1,
+                        Foreground = System.Windows.Media.Brushes.Transparent,
+                        Background = System.Windows.Media.Brushes.Transparent,
+                    };
+                    BodyEditor.Document.Blocks.InsertBefore(wpfTable, anchor);
+                    BodyEditor.Document.Blocks.Remove(wpfTable);
+                    RebuildOverlayTables();
+                }
                 _viewModel?.MarkDirty();
             }
         }));
@@ -1636,7 +1658,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        // ④ BodyEditor 내 컨텐츠 — ContextMenuOpening 이 처리 (e.Handled = false)
+        // ④ 오버레이 표 (InFrontOfText/Fixed 우선, BehindText 차선)
+        var hitTable = (FindCanvasChildAt(OverlayTableCanvas, pt)
+                     ?? FindCanvasChildAt(UnderlayTableCanvas, pt))?.Tag as PolyDonky.Core.Table;
+        if (hitTable is not null)
+        {
+            OpenContextMenu(BuildOverlayTableMenu(hitTable));
+            e.Handled = true;
+            return;
+        }
+
+        // ⑤ BodyEditor 내 컨텐츠 — ContextMenuOpening 이 처리 (e.Handled = false)
     }
 
     private void OpenPolylineInputMenu()
@@ -1864,6 +1896,88 @@ public partial class MainWindow : Window
                 ? UnderlayShapeCanvas
                 : OverlayShapeCanvas;
             canvas.Children.Add(ctrl);
+        }
+    }
+
+    private void RebuildOverlayTables()
+    {
+        OverlayTableCanvas.Children.Clear();
+        UnderlayTableCanvas.Children.Clear();
+
+        foreach (var block in BodyEditor.Document.Blocks)
+        {
+            if (block.Tag is not PolyDonky.Core.Table table) continue;
+            if (table.WrapMode == PolyDonky.Core.TableWrapMode.Block) continue;
+
+            var ctrl = Services.FlowDocumentBuilder.BuildOverlayTableControl(table);
+            if (ctrl is null) continue;
+
+            ctrl.Tag = table;
+            Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(table.OverlayXMm));
+            Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(table.OverlayYMm));
+            ctrl.Cursor = Cursors.SizeAll;
+            ctrl.MouseLeftButtonDown += OnOverlayTableMouseDown;
+
+            var canvas = table.WrapMode == PolyDonky.Core.TableWrapMode.BehindText
+                ? UnderlayTableCanvas
+                : OverlayTableCanvas;
+            canvas.Children.Add(ctrl);
+        }
+    }
+
+    // ── 오버레이 표 메뉴 / 이벤트 ────────────────────────────────────────
+
+    private System.Windows.Controls.ContextMenu BuildOverlayTableMenu(PolyDonky.Core.Table table)
+    {
+        var menu = new System.Windows.Controls.ContextMenu();
+        menu.Items.Add(MakeMenuItem("표 속성(_T)...", () =>
+        {
+            var dlg = new TablePropertiesWindow(table) { Owner = this };
+            if (dlg.ShowDialog() == true)
+            {
+                // WrapMode 변경 시 FlowDocument 앵커 블록을 교체해야 할 수 있음
+                var anchor = BodyEditor.Document.Blocks
+                    .FirstOrDefault(b => ReferenceEquals(b.Tag, table));
+                if (anchor is not null)
+                {
+                    var newAnchor = table.WrapMode == PolyDonky.Core.TableWrapMode.Block
+                        ? (System.Windows.Documents.Block)Services.FlowDocumentBuilder.BuildTable(table)
+                        : new System.Windows.Documents.Paragraph
+                          {
+                              Tag        = table,
+                              Margin     = new Thickness(0),
+                              FontSize   = 0.1,
+                              Foreground = System.Windows.Media.Brushes.Transparent,
+                              Background = System.Windows.Media.Brushes.Transparent,
+                          };
+                    BodyEditor.Document.Blocks.InsertBefore(anchor, newAnchor);
+                    BodyEditor.Document.Blocks.Remove(anchor);
+                }
+                RebuildOverlayTables();
+                _viewModel?.MarkDirty();
+            }
+        }));
+        menu.Items.Add(new System.Windows.Controls.Separator());
+        menu.Items.Add(MakeMenuItem("표 삭제(_X)", () =>
+        {
+            var anchor = BodyEditor.Document.Blocks
+                .FirstOrDefault(b => ReferenceEquals(b.Tag, table));
+            if (anchor is not null)
+                BodyEditor.Document.Blocks.Remove(anchor);
+            RebuildOverlayTables();
+            _viewModel?.MarkDirty();
+        }));
+        return menu;
+    }
+
+    private void OnOverlayTableMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (e.ClickCount == 2 && fe.Tag is PolyDonky.Core.Table tbl)
+        {
+            var dlg = new TablePropertiesWindow(tbl) { Owner = this };
+            if (dlg.ShowDialog() == true) { RebuildOverlayTables(); _viewModel?.MarkDirty(); }
+            e.Handled = true;
         }
     }
 

@@ -141,7 +141,10 @@ public static class FlowDocumentBuilder
                 case Table t:
                     currentList = null;
                     currentKind = null;
-                    target.Add(BuildTable(t, outlineStyles));
+                    if (t.WrapMode == TableWrapMode.Block)
+                        target.Add(BuildTable(t, outlineStyles));
+                    else
+                        target.Add(BuildTableAnchor(t));   // 오버레이 모드 — 앵커만 추가
                     break;
 
                 case ImageBlock image:
@@ -290,6 +293,108 @@ public static class FlowDocumentBuilder
         };
         foreach (var b in wcell.Blocks)
             if (b is Wpf.Paragraph p) p.TextAlignment = wpfAlign;
+    }
+
+    // ── 오버레이 표 지원 ─────────────────────────────────────────────────
+
+    /// <summary>오버레이(InFrontOfText/BehindText/Fixed) 모드 표를 위한 최소 앵커 단락을 반환한다.</summary>
+    private static Wpf.Paragraph BuildTableAnchor(Table table)
+        => new Wpf.Paragraph
+        {
+            Tag        = table,
+            Margin     = new Thickness(0),
+            FontSize   = 0.1,
+            Foreground = WpfMedia.Brushes.Transparent,
+            Background = WpfMedia.Brushes.Transparent,
+        };
+
+    /// <summary>
+    /// 오버레이 Canvas 에 배치할 표 시각 요소를 생성한다.
+    /// System.Windows.Controls.Grid 기반으로 셀 테두리·배경·텍스트를 렌더링한다.
+    /// </summary>
+    internal static System.Windows.Controls.FrameworkElement? BuildOverlayTableControl(Table table)
+    {
+        if (table.Rows.Count == 0 || table.Columns.Count == 0) return null;
+
+        var grid = new System.Windows.Controls.Grid();
+        grid.Tag = table;
+
+        // 컬럼 정의
+        foreach (var col in table.Columns)
+        {
+            var w = col.WidthMm > 0
+                ? new System.Windows.GridLength(MmToDip(col.WidthMm))
+                : new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+            grid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = w });
+        }
+
+        // 행 정의
+        foreach (var row in table.Rows)
+        {
+            var h = row.HeightMm > 0
+                ? new System.Windows.GridLength(MmToDip(row.HeightMm))
+                : System.Windows.GridLength.Auto;
+            grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = h });
+        }
+
+        // 셀
+        var headerBg = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xE8, 0xEA, 0xED));
+        for (int r = 0; r < table.Rows.Count; r++)
+        {
+            var row = table.Rows[r];
+            for (int c = 0; c < row.Cells.Count; c++)
+            {
+                var cell = row.Cells[c];
+                var borderColor = TryParseColor(cell.BorderColor) ?? WpfMedia.Color.FromRgb(0xC8, 0xC8, 0xC8);
+                double borderDip = cell.BorderThicknessPt > 0 ? PtToDip(cell.BorderThicknessPt) : PtToDip(0.75);
+
+                WpfMedia.Brush? cellBg = null;
+                if (row.IsHeader)
+                    cellBg = headerBg;
+                else if (!string.IsNullOrEmpty(cell.BackgroundColor) &&
+                         TryParseColor(cell.BackgroundColor) is { } bg)
+                    cellBg = new WpfMedia.SolidColorBrush(bg);
+
+                double padL = MmToDip(cell.PaddingLeftMm   > 0 ? cell.PaddingLeftMm   : 1.5);
+                double padT = MmToDip(cell.PaddingTopMm    > 0 ? cell.PaddingTopMm    : 1.0);
+                double padR = MmToDip(cell.PaddingRightMm  > 0 ? cell.PaddingRightMm  : 1.5);
+                double padB = MmToDip(cell.PaddingBottomMm > 0 ? cell.PaddingBottomMm : 1.0);
+
+                // 셀 내용 텍스트 (첫 Paragraph 의 텍스트만 표시)
+                string text = string.Concat(
+                    cell.Blocks.OfType<Paragraph>().Take(1)
+                               .SelectMany(p => p.Runs.Select(run => run.Text)));
+
+                var textBlock = new System.Windows.Controls.TextBlock
+                {
+                    Text = text,
+                    TextWrapping = System.Windows.TextWrapping.Wrap,
+                    Padding = new Thickness(padL, padT, padR, padB),
+                    FontWeight = row.IsHeader ? FontWeights.SemiBold : FontWeights.Normal,
+                };
+
+                var border = new System.Windows.Controls.Border
+                {
+                    BorderBrush     = new WpfMedia.SolidColorBrush(borderColor),
+                    BorderThickness = new Thickness(borderDip),
+                    Background      = cellBg,
+                    Child           = textBlock,
+                };
+
+                System.Windows.Controls.Grid.SetRow(border, r);
+                System.Windows.Controls.Grid.SetColumn(border, c);
+                if (cell.ColumnSpan > 1) System.Windows.Controls.Grid.SetColumnSpan(border, cell.ColumnSpan);
+                if (cell.RowSpan    > 1) System.Windows.Controls.Grid.SetRowSpan(border, cell.RowSpan);
+                grid.Children.Add(border);
+            }
+        }
+
+        // 표 배경
+        if (!string.IsNullOrEmpty(table.BackgroundColor) &&
+            TryParseColor(table.BackgroundColor) is { } tableBg)
+            grid.Background = new WpfMedia.SolidColorBrush(tableBg);
+
+        return grid;
     }
 
     private static WpfMedia.Color? TryParseColor(string? hex)

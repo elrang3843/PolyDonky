@@ -4,7 +4,7 @@ using PolyDonky.Core;
 
 namespace PolyDonky.App.Views;
 
-/// <summary>표 속성 다이얼로그. 표 정렬·배경·여백·테두리를 편집한다.</summary>
+/// <summary>표 속성 다이얼로그. 배치 방식·정렬·배경·여백·테두리를 편집한다.</summary>
 public partial class TablePropertiesWindow : Window
 {
     private readonly Table _table;
@@ -20,6 +20,20 @@ public partial class TablePropertiesWindow : Window
 
     private void LoadValues()
     {
+        // 배치 모드
+        switch (_table.WrapMode)
+        {
+            case TableWrapMode.InFrontOfText: WrapFrontRadio.IsChecked  = true; break;
+            case TableWrapMode.BehindText:    WrapBehindRadio.IsChecked = true; break;
+            case TableWrapMode.Fixed:         WrapFixedRadio.IsChecked  = true; break;
+            default:                          WrapBlockRadio.IsChecked  = true; break;
+        }
+        UpdateOverlayVisibility();
+
+        OverlayXBox.Text = _table.OverlayXMm.ToString("F1");
+        OverlayYBox.Text = _table.OverlayYMm.ToString("F1");
+
+        // 표 정렬
         switch (_table.HAlign)
         {
             case TableHAlign.Center: AlignCenterRadio.IsChecked = true; break;
@@ -39,14 +53,40 @@ public partial class TablePropertiesWindow : Window
         OuterMarginLeftBox.Text   = _table.OuterMarginLeftMm   > 0 ? _table.OuterMarginLeftMm.ToString("F1")   : "0";
         OuterMarginRightBox.Text  = _table.OuterMarginRightMm  > 0 ? _table.OuterMarginRightMm.ToString("F1")  : "0";
 
-        BorderThicknessBox.Text = _table.BorderThicknessPt > 0 ? _table.BorderThicknessPt.ToString("F2") : "0";
+        BorderThicknessBox.Text     = _table.BorderThicknessPt > 0 ? _table.BorderThicknessPt.ToString("F2") : "0";
         BorderColorPicker.ColorText = _table.BorderColor ?? string.Empty;
+    }
+
+    // ── 배치 모드 전환 ────────────────────────────────────────────────────
+
+    private void OnWrapModeChanged(object sender, RoutedEventArgs e) => UpdateOverlayVisibility();
+
+    private void UpdateOverlayVisibility()
+    {
+        bool isBlock = WrapBlockRadio.IsChecked == true;
+        GrpOverlayPos.Visibility = isBlock ? Visibility.Collapsed : Visibility.Visible;
+        GrpHAlign.Visibility     = isBlock ? Visibility.Visible   : Visibility.Collapsed;
     }
 
     // ── 확인 ─────────────────────────────────────────────────────────────
 
     private void OnOkClick(object sender, RoutedEventArgs e)
     {
+        bool isOverlay = WrapBlockRadio.IsChecked != true;
+
+        if (isOverlay)
+        {
+            if (!double.TryParse(OverlayXBox.Text.Trim(), out double ox) ||
+                !double.TryParse(OverlayYBox.Text.Trim(), out double oy))
+            {
+                MessageBox.Show(this, "위치(X/Y)를 숫자(mm)로 입력하세요.", "표 속성",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            _table.OverlayXMm = ox;
+            _table.OverlayYMm = oy;
+        }
+
         if (!TryParseNonNeg(CellPadTopBox.Text,    out double cpt) ||
             !TryParseNonNeg(CellPadBottomBox.Text, out double cpb) ||
             !TryParseNonNeg(CellPadLeftBox.Text,   out double cpl) ||
@@ -92,6 +132,12 @@ public partial class TablePropertiesWindow : Window
             BorderColorPicker.Focus();
             return;
         }
+
+        // 배치 모드
+        _table.WrapMode = WrapFrontRadio.IsChecked  == true ? TableWrapMode.InFrontOfText
+                        : WrapBehindRadio.IsChecked == true ? TableWrapMode.BehindText
+                        : WrapFixedRadio.IsChecked  == true ? TableWrapMode.Fixed
+                        : TableWrapMode.Block;
 
         _table.HAlign = AlignCenterRadio.IsChecked == true ? TableHAlign.Center
                       : AlignRightRadio.IsChecked  == true ? TableHAlign.Right
