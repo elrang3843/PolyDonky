@@ -217,6 +217,12 @@ public partial class MainWindow : Window
     private bool _drawingShape_active;
     private ShapeKind _drawingShape_kind = ShapeKind.Rectangle;
 
+    // ── 도형 선택 상태 ────────────────────────────────────────────
+    // 글상자 선택(_selectedOverlay)과 동일한 패턴 — 클릭으로 선택, ESC 로 해제,
+    // Delete / Ctrl+C / Ctrl+X / Ctrl+V 로 통합 키보드 처리.
+    private FrameworkElement? _selectedShapeCtrl;
+    private PolyDonky.Core.ShapeObject? _selectedShape;
+
     // ── 폴리선/스플라인 클릭 입력 상태 ───────────────────────────
     // 각 클릭마다 점을 추가하고 더블클릭 또는 우클릭 메뉴로 마침.
     private bool               _drawingPolyline_active;
@@ -318,6 +324,11 @@ public partial class MainWindow : Window
                     EndDrawingMode();
                     e.Handled = true;
                 }
+                else if (_selectedShape is not null)
+                {
+                    DeselectShape();
+                    e.Handled = true;
+                }
                 else if (_selectedOverlay is not null)
                 {
                     // 1단계: 안쪽 본문 편집 중이면 chrome 만 선택 상태로 전환 (포커스를 overlay 로 이동).
@@ -336,6 +347,11 @@ public partial class MainWindow : Window
                 }
                 break;
 
+            case Key.Delete:
+                // 선택된 객체(도형/글상자)가 있을 때만 가로채기. 본문 텍스트 삭제는 양보.
+                if (TryDeleteSelectedObject()) e.Handled = true;
+                break;
+
             case Key.Return:
             {
                 int need = (_drawingPolyline_active &&
@@ -348,17 +364,18 @@ public partial class MainWindow : Window
                 break;
             }
 
-            // 글상자(부유 객체) 자체의 복사/잘라내기/붙여넣기.
-            // 안쪽 본문(InnerEditor)이 포커스 중이면 가로채지 않고 RichTextBox 의
-            // 일반 텍스트 클립보드 동작으로 넘긴다.
+            // 부유 객체(도형·글상자) 자체의 복사/잘라내기/붙여넣기.
+            // 객체 종류 무관하게 동작 — 새 객체 추가 시 TryDelete/TryCopy/TryPaste*Object 한 곳만 손보면 됨.
+            // 안쪽 본문(InnerEditor)이 포커스 중이거나 본문 텍스트 selection 이 있으면 가로채지 않고
+            // RichTextBox 의 일반 텍스트 클립보드 동작으로 넘긴다.
             case Key.C when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
-                if (TryCopySelectedFloatingObject()) e.Handled = true;
+                if (TryCopySelectedObject()) e.Handled = true;
                 break;
             case Key.X when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
-                if (TryCutSelectedFloatingObject()) e.Handled = true;
+                if (TryCutSelectedObject()) e.Handled = true;
                 break;
             case Key.V when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
-                if (TryPasteFloatingObject()) e.Handled = true;
+                if (TryPasteSelectedObject()) e.Handled = true;
                 break;
         }
     }
@@ -919,11 +936,12 @@ public partial class MainWindow : Window
             _ => null,
         };
 
-    // 편집 > 지우기: RichTextBox 는 ApplicationCommands.Delete 를 자체 바인딩하지 않으므로
-    // 메뉴에서 직접 호출 시 동작하도록 선택 영역을 지운다. 선택이 비어 있으면 캐럿 직후
-    // 한 글자(EditingCommands.Delete) 를 지우는 일반 워드프로세서 동작을 따른다.
+    // 편집 > 지우기: 선택된 부유 객체(도형/글상자)가 있으면 그것을 삭제, 아니면 본문 텍스트 삭제.
+    // RichTextBox 는 ApplicationCommands.Delete 를 자체 바인딩하지 않으므로 본문 분기에서는
+    // 선택 영역을 지운다. selection 이 비어 있으면 캐럿 직후 한 글자(EditingCommands.Delete).
     private void OnEditDelete(object sender, RoutedEventArgs e)
     {
+        if (TryDeleteSelectedObject()) return;
         if (!BodyEditor.Selection.IsEmpty)
         {
             BodyEditor.Selection.Text = string.Empty;
@@ -1047,7 +1065,7 @@ public partial class MainWindow : Window
 
     private void OnInsertShapeRequested(object? sender, PolyDonky.Core.ShapeKind kind)
     {
-        if (kind is ShapeKind.Polyline or ShapeKind.Spline
+        if (kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline
                  or ShapeKind.Polygon or ShapeKind.ClosedSpline)
         {
             _drawingPolyline_active = true;
@@ -1135,6 +1153,10 @@ public partial class MainWindow : Window
                 // 단일 클릭: 점 추가
                 _drawingPolyline_points.Add(pos);
                 UpdatePolylinePreview(pos);
+
+                // 직선은 2점 도달 시 자동 마감 (사용자: 시작점 클릭 → 끝점 클릭 → 끝)
+                if (_drawingPolyline_kind == ShapeKind.Line && _drawingPolyline_points.Count >= 2)
+                    FinishPolylineShape();
             }
 
             e.Handled = true;
@@ -1403,6 +1425,8 @@ public partial class MainWindow : Window
     // ── 도형 오버레이 재구축 ──────────────────────────────────────────────
     private void RebuildOverlayShapes()
     {
+        // 재구축 전 선택 해제 — Children.Clear() 직후 _selectedShapeCtrl 이 stale 참조가 됨.
+        DeselectShape();
         OverlayShapeCanvas.Children.Clear();
         UnderlayShapeCanvas.Children.Clear();
 
@@ -1482,6 +1506,10 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+
+        // 단일 클릭 → 선택 + 드래그 시작
+        if (fe.Tag is PolyDonky.Core.ShapeObject clickShape)
+            SelectShape(fe, clickShape);
 
         if (fe.Parent is not Canvas canvas) return;
         _draggingOverlayShape       = fe;
@@ -1693,13 +1721,138 @@ public partial class MainWindow : Window
             _selectedOverlay.IsSelected = false;
         _selectedOverlay = overlay;
         overlay.IsSelected = true;
+        // 다른 종류 선택 해제
+        DeselectShape();
     }
 
     private void DeselectAllOverlays()
     {
-        if (_selectedOverlay is null) return;
-        _selectedOverlay.IsSelected = false;
-        _selectedOverlay = null;
+        if (_selectedOverlay is not null)
+        {
+            _selectedOverlay.IsSelected = false;
+            _selectedOverlay = null;
+        }
+        DeselectShape();
+    }
+
+    // ── 도형 선택 / 키보드 일반화 ─────────────────────────────────
+    private void SelectShape(FrameworkElement ctrl, PolyDonky.Core.ShapeObject shape)
+    {
+        if (ReferenceEquals(_selectedShape, shape)) return;
+        DeselectShape();
+        // 다른 종류 선택 해제 (글상자)
+        if (_selectedOverlay is not null)
+        {
+            _selectedOverlay.IsSelected = false;
+            _selectedOverlay = null;
+        }
+
+        _selectedShape     = shape;
+        _selectedShapeCtrl = ctrl;
+        ctrl.Effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color       = WpfMedia.Colors.DodgerBlue,
+            ShadowDepth = 0,
+            BlurRadius  = 14,
+            Opacity     = 0.9,
+        };
+        // 윈도우로 키보드 포커스 — Delete/Ctrl+C 가 BodyEditor 가 아닌 윈도우에서 처리되도록.
+        Focus();
+        Keyboard.Focus(this);
+    }
+
+    private void DeselectShape()
+    {
+        if (_selectedShapeCtrl is not null)
+            _selectedShapeCtrl.Effect = null;
+        _selectedShape     = null;
+        _selectedShapeCtrl = null;
+    }
+
+    /// <summary>선택된 객체(도형/글상자)를 종류 무관하게 삭제. 새 객체 추가 시 여기에 한 줄만 더하면 된다.</summary>
+    private bool TryDeleteSelectedObject()
+    {
+        if (_selectedShape is { } shape)
+        {
+            DeleteOverlayShape(shape);
+            DeselectShape();
+            return true;
+        }
+        if (_selectedOverlay is { } overlay)
+        {
+            // 안쪽 본문에 텍스트 selection 이 있으면 일반 텍스트 삭제에 양보.
+            if (overlay.InnerEditor.IsKeyboardFocusWithin && !overlay.InnerEditor.Selection.IsEmpty)
+                return false;
+            FloatingCanvas.Children.Remove(overlay);
+            _viewModel?.RemoveFloatingObject(overlay.Model);
+            _selectedOverlay = null;
+            BodyEditor.Focus();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>선택된 객체를 종류 무관하게 클립보드로 복사.</summary>
+    private bool TryCopySelectedObject()
+    {
+        if (_selectedShape is { } shape) return CopyShapeToClipboard(shape);
+        return TryCopySelectedFloatingObject();
+    }
+
+    /// <summary>잘라내기 = 복사 후 삭제.</summary>
+    private bool TryCutSelectedObject()
+    {
+        if (_selectedShape is { } shape)
+        {
+            if (!CopyShapeToClipboard(shape)) return false;
+            DeleteOverlayShape(shape);
+            DeselectShape();
+            return true;
+        }
+        return TryCutSelectedFloatingObject();
+    }
+
+    /// <summary>붙여넣기는 클립보드 포맷에 따라 자동 분기 — 도형 → 글상자 순.</summary>
+    private bool TryPasteSelectedObject()
+    {
+        if (Clipboard.ContainsData(BlockClipboardFormat))   return TryPasteBlockFromClipboard();
+        if (Clipboard.ContainsData(FloatingObjectClipboardFormat)) return TryPasteFloatingObject();
+        return false;
+    }
+
+    private const string BlockClipboardFormat = "PolyDonky.Block.v1";
+
+    private bool CopyShapeToClipboard(PolyDonky.Core.ShapeObject shape)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize<PolyDonky.Core.Block>(
+            shape, PolyDonky.Core.JsonDefaults.Options);
+        var dataObj = new DataObject();
+        dataObj.SetData(BlockClipboardFormat, json);
+        if (!string.IsNullOrEmpty(shape.LabelText))
+            dataObj.SetText(shape.LabelText);
+        Clipboard.SetDataObject(dataObj, copy: true);
+        return true;
+    }
+
+    private bool TryPasteBlockFromClipboard()
+    {
+        var json = Clipboard.GetData(BlockClipboardFormat) as string;
+        if (string.IsNullOrEmpty(json)) return false;
+        PolyDonky.Core.Block? block;
+        try { block = System.Text.Json.JsonSerializer.Deserialize<PolyDonky.Core.Block>(
+                  json, PolyDonky.Core.JsonDefaults.Options); }
+        catch { return false; }
+
+        if (block is PolyDonky.Core.ShapeObject shape)
+        {
+            shape.Id = null;
+            shape.OverlayXMm += 5;
+            shape.OverlayYMm += 5;
+            shape.Status = NodeStatus.Modified;
+            InsertShapeBlock(shape);
+            return true;
+        }
+        return false;
     }
 
 }

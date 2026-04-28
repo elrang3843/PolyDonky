@@ -1,5 +1,7 @@
 namespace PolyDonky.Core;
 
+using System.Text.Json.Serialization;
+
 /// <summary>도형 종류.</summary>
 public enum ShapeKind
 {
@@ -60,6 +62,9 @@ public sealed class ShapePoint
 /// </summary>
 public sealed class ShapeObject : Block
 {
+    // Line = 0 (enum default) 인 도형이 WhenWritingDefault 정책으로 JSON 에서 누락되어
+    // 역직렬화 시 Rectangle(C# 기본값) 로 복원되던 버그 → 항상 직렬화하도록 명시.
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public ShapeKind Kind { get; set; } = ShapeKind.Rectangle;
 
     /// <summary>본문과의 배치 관계. 이미지와 동일한 5모드 체계 공유.</summary>
