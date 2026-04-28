@@ -51,11 +51,11 @@ public partial class PrintPreviewWindow : Window
             var innerPaginator = ((System.Windows.Documents.IDocumentPaginatorSource)fd).DocumentPaginator;
             innerPaginator.PageSize = new Size(_pageWidthDip, _pageHeightDip);
 
-            // 글상자·오버레이 도형/그림/표는 FlowDocument 가 표현 못 하므로 첫 페이지에 합성한다.
+            // 글상자·오버레이 도형/그림/표는 FlowDocument 가 표현 못 하므로 페이지별로 합성한다.
             var overlays = BuildOverlays(doc);
             var paginator = overlays.Count > 0
                 ? new OverlayCompositingPaginator(innerPaginator, overlays, new Size(_pageWidthDip, _pageHeightDip))
-                : innerPaginator;
+                : (DocumentPaginator)innerPaginator;
 
             using (var xpsWrite = new XpsDocument(_tmpXpsPath, FileAccess.ReadWrite))
                 XpsDocument.CreateXpsDocumentWriter(xpsWrite).Write(paginator);
@@ -238,12 +238,23 @@ public partial class PrintPreviewWindow : Window
         public override DocumentPage GetPage(int pageNumber)
         {
             var inner = _inner.GetPage(pageNumber);
-            if (pageNumber != 0 || _overlays.Count == 0) return inner;
+
+            // 이 페이지의 Y 범위에 속하는 오버레이만 추려 로컬 Y 로 변환한다.
+            // (OverlayXMm/YMm, XMm/YMm 은 모두 문서 좌상단 원점 기준)
+            double pageTop    = pageNumber       * _pageSize.Height;
+            double pageBottom = (pageNumber + 1) * _pageSize.Height;
+
+            var pageOverlays = _overlays
+                .Where(ov => ov.Y >= pageTop && ov.Y < pageBottom)
+                .Select(ov => ov with { Y = ov.Y - pageTop })
+                .ToList();
+
+            if (pageOverlays.Count == 0) return inner;
 
             var container = new ContainerVisual();
 
             // BehindText 먼저
-            foreach (var ov in _overlays)
+            foreach (var ov in pageOverlays)
                 if (ov.Behind) AddElementAt(container, ov);
 
             // 본문 페이지 visual — 다른 visual 부모를 가지지 않도록 ContainerVisual 로 한 번 더 감싼다.
@@ -252,7 +263,7 @@ public partial class PrintPreviewWindow : Window
             container.Children.Add(bodyHost);
 
             // InFrontOfText 마지막
-            foreach (var ov in _overlays)
+            foreach (var ov in pageOverlays)
                 if (!ov.Behind) AddElementAt(container, ov);
 
             return new DocumentPage(container, _pageSize, inner.BleedBox, inner.ContentBox);
