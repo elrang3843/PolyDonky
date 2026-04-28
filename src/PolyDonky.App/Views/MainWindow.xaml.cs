@@ -883,7 +883,9 @@ public partial class MainWindow : Window
         var row      = cell.Parent as System.Windows.Documents.TableRow;
         var rowGroup = row?.Parent as System.Windows.Documents.TableRowGroup;
         var wTable   = rowGroup?.Parent as System.Windows.Documents.Table;
-        if (wTable?.Tag is not PolyDonky.Core.Table cTable) return false;
+        if (wTable is null) return false;
+        // 붙여넣기 표는 Tag 가 null 이므로 즉석 부착
+        var cTable = EnsureCoreTable(wTable);
 
         int cellIdx  = row!.Cells.IndexOf(cell);
         int colCount = wTable.Columns.Count;
@@ -1027,9 +1029,10 @@ public partial class MainWindow : Window
             AppendMultiCellMenuItems(menu, multiCells);
         }
         else if (FindTableCellAtCaret(out var wpfTable, out var wpfRow, out var wpfCell) &&
-                 wpfTable is not null && wpfCell is not null &&
-                 wpfTable.Tag is PolyDonky.Core.Table coreTable)
+                 wpfTable is not null && wpfCell is not null)
         {
+            // 클립보드에서 붙여넣기 된 표는 Tag 가 비어있을 수 있어 즉석에서 Core.Table 부착
+            var coreTable = EnsureCoreTable(wpfTable);
             AppendTablePropertyMenuItems(menu, wpfTable, wpfRow, wpfCell, coreTable);
         }
 
@@ -1080,6 +1083,52 @@ public partial class MainWindow : Window
         return null;
     }
 
+    /// <summary>
+    /// WPF Table 의 Tag 에 PolyDonky.Core.Table 이 비어있으면(예: 클립보드 붙여넣기로 새로 만들어진 표),
+    /// WPF 구조를 미러링한 신선한 Core.Table 을 만들어 부착해 반환한다. 이 헬퍼는 표 우클릭 메뉴·열
+    /// 리사이즈·멀티셀 메뉴 등 모든 Tag 의존 코드 경로에서 호출되어 라운드트립 안전성을 보장한다.
+    /// (저장 경로의 FlowDocumentParser.ParseTable 도 Tag 가 없을 때 동일하게 처리하므로 모순 없음.)
+    /// </summary>
+    private static PolyDonky.Core.Table EnsureCoreTable(System.Windows.Documents.Table wpfTable)
+    {
+        if (wpfTable.Tag is PolyDonky.Core.Table existing) return existing;
+
+        var coreTable = new PolyDonky.Core.Table();
+
+        // 컬럼: WPF GridLength 가 절대값이면 mm 로 환산, 아니면 Auto(0).
+        foreach (var col in wpfTable.Columns)
+        {
+            double widthMm = 0;
+            if (col.Width.IsAbsolute && col.Width.Value > 0)
+                widthMm = PolyDonky.App.Services.FlowDocumentBuilder.DipToMm(col.Width.Value);
+            coreTable.Columns.Add(new PolyDonky.Core.TableColumn { WidthMm = widthMm });
+        }
+
+        // 행/셀 구조 미러링 (셀 본문은 빈 Paragraph 하나로 시드 — 저장 시 Parser 가 실제 본문을 채움)
+        var rowGroup = wpfTable.RowGroups.FirstOrDefault();
+        if (rowGroup != null)
+        {
+            foreach (var wpfRow in rowGroup.Rows)
+            {
+                var coreRow = new PolyDonky.Core.TableRow();
+                foreach (var wpfCell in wpfRow.Cells)
+                {
+                    var coreCell = new PolyDonky.Core.TableCell
+                    {
+                        ColumnSpan = wpfCell.ColumnSpan > 0 ? wpfCell.ColumnSpan : 1,
+                        RowSpan    = wpfCell.RowSpan    > 0 ? wpfCell.RowSpan    : 1,
+                    };
+                    coreCell.Blocks.Add(PolyDonky.Core.Paragraph.Of(string.Empty));
+                    coreRow.Cells.Add(coreCell);
+                }
+                coreTable.Rows.Add(coreRow);
+            }
+        }
+
+        wpfTable.Tag = coreTable;
+        return coreTable;
+    }
+
     private List<SelectedCell>? FindSelectedTableCells()
     {
         if (BodyEditor.Selection.IsEmpty) return null;
@@ -1101,8 +1150,9 @@ public partial class MainWindow : Window
         var startRow  = startWpfCell.Parent as System.Windows.Documents.TableRow;
         var rowGroup  = startRow?.Parent as System.Windows.Documents.TableRowGroup;
         var wpfTable  = rowGroup?.Parent as System.Windows.Documents.Table;
-        if (wpfTable?.Tag is not PolyDonky.Core.Table coreTable || rowGroup is null || startRow is null)
-            return null;
+        if (wpfTable is null || rowGroup is null || startRow is null) return null;
+        // 붙여넣기 표는 Tag 가 null 일 수 있으므로 즉석 부착
+        var coreTable = EnsureCoreTable(wpfTable);
 
         // 끝 셀이 같은 표에 속하는지 확인
         var endRow = endWpfCell.Parent as System.Windows.Documents.TableRow;
