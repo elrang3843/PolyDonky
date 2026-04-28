@@ -419,12 +419,17 @@ public partial class MainWindow : Window
             dataObj.SetData(FlowSelectionClipboardFormat, json);
             dataObj.SetText(sel.Text);  // 다른 앱에서 plain text 로 받을 수 있도록
 
-            // XamlPackage / RTF 도 함께 — 외부 앱 호환용 (우리 앱에서는 우선 FlowSelection 사용)
+            // XamlPackage / RTF 도 함께 — 외부 앱 호환용 (우리 앱에서는 우선 FlowSelection 사용).
+            // 주의: SetData 의 타입은 포맷별 약속을 정확히 따라야 한다 — 어긋나면 받는 쪽이
+            // byte[].ToString() = "System.Byte[]" 를 텍스트로 받아들일 수 있다.
+            //   • XamlPackage → MemoryStream (binary). using 으로 dispose 하면 클립보드에서 못 읽으므로 그대로 둠.
+            //   • RTF         → string (ASCII RTF 텍스트).
             try
             {
-                using var msX = new System.IO.MemoryStream();
+                var msX = new System.IO.MemoryStream();
                 sel.Save(msX, System.Windows.DataFormats.XamlPackage);
-                dataObj.SetData(System.Windows.DataFormats.XamlPackage, msX.ToArray());
+                msX.Position = 0;
+                dataObj.SetData(System.Windows.DataFormats.XamlPackage, msX);
             }
             catch { /* 일부 선택은 XamlPackage 직렬화 실패 — 무시 */ }
 
@@ -432,7 +437,8 @@ public partial class MainWindow : Window
             {
                 using var msR = new System.IO.MemoryStream();
                 sel.Save(msR, System.Windows.DataFormats.Rtf);
-                dataObj.SetData(System.Windows.DataFormats.Rtf, msR.ToArray());
+                var rtf = System.Text.Encoding.ASCII.GetString(msR.ToArray());
+                dataObj.SetData(System.Windows.DataFormats.Rtf, rtf);
             }
             catch { /* RTF 직렬화 실패는 무시 */ }
 
