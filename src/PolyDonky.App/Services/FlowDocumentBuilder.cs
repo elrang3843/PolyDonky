@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows;
 using PolyDonky.Core;
 using Wpf = System.Windows.Documents;
 using WpfMedia = System.Windows.Media;
+using WpfShapes = System.Windows.Shapes;
 
 namespace PolyDonky.App.Services;
 
@@ -146,6 +148,12 @@ public static class FlowDocumentBuilder
                     currentList = null;
                     currentKind = null;
                     target.Add(BuildImage(image));
+                    break;
+
+                case ShapeObject shape:
+                    currentList = null;
+                    currentKind = null;
+                    target.Add(BuildShape(shape));
                     break;
 
                 case OpaqueBlock opaque:
@@ -412,6 +420,364 @@ public static class FlowDocumentBuilder
         }
 
         return control;
+    }
+
+    // ── 도형 렌더링 ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// ShapeObject 를 WPF Block 으로 빌드한다.
+    /// ImageBlock 과 동일한 5모드 배치 체계를 사용한다.
+    /// </summary>
+    internal static Wpf.Block BuildShape(ShapeObject shape)
+    {
+        // ── 오버레이 모드 ─────────────────────────────────────────────────
+        if (shape.WrapMode is ImageWrapMode.InFrontOfText or ImageWrapMode.BehindText)
+        {
+            return new Wpf.Paragraph
+            {
+                Tag        = shape,
+                Margin     = new Thickness(0),
+                FontSize   = 0.1,
+                Foreground = WpfMedia.Brushes.Transparent,
+                Background = WpfMedia.Brushes.Transparent,
+            };
+        }
+
+        double wDip = MmToDip(shape.WidthMm);
+        double hDip = MmToDip(shape.HeightMm);
+        var visual  = BuildShapeVisual(shape, wDip, hDip);
+
+        var marginTopDip    = MmToDip(shape.MarginTopMm);
+        var marginBottomDip = MmToDip(shape.MarginBottomMm);
+
+        var imgHA = shape.HAlign switch
+        {
+            ImageHAlign.Center => HorizontalAlignment.Center,
+            ImageHAlign.Right  => HorizontalAlignment.Right,
+            _                  => HorizontalAlignment.Left,
+        };
+        visual.HorizontalAlignment = imgHA;
+
+        // ── Inline ────────────────────────────────────────────────────────
+        if (shape.WrapMode == ImageWrapMode.Inline)
+        {
+            return new Wpf.BlockUIContainer(visual)
+            {
+                Tag           = shape,
+                Margin        = new Thickness(0, marginTopDip, 0, marginBottomDip),
+                TextAlignment = shape.HAlign switch
+                {
+                    ImageHAlign.Center => TextAlignment.Center,
+                    ImageHAlign.Right  => TextAlignment.Right,
+                    _                  => TextAlignment.Left,
+                },
+            };
+        }
+
+        // ── WrapLeft / WrapRight ──────────────────────────────────────────
+        var floater = new Wpf.Floater
+        {
+            HorizontalAlignment = shape.WrapMode == ImageWrapMode.WrapRight
+                ? HorizontalAlignment.Right
+                : HorizontalAlignment.Left,
+            Padding = new Thickness(0),
+            Margin  = new Thickness(
+                shape.WrapMode == ImageWrapMode.WrapRight ? PtToDip(8) : 0,
+                marginTopDip,
+                shape.WrapMode == ImageWrapMode.WrapLeft  ? PtToDip(8) : 0,
+                marginBottomDip),
+        };
+        if (shape.WidthMm > 0) floater.Width = wDip;
+        floater.Blocks.Add(new Wpf.BlockUIContainer(visual));
+
+        var paragraph = new Wpf.Paragraph
+        {
+            Tag        = shape,
+            Margin     = new Thickness(0),
+            LineHeight = 0.1,
+            Foreground = WpfMedia.Brushes.Transparent,
+            Background = WpfMedia.Brushes.Transparent,
+        };
+        paragraph.Inlines.Add(floater);
+        paragraph.Inlines.Add(new Wpf.Run(" "));
+        return paragraph;
+    }
+
+    /// <summary>
+    /// ShapeObject 로부터 캔버스 오버레이용 프레임워크 요소를 생성한다.
+    /// InFrontOfText / BehindText 모드 도형을 오버레이 캔버스에 배치할 때 사용.
+    /// 위치(OverlayXMm/OverlayYMm)는 호출측에서 Canvas.Left/Top 으로 설정.
+    /// </summary>
+    public static FrameworkElement BuildOverlayShapeControl(ShapeObject shape)
+    {
+        double wDip = MmToDip(shape.WidthMm);
+        double hDip = MmToDip(shape.HeightMm);
+        return BuildShapeVisual(shape, wDip, hDip);
+    }
+
+    private static System.Windows.Controls.Canvas BuildShapeVisual(ShapeObject shape, double wDip, double hDip)
+    {
+        var canvas = new System.Windows.Controls.Canvas
+        {
+            Width  = wDip,
+            Height = hDip,
+        };
+
+        var geometry = BuildShapeGeometry(shape, wDip, hDip);
+
+        // 채우기 브러시
+        WpfMedia.Brush fillBrush = WpfMedia.Brushes.Transparent;
+        if (!string.IsNullOrEmpty(shape.FillColor))
+        {
+            try
+            {
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(shape.FillColor)!;
+                var alpha = (byte)Math.Clamp(shape.FillOpacity * 255, 0, 255);
+                fillBrush = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(alpha, c.R, c.G, c.B));
+            }
+            catch { fillBrush = WpfMedia.Brushes.LightSteelBlue; }
+        }
+
+        // 선 브러시
+        WpfMedia.Brush strokeBrush = WpfMedia.Brushes.Black;
+        if (!string.IsNullOrEmpty(shape.StrokeColor))
+        {
+            try
+            {
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(shape.StrokeColor)!;
+                strokeBrush = new WpfMedia.SolidColorBrush(c);
+            }
+            catch { }
+        }
+
+        double strokeDip = shape.StrokeThicknessPt > 0 ? PtToDip(shape.StrokeThicknessPt) : 0;
+
+        var path = new WpfShapes.Path
+        {
+            Data            = geometry,
+            Fill            = fillBrush,
+            Stroke          = strokeBrush,
+            StrokeThickness = strokeDip,
+            StrokeDashArray = BuildDashArray(shape.StrokeDash, strokeDip),
+            Stretch         = WpfMedia.Stretch.None,
+        };
+
+        // 화살촉 (선 계열)
+        if (shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline)
+        {
+            ApplyArrows(path, shape.StartArrow, shape.EndArrow);
+        }
+
+        // 회전
+        if (Math.Abs(shape.RotationAngleDeg) > 0.01)
+        {
+            path.RenderTransformOrigin = new Point(0.5, 0.5);
+            path.RenderTransform = new WpfMedia.RotateTransform(shape.RotationAngleDeg);
+        }
+
+        canvas.Children.Add(path);
+
+        // 레이블
+        if (!string.IsNullOrWhiteSpace(shape.LabelText))
+        {
+            var label = BuildShapeLabel(shape, wDip, hDip);
+            canvas.Children.Add(label);
+        }
+
+        return canvas;
+    }
+
+    private static WpfMedia.DoubleCollection? BuildDashArray(StrokeDash dash, double strokeDip)
+    {
+        if (strokeDip <= 0) return null;
+        return dash switch
+        {
+            StrokeDash.Dashed  => new WpfMedia.DoubleCollection { 6, 3 },
+            StrokeDash.Dotted  => new WpfMedia.DoubleCollection { 1, 3 },
+            StrokeDash.DashDot => new WpfMedia.DoubleCollection { 6, 2, 1, 2 },
+            _                  => null,
+        };
+    }
+
+    private static void ApplyArrows(WpfShapes.Path path, ShapeArrow start, ShapeArrow end)
+    {
+        if (start != ShapeArrow.None)
+            path.Tag = ("arrows", start, end); // stored for hit-test routing; actual markers drawn via decorators
+        // WPF Path 는 built-in 화살촉이 없으므로 여기서는 스타일 힌트만 저장.
+        // 실제 화살촉 렌더링은 후속 사이클(Adorner/Decorator) 에서 구현한다.
+    }
+
+    private static System.Windows.Controls.TextBlock BuildShapeLabel(ShapeObject shape, double wDip, double hDip)
+    {
+        WpfMedia.Brush labelBrush = WpfMedia.Brushes.Black;
+        if (!string.IsNullOrEmpty(shape.LabelColor))
+        {
+            try
+            {
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(shape.LabelColor)!;
+                labelBrush = new WpfMedia.SolidColorBrush(c);
+            }
+            catch { }
+        }
+        else if (!string.IsNullOrEmpty(shape.FillColor))
+        {
+            // 채우기가 어두우면 흰색 레이블, 밝으면 검정
+            try
+            {
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(shape.FillColor)!;
+                double lum = 0.299 * c.R + 0.587 * c.G + 0.114 * c.B;
+                labelBrush = lum < 128 ? WpfMedia.Brushes.White : WpfMedia.Brushes.Black;
+            }
+            catch { }
+        }
+
+        var tb = new System.Windows.Controls.TextBlock
+        {
+            Text                = shape.LabelText,
+            Foreground          = labelBrush,
+            FontSize            = PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10),
+            FontWeight          = shape.LabelBold   ? FontWeights.Bold   : FontWeights.Normal,
+            FontStyle           = shape.LabelItalic ? FontStyles.Italic  : FontStyles.Normal,
+            TextWrapping        = TextWrapping.Wrap,
+            TextAlignment       = TextAlignment.Center,
+            Width               = wDip,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+        };
+        if (!string.IsNullOrEmpty(shape.LabelFontFamily))
+            tb.FontFamily = new WpfMedia.FontFamily(shape.LabelFontFamily);
+
+        System.Windows.Controls.Canvas.SetLeft(tb, 0);
+        System.Windows.Controls.Canvas.SetTop(tb, (hDip - PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10) * 1.4) / 2.0);
+        return tb;
+    }
+
+    private static WpfMedia.Geometry BuildShapeGeometry(ShapeObject shape, double wDip, double hDip)
+    {
+        switch (shape.Kind)
+        {
+            case ShapeKind.Rectangle:
+                return new WpfMedia.RectangleGeometry(new Rect(0, 0, wDip, hDip));
+
+            case ShapeKind.RoundedRect:
+            {
+                double rx = MmToDip(shape.CornerRadiusMm);
+                rx = Math.Clamp(rx, 0, Math.Min(wDip, hDip) / 2.0);
+                return new WpfMedia.RectangleGeometry(new Rect(0, 0, wDip, hDip), rx, rx);
+            }
+
+            case ShapeKind.Ellipse:
+                return new WpfMedia.EllipseGeometry(new Rect(0, 0, wDip, hDip));
+
+            case ShapeKind.Line:
+            {
+                var pts = GetPointsDip(shape.Points, wDip, hDip);
+                var p0  = pts.Count >= 1 ? pts[0] : new Point(0, hDip / 2);
+                var p1  = pts.Count >= 2 ? pts[1] : new Point(wDip, hDip / 2);
+                return new WpfMedia.LineGeometry(p0, p1);
+            }
+
+            case ShapeKind.Polyline:
+            {
+                var pts = GetPointsDip(shape.Points, wDip, hDip);
+                if (pts.Count < 2) goto default;
+                var pg = new WpfMedia.PathGeometry();
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0] };
+                for (int i = 1; i < pts.Count; i++)
+                    fig.Segments.Add(new WpfMedia.LineSegment(pts[i], true));
+                pg.Figures.Add(fig);
+                return pg;
+            }
+
+            case ShapeKind.Spline:
+            {
+                var pts = GetPointsDip(shape.Points, wDip, hDip);
+                if (pts.Count < 2) goto default;
+                var pg  = new WpfMedia.PathGeometry();
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0] };
+                fig.Segments.Add(new WpfMedia.PolyBezierSegment(pts.Skip(1), true));
+                pg.Figures.Add(fig);
+                return pg;
+            }
+
+            case ShapeKind.Triangle:
+            {
+                var pts = GetPointsDip(shape.Points, wDip, hDip);
+                if (pts.Count < 3)
+                    pts = new List<Point> { new(wDip / 2, 0), new(0, hDip), new(wDip, hDip) };
+                var pg  = new WpfMedia.PathGeometry();
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0], IsClosed = true };
+                for (int i = 1; i < pts.Count; i++)
+                    fig.Segments.Add(new WpfMedia.LineSegment(pts[i], true));
+                pg.Figures.Add(fig);
+                return pg;
+            }
+
+            case ShapeKind.RegularPolygon:
+            {
+                var pts = ComputeRegularPolygonPoints(
+                    Math.Max(3, shape.SideCount), wDip / 2, hDip / 2, wDip / 2, hDip / 2);
+                var pg  = new WpfMedia.PathGeometry();
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0], IsClosed = true };
+                for (int i = 1; i < pts.Count; i++)
+                    fig.Segments.Add(new WpfMedia.LineSegment(pts[i], true));
+                pg.Figures.Add(fig);
+                return pg;
+            }
+
+            case ShapeKind.Star:
+            {
+                var pts = ComputeStarPoints(
+                    Math.Max(3, shape.SideCount),
+                    Math.Clamp(shape.InnerRadiusRatio, 0.1, 0.9),
+                    wDip / 2, hDip / 2, wDip / 2, hDip / 2);
+                var pg  = new WpfMedia.PathGeometry();
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0], IsClosed = true, IsFilled = true };
+                for (int i = 1; i < pts.Count; i++)
+                    fig.Segments.Add(new WpfMedia.LineSegment(pts[i], true));
+                pg.Figures.Add(fig);
+                pg.FillRule = WpfMedia.FillRule.EvenOdd;
+                return pg;
+            }
+
+            default:
+                return new WpfMedia.RectangleGeometry(new Rect(0, 0, wDip, hDip));
+        }
+    }
+
+    private static List<Point> GetPointsDip(IList<ShapePoint> points, double wDip, double hDip)
+    {
+        var result = new List<Point>(points.Count);
+        foreach (var pt in points)
+            result.Add(new Point(MmToDip(pt.X), MmToDip(pt.Y)));
+        return result;
+    }
+
+    private static List<Point> ComputeRegularPolygonPoints(
+        int sides, double rx, double ry, double cx, double cy)
+    {
+        var pts = new List<Point>(sides);
+        double startAngle = -Math.PI / 2; // 정상(12시)에서 시작
+        for (int i = 0; i < sides; i++)
+        {
+            double angle = startAngle + 2 * Math.PI * i / sides;
+            pts.Add(new Point(cx + rx * Math.Cos(angle), cy + ry * Math.Sin(angle)));
+        }
+        return pts;
+    }
+
+    private static List<Point> ComputeStarPoints(
+        int points, double innerRatio, double rx, double ry, double cx, double cy)
+    {
+        var pts  = new List<Point>(points * 2);
+        double startAngle = -Math.PI / 2;
+        for (int i = 0; i < points * 2; i++)
+        {
+            double angle = startAngle + Math.PI * i / points;
+            double r     = i % 2 == 0 ? 1.0 : innerRatio;
+            pts.Add(new Point(cx + rx * r * Math.Cos(angle), cy + ry * r * Math.Sin(angle)));
+        }
+        return pts;
     }
 
     private static Wpf.Paragraph BuildOpaquePlaceholder(OpaqueBlock opaque)

@@ -211,6 +211,10 @@ public partial class MainWindow : Window
         _viewModel?.MarkDirty();
     }
 
+    // ── 도형 드래그 생성 / 오버레이 상태 ──────────────────────────
+    private bool _drawingShape_active;
+    private ShapeKind _drawingShape_kind = ShapeKind.Rectangle;
+
     // ── 글상자 드래그 생성 / 선택 상태 ────────────────────────────
     private bool _drawingTextBox;
     private bool _drawingInProgress;
@@ -246,6 +250,7 @@ public partial class MainWindow : Window
             vm.SettingsRequested     += OnSettingsRequested;
             vm.OutlineStyleRequested += OnOutlineStyleRequested;
             vm.InsertTextBoxRequested += OnInsertTextBoxRequested;
+            vm.InsertShapeRequested   += OnInsertShapeRequested;
             vm.RefreshSystemKeys();
             vm.RefreshMemoryUsage();
         }
@@ -299,7 +304,7 @@ public partial class MainWindow : Window
                     DispatcherPriority.Input);
                 break;
             case Key.Escape:
-                if (_drawingTextBox)
+                if (_drawingTextBox || _drawingShape_active)
                 {
                     EndDrawingMode();
                     e.Handled = true;
@@ -377,6 +382,9 @@ public partial class MainWindow : Window
 
         // 그림 오버레이 재구축 (InFrontOfText / BehindText 모드)
         RebuildOverlayImages();
+
+        // 도형 오버레이 재구축
+        RebuildOverlayShapes();
     }
 
     /// <summary>
@@ -1016,9 +1024,19 @@ public partial class MainWindow : Window
             _viewModel.StatusMessage = SR.StatusDrawTextBox;
     }
 
+    private void OnInsertShapeRequested(object? sender, PolyDonky.Core.ShapeKind kind)
+    {
+        _drawingShape_active = true;
+        _drawingShape_kind   = kind;
+        Mouse.OverrideCursor = Cursors.Cross;
+        if (_viewModel is not null)
+            _viewModel.StatusMessage = SR.StatusDrawShape;
+    }
+
     private void EndDrawingMode()
     {
-        _drawingTextBox = false;
+        _drawingTextBox    = false;
+        _drawingShape_active = false;
         _drawingInProgress = false;
         Mouse.OverrideCursor = null;
         DrawPreviewRect.Visibility = Visibility.Collapsed;
@@ -1028,7 +1046,7 @@ public partial class MainWindow : Window
 
     private void OnPaperPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!_drawingTextBox) return;
+        if (!_drawingTextBox && !_drawingShape_active) return;
 
         var pos = e.GetPosition(PaperBorder);
         pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
@@ -1049,7 +1067,7 @@ public partial class MainWindow : Window
 
     private void OnPaperPreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (!_drawingInProgress) return;
+        if (!_drawingInProgress || (!_drawingTextBox && !_drawingShape_active)) return;
 
         var pos = e.GetPosition(PaperBorder);
         pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
@@ -1079,12 +1097,20 @@ public partial class MainWindow : Window
         double w = Math.Abs(pos.X - _drawStart.X);
         double h = Math.Abs(pos.Y - _drawStart.Y);
 
+        bool wasShape = _drawingShape_active;
         EndDrawingMode();
 
-        // 너무 작은 드래그(클릭에 가까움) 는 생성 안 함.
+        // 너무 작은 드래그(클릭에 가까움)는 생성 안 함.
         const double minDip = 10;
         if (w < minDip || h < minDip)
         {
+            e.Handled = true;
+            return;
+        }
+
+        if (wasShape)
+        {
+            FinishShapeDraw(x, y, w, h);
             e.Handled = true;
             return;
         }
@@ -1103,6 +1129,196 @@ public partial class MainWindow : Window
         SelectOverlay(overlay);
         overlay.BeginEditing();
 
+        e.Handled = true;
+    }
+
+    private void FinishShapeDraw(double xDip, double yDip, double wDip, double hDip)
+    {
+        const double DipsPerMm = TextBoxOverlay.DipsPerMm;
+
+        var kind = _drawingShape_kind;
+        var shape = new PolyDonky.Core.ShapeObject
+        {
+            Kind              = kind,
+            WrapMode          = PolyDonky.Core.ImageWrapMode.InFrontOfText,
+            WidthMm           = wDip / DipsPerMm,
+            HeightMm          = hDip / DipsPerMm,
+            OverlayXMm        = xDip / DipsPerMm,
+            OverlayYMm        = yDip / DipsPerMm,
+            StrokeColor       = "#2C3E50",
+            StrokeThicknessPt = 1.5,
+            FillColor         = kind is PolyDonky.Core.ShapeKind.Line
+                                     or PolyDonky.Core.ShapeKind.Polyline
+                                     or PolyDonky.Core.ShapeKind.Spline
+                                 ? null : "#7FB3D9",
+            FillOpacity = 0.7,
+            Status      = NodeStatus.Modified,
+        };
+
+        // Line 계열: 드래그 방향을 바운딩박스 기준 상대 좌표(mm)로 저장.
+        // _drawStart 가 bounding-box 어느 모서리인지는 (_drawStart - topLeft) 로 결정된다.
+        if (kind is PolyDonky.Core.ShapeKind.Line
+                 or PolyDonky.Core.ShapeKind.Polyline
+                 or PolyDonky.Core.ShapeKind.Spline)
+        {
+            double sxDip = _drawStart.X - xDip; // 0 or wDip
+            double syDip = _drawStart.Y - yDip; // 0 or hDip
+            double exDip = wDip - sxDip;
+            double eyDip = hDip - syDip;
+            shape.Points.Add(new PolyDonky.Core.ShapePoint { X = sxDip / DipsPerMm, Y = syDip / DipsPerMm });
+            shape.Points.Add(new PolyDonky.Core.ShapePoint { X = exDip / DipsPerMm, Y = eyDip / DipsPerMm });
+            shape.HeightMm = Math.Max(shape.HeightMm, 1.0);
+        }
+
+        InsertShapeBlock(shape);
+    }
+
+    private void InsertShapeBlock(PolyDonky.Core.ShapeObject shape)
+    {
+        // 현재 캐럿 위치에 빈 paragraph 처럼 삽입 (overlay 모드이므로 placeholder 만 들어감)
+        var block = Services.FlowDocumentBuilder.BuildShape(shape);
+        var doc   = BodyEditor.Document;
+
+        // 캐럿이 있는 단락 뒤에 삽입. 캐럿이 없으면 맨 끝에 추가.
+        var caretBlock = BodyEditor.CaretPosition?.Paragraph
+                         ?? BodyEditor.CaretPosition?.GetAdjacentElement(
+                             System.Windows.Documents.LogicalDirection.Backward) as System.Windows.Documents.Block;
+        if (caretBlock is not null && doc.Blocks.Contains(caretBlock))
+            doc.Blocks.InsertAfter(caretBlock, block);
+        else
+            doc.Blocks.Add(block);
+
+        _viewModel?.AddShapeToCurrentSection(shape);
+        RebuildOverlayShapes();
+    }
+
+    // ── 도형 오버레이 재구축 ──────────────────────────────────────────────
+    private void RebuildOverlayShapes()
+    {
+        OverlayShapeCanvas.Children.Clear();
+        UnderlayShapeCanvas.Children.Clear();
+
+        foreach (var block in BodyEditor.Document.Blocks)
+        {
+            if (block.Tag is not PolyDonky.Core.ShapeObject shape) continue;
+            if (shape.WrapMode is not (PolyDonky.Core.ImageWrapMode.InFrontOfText
+                                    or PolyDonky.Core.ImageWrapMode.BehindText)) continue;
+
+            var ctrl = Services.FlowDocumentBuilder.BuildOverlayShapeControl(shape);
+            ctrl.Tag = shape;
+            Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(shape.OverlayXMm));
+            Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(shape.OverlayYMm));
+            ctrl.Cursor = Cursors.SizeAll;
+
+            var captured  = shape;
+            var ctxMenu   = new ContextMenu();
+            var propsItem = new MenuItem { Header = "도형 속성(_P)..." };
+            propsItem.Click += (_, _) => OpenOverlayShapeProperties(captured);
+            ctxMenu.Items.Add(propsItem);
+            var delItem = new MenuItem { Header = "삭제(_D)" };
+            delItem.Click += (_, _) => DeleteOverlayShape(captured);
+            ctxMenu.Items.Add(delItem);
+            ctrl.ContextMenu = ctxMenu;
+
+            ctrl.MouseLeftButtonDown += OnOverlayShapeMouseDown;
+
+            var canvas = shape.WrapMode == PolyDonky.Core.ImageWrapMode.BehindText
+                ? UnderlayShapeCanvas
+                : OverlayShapeCanvas;
+            canvas.Children.Add(ctrl);
+        }
+    }
+
+    private void DeleteOverlayShape(PolyDonky.Core.ShapeObject shape)
+    {
+        var placeholder = BodyEditor.Document.Blocks
+            .FirstOrDefault(b => ReferenceEquals(b.Tag, shape));
+        if (placeholder is not null)
+            BodyEditor.Document.Blocks.Remove(placeholder);
+        _viewModel?.RemoveShape(shape);
+        RebuildOverlayShapes();
+    }
+
+    private void OpenOverlayShapeProperties(PolyDonky.Core.ShapeObject shape)
+    {
+        var dlg = new ShapePropertiesWindow(shape) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+
+        // WrapMode 변경으로 Block 타입이 달라질 수 있으므로 교체
+        var placeholder = BodyEditor.Document.Blocks
+            .FirstOrDefault(b => ReferenceEquals(b.Tag, shape));
+        if (placeholder is not null)
+        {
+            var newBlock = Services.FlowDocumentBuilder.BuildShape(shape);
+            BodyEditor.Document.Blocks.InsertBefore(placeholder, newBlock);
+            BodyEditor.Document.Blocks.Remove(placeholder);
+        }
+        RebuildOverlayShapes();
+        _viewModel?.MarkDirty();
+    }
+
+    // ── 오버레이 도형 드래그 이동 상태 ───────────────────────────────────
+    private FrameworkElement? _draggingOverlayShape;
+    private Point  _overlayShapeDragStart;
+    private double _overlayShapeDragStartLeft;
+    private double _overlayShapeDragStartTop;
+    private bool   _overlayShapeDragMoved;
+
+    private void OnOverlayShapeMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+
+        if (e.ClickCount == 2 && fe.Tag is PolyDonky.Core.ShapeObject dblShape)
+        {
+            OpenOverlayShapeProperties(dblShape);
+            e.Handled = true;
+            return;
+        }
+
+        if (fe.Parent is not Canvas canvas) return;
+        _draggingOverlayShape       = fe;
+        _overlayShapeDragStart      = e.GetPosition(canvas);
+        _overlayShapeDragStartLeft  = Canvas.GetLeft(fe);
+        _overlayShapeDragStartTop   = Canvas.GetTop(fe);
+        if (double.IsNaN(_overlayShapeDragStartLeft)) _overlayShapeDragStartLeft = 0;
+        if (double.IsNaN(_overlayShapeDragStartTop))  _overlayShapeDragStartTop  = 0;
+        _overlayShapeDragMoved = false;
+        fe.CaptureMouse();
+        fe.MouseMove         += OnOverlayShapeDragMove;
+        fe.MouseLeftButtonUp += OnOverlayShapeDragUp;
+        e.Handled = true;
+    }
+
+    private void OnOverlayShapeDragMove(object sender, MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || !ReferenceEquals(_draggingOverlayShape, fe)) return;
+        if (fe.Parent is not Canvas canvas) return;
+        var pos = e.GetPosition(canvas);
+        double dx = pos.X - _overlayShapeDragStart.X;
+        double dy = pos.Y - _overlayShapeDragStart.Y;
+        if (Math.Abs(dx) > 0.5 || Math.Abs(dy) > 0.5) _overlayShapeDragMoved = true;
+        Canvas.SetLeft(fe, _overlayShapeDragStartLeft + dx);
+        Canvas.SetTop (fe, _overlayShapeDragStartTop  + dy);
+    }
+
+    private void OnOverlayShapeDragUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || !ReferenceEquals(_draggingOverlayShape, fe)) return;
+        fe.ReleaseMouseCapture();
+        fe.MouseMove         -= OnOverlayShapeDragMove;
+        fe.MouseLeftButtonUp -= OnOverlayShapeDragUp;
+        _draggingOverlayShape = null;
+
+        if (_overlayShapeDragMoved && fe.Tag is PolyDonky.Core.ShapeObject s)
+        {
+            double left = Canvas.GetLeft(fe);
+            double top  = Canvas.GetTop(fe);
+            if (double.IsNaN(left)) left = 0;
+            if (double.IsNaN(top))  top  = 0;
+            s.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
+            s.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            _viewModel?.MarkDirty();
+        }
         e.Handled = true;
     }
 

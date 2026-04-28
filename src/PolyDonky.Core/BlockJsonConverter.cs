@@ -41,6 +41,7 @@ public sealed class BlockJsonConverter : JsonConverter<Block>
             "paragraph" => typeof(Paragraph),
             "table"     => typeof(Table),
             "image"     => typeof(ImageBlock),
+            "shape"     => typeof(ShapeObject),
             "opaque"    => typeof(OpaqueBlock),
             null        => typeof(Paragraph),  // legacy fallback
             _           => throw new JsonException($"Unknown Block discriminator: '{discriminator}'"),
@@ -58,6 +59,7 @@ public sealed class BlockJsonConverter : JsonConverter<Block>
             nameof(Paragraph)   => "paragraph",
             nameof(Table)       => "table",
             nameof(ImageBlock)  => "image",
+            nameof(ShapeObject) => "shape",
             nameof(OpaqueBlock) => "opaque",
             _ => throw new JsonException($"Unknown Block runtime type: {type.FullName}"),
         };

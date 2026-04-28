@@ -558,6 +558,54 @@ public partial class MainViewModel : ObservableObject
         RebuildFlowDocument();
     }
 
+    // ── 도형 (Insert > Shape) ────────────────────────────────────────────
+    // 메뉴 클릭 → ViewModel 이 이벤트 발생 → View 가 드래그 생성 모드 진입.
+    // 모델 갱신은 View 가 AddShapeToCurrentSection 으로 위임.
+
+    [RelayCommand]
+    private void InsertShape(object? kindParam)
+    {
+        var kind = kindParam switch
+        {
+            "Line"           => PolyDonky.Core.ShapeKind.Line,
+            "Polyline"       => PolyDonky.Core.ShapeKind.Polyline,
+            "Spline"         => PolyDonky.Core.ShapeKind.Spline,
+            "RoundedRect"    => PolyDonky.Core.ShapeKind.RoundedRect,
+            "Ellipse"        => PolyDonky.Core.ShapeKind.Ellipse,
+            "Triangle"       => PolyDonky.Core.ShapeKind.Triangle,
+            "RegularPolygon" => PolyDonky.Core.ShapeKind.RegularPolygon,
+            "Star"           => PolyDonky.Core.ShapeKind.Star,
+            _                => PolyDonky.Core.ShapeKind.Rectangle,
+        };
+        InsertShapeRequested?.Invoke(this, kind);
+    }
+
+    public event EventHandler<PolyDonky.Core.ShapeKind>? InsertShapeRequested;
+
+    /// <summary>드래그 생성 완료 후 View 가 호출 — 첫 섹션의 Blocks 에 추가하고 Dirty 표시.</summary>
+    public void AddShapeToCurrentSection(PolyDonky.Core.ShapeObject shape)
+    {
+        var section = _document.Sections.FirstOrDefault();
+        if (section is null) return;
+        section.Blocks.Add(shape);
+        MarkDirty();
+        RefreshMemoryUsage();
+    }
+
+    /// <summary>도형 삭제 시 View 가 호출.</summary>
+    public void RemoveShape(PolyDonky.Core.ShapeObject shape)
+    {
+        foreach (var section in _document.Sections)
+        {
+            if (section.Blocks.Remove(shape))
+            {
+                MarkDirty();
+                RefreshMemoryUsage();
+                return;
+            }
+        }
+    }
+
     // ── 글상자 (Insert > TextBox) ────────────────────────────────────────
     // 메뉴 클릭 → ViewModel 이 이벤트 발생 → View 가 드래그 생성 모드 진입.
     // 모델 갱신은 View 가 AddFloatingObjectToCurrentSection 으로 위임.
