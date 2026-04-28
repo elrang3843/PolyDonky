@@ -55,6 +55,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - **Added** — **표 구조 편집 (2단계)**: 표 우클릭 메뉴에서 행·열 삽입/삭제, 셀 병합(우측·아래), 셀 분할, 표 삭제 기능 제공. 핵심 모델(Core.Table)과 WPF FlowDocument 표를 동시에 업데이트해 별도 재빌드 없이 즉시 반영.
 
 ### Fixed
+- **Fixed** — **맨 오른쪽 열을 포함해 셀을 선택하면 표 편집 메뉴가 뜨지 않고 셀 수가 +1 로 잘못 집계되던 버그**. `Selection.End` 가 마지막 셀의 오른쪽 경계(또는 표 다음 Paragraph) 에 위치할 때 `FindAncestorCell` 이 null 을 반환하거나 다음 셀을 반환해 off-by-one 발생. `Selection.End` 를 한 위치 뒤로 물러난 지점(`GetPositionAtOffset(-1, Backward)`) 에서 셀을 찾도록 수정 — 항상 마지막으로 선택된 셀 안쪽에 위치하게 됨.
 - **Fixed** — **표 셀 우클릭 메뉴가 선택 형태에 따라 다르게 뜨던 버그 + 우클릭 메뉴 빌드 단일화**. 가로로 여러 셀을 드래그 선택했을 때 multi-cell 검출이 실패해 잘라내기/복사/붙여넣기 기본 메뉴만 떴던 문제. 원인: `Selection.Start.Paragraph?.Parent is TableCell` 직접 검사 — Paragraph 가 List/Span 등으로 감싸여 있거나 선택 끝점이 셀 경계에 걸치면 매칭 실패. 수정: TextPointer 조상 체인을 끝까지 거슬러 올라가는 `FindAncestorCell`. 또한 BodyEditor 우클릭 메뉴를 XAML 정적 정의 + ContextMenuOpening 추가의 두 곳에서 빌드하던 구조를 ContextMenuOpening 한 곳으로 통합 — 매번 메뉴를 비우고 잘라내기/복사/붙여넣기부터 통째로 다시 빌드해 동일 선택 → 동일 메뉴 보장.
 - **Fixed** — **직선(Line) 도형이 저장→불러오기 후 사각형으로 표시되던 버그**. `ShapeKind.Line = 0` 이 enum 의 default(0) 이라 `JsonIgnoreCondition.WhenWritingDefault` 정책에 의해 `"kind"` 필드가 JSON 에서 누락되었고, 역직렬화 시 ShapeObject.Kind 의 C# 기본값(Rectangle) 으로 복원되었음. `ShapeObject.Kind` 에 `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]` 를 명시해 항상 직렬화하도록 수정.
 

@@ -1087,7 +1087,13 @@ public partial class MainWindow : Window
         // Paragraph.Parent 직접 검사 대신 조상 체인을 끝까지 거슬러 올라간다.
         // (List · Span · 중첩 Block 등으로 중간 단계가 있을 수 있음)
         var startWpfCell = FindAncestorCell(BodyEditor.Selection.Start);
-        var endWpfCell   = FindAncestorCell(BodyEditor.Selection.End);
+
+        // Selection.End 가 셀 오른쪽 경계 또는 표 뒤의 Paragraph에 위치하면
+        // FindAncestorCell 이 null 을 반환하거나 다음 셀을 반환해 off-by-one 발생.
+        // 한 위치 뒤로 물러나면 항상 마지막으로 선택된 셀 안쪽에 머문다.
+        var endRaw = BodyEditor.Selection.End;
+        var endPos = endRaw.GetPositionAtOffset(-1, System.Windows.Documents.LogicalDirection.Backward) ?? endRaw;
+        var endWpfCell = FindAncestorCell(endPos);
 
         if (startWpfCell == null || endWpfCell == null) return null;
         if (ReferenceEquals(startWpfCell, endWpfCell)) return null; // 단일 셀
