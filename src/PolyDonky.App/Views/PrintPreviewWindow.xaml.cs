@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.IO.Packaging;
 using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
@@ -13,8 +12,7 @@ namespace PolyDonky.App.Views;
 public partial class PrintPreviewWindow : Window
 {
     private XpsDocument? _xpsDoc;
-    private Uri? _packUri;
-    private MemoryStream? _xpsStream;
+    private string? _tmpXpsPath;
     private double _pageWidthDip;
     private double _pageHeightDip;
     private bool _initialZoomApplied;
@@ -45,16 +43,15 @@ public partial class PrintPreviewWindow : Window
             fd.PagePadding = new Thickness(padL, padT, padR, padB);
             fd.ColumnWidth = double.MaxValue;
 
-            _xpsStream = new MemoryStream();
-            var pkg = Package.Open(_xpsStream, FileMode.Create, FileAccess.ReadWrite);
-            _packUri = new Uri($"pack://preview{Guid.NewGuid():N}.xps");
-            PackageStore.AddPackage(_packUri, pkg);
-            _xpsDoc = new XpsDocument(pkg, CompressionOption.NotCompressed, _packUri.AbsoluteUri);
+            _tmpXpsPath = Path.Combine(Path.GetTempPath(), $"pdpreview_{Guid.NewGuid():N}.xps");
 
             var paginator = ((System.Windows.Documents.IDocumentPaginatorSource)fd).DocumentPaginator;
             paginator.PageSize = new Size(_pageWidthDip, _pageHeightDip);
 
-            XpsDocument.CreateXpsDocumentWriter(_xpsDoc).Write(paginator);
+            using (var xpsWrite = new XpsDocument(_tmpXpsPath, FileAccess.ReadWrite))
+                XpsDocument.CreateXpsDocumentWriter(xpsWrite).Write(paginator);
+
+            _xpsDoc = new XpsDocument(_tmpXpsPath, FileAccess.Read);
 
             var fixedSeq = _xpsDoc.GetFixedDocumentSequence();
             PreviewViewer.Document = fixedSeq;
@@ -151,11 +148,11 @@ public partial class PrintPreviewWindow : Window
     {
         PreviewViewer.Document = null;
         _xpsDoc?.Close();
-        if (_packUri is not null)
+        _xpsDoc = null;
+        if (_tmpXpsPath is not null)
         {
-            PackageStore.RemovePackage(_packUri);
-            _packUri = null;
+            try { File.Delete(_tmpXpsPath); } catch { /* best-effort */ }
+            _tmpXpsPath = null;
         }
-        _xpsStream?.Dispose();
     }
 }
