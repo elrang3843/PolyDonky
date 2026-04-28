@@ -25,6 +25,7 @@ public static class FlowDocumentBuilder
     public static double PtToDip(double pt) => pt * (DipsPerInch / PointsPerInch);
     public static double DipToPt(double dip) => dip * (PointsPerInch / DipsPerInch);
     public static double MmToDip(double mm) => mm * (DipsPerInch / MmPerInch);
+    public static double DipToMm(double dip) => dip * (MmPerInch / DipsPerInch);
 
     public static Wpf.FlowDocument Build(PolyDonkyument document)
     {
@@ -180,49 +181,198 @@ public static class FlowDocumentBuilder
         return wtable;
     }
 
-    internal static Wpf.BlockUIContainer BuildImage(ImageBlock image)
+    /// <summary>
+    /// ImageBlock 을 WPF Block 으로 빌드한다.
+    /// - WrapMode = Inline                → BlockUIContainer (자체 줄 차지, 가로 정렬만 적용)
+    /// - WrapMode = WrapLeft              → Paragraph + Floater(왼쪽), 텍스트가 오른쪽으로 흐름
+    /// - WrapMode = WrapRight             → Paragraph + Floater(오른쪽), 텍스트가 왼쪽으로 흐름
+    /// - WrapMode = InFrontOfText/BehindText → 빈 placeholder Paragraph (실제 렌더링은 MainWindow 의
+    ///                                        OverlayImageCanvas/UnderlayImageCanvas 에서 절대 위치로 처리)
+    /// 반환된 Block 의 Tag 에 ImageBlock 이 심어져 라운드트립과 우클릭 라우팅에 사용된다.
+    /// </summary>
+    internal static Wpf.Block BuildImage(ImageBlock image)
     {
-        var container = new Wpf.BlockUIContainer { Tag = image };
+        // ── 오버레이 모드 — 본문 흐름에는 위치만 차지하고 실제 그림은 캔버스에서 ──
+        if (image.WrapMode is ImageWrapMode.InFrontOfText or ImageWrapMode.BehindText)
+        {
+            // 투명·최소 높이 플레이스홀더 단락.
+            // - FontSize = 0.1 pt → 행 높이를 0에 가깝게 압축해 본문 레이아웃 영향 최소화.
+            // - Foreground/Background Transparent → 선택 하이라이트(파란 줄)가 시각적으로 안 보임.
+            // - IsEnabled = false 는 Paragraph 에 없으므로 Focusable 을 강제 불가 — 대신 크기로 억제.
+            return new Wpf.Paragraph
+            {
+                Tag        = image,
+                Margin     = new Thickness(0),
+                FontSize   = 0.1,
+                Foreground = WpfMedia.Brushes.Transparent,
+                Background = WpfMedia.Brushes.Transparent,
+            };
+        }
 
+        // ── 미사용 Image 폴백 ────────────────────────────────────────
         if (image.Data.Length == 0)
         {
-            container.Child = new System.Windows.Controls.TextBlock
+            var emptyBuc = new Wpf.BlockUIContainer { Tag = image };
+            emptyBuc.Child = new System.Windows.Controls.TextBlock
             {
                 Text = $"[이미지 누락 — {image.MediaType}]",
                 Foreground = WpfMedia.Brushes.Gray,
                 FontStyle = FontStyles.Italic,
             };
-            return container;
+            return emptyBuc;
         }
 
         var bitmap = new WpfMedia.Imaging.BitmapImage();
         bitmap.BeginInit();
-        bitmap.CacheOption = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+        bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
+        bitmap.EndInit();
+        bitmap.Freeze();
+
+        // Image.Tag 에 container 를 저장하지 말 것 — container.Child = image 와 함께 순환 참조가 되어
+        // WPF undo 스냅샷의 XamlWriter.Save() 가 StackOverflowException 으로 폭주한다.
+        // 우클릭 속성 라우팅은 LogicalTreeHelper 로 image 의 부모를 찾는 방식으로 처리한다.
+        var control = new System.Windows.Controls.Image
+        {
+            Source  = bitmap,
+            Stretch = WpfMedia.Stretch.Uniform,
+        };
+        if (image.WidthMm > 0)  control.Width  = MmToDip(image.WidthMm);
+        if (image.HeightMm > 0) control.Height = MmToDip(image.HeightMm);
+        if (!string.IsNullOrEmpty(image.Description)) control.ToolTip = image.Description;
+
+        // 테두리 래퍼
+        UIElement visual = control;
+        if (!string.IsNullOrEmpty(image.BorderColor) && image.BorderThicknessPt > 0)
+        {
+            WpfMedia.Brush borderBrush;
+            try { borderBrush = new WpfMedia.SolidColorBrush(
+                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.BorderColor)!); }
+            catch { borderBrush = WpfMedia.Brushes.Black; }
+
+            visual = new System.Windows.Controls.Border
+            {
+                Child           = control,
+                BorderBrush     = borderBrush,
+                BorderThickness = new Thickness(PtToDip(image.BorderThicknessPt)),
+            };
+        }
+
+        var marginTopDip    = MmToDip(image.MarginTopMm);
+        var marginBottomDip = MmToDip(image.MarginBottomMm);
+
+        // ── 래핑 없음(Inline) — BlockUIContainer 를 그대로 추가 ────────
+        if (image.WrapMode == ImageWrapMode.Inline)
+        {
+            return new Wpf.BlockUIContainer(visual)
+            {
+                Tag           = image,
+                Margin        = new Thickness(0, marginTopDip, 0, marginBottomDip),
+                TextAlignment = image.HAlign switch
+                {
+                    ImageHAlign.Center => TextAlignment.Center,
+                    ImageHAlign.Right  => TextAlignment.Right,
+                    _                  => TextAlignment.Left,
+                },
+            };
+        }
+
+        // ── 텍스트 캐릭터처럼(AsText) — Paragraph 안에 InlineUIContainer 로 ────
+        // 한 단락 안에서 글자처럼 흐르므로 같은 단락의 텍스트 런과 같은 줄에 들어갈 수 있다.
+        // 사용자는 이후 이 단락에 텍스트를 추가해 그림과 같은 줄에 글자를 둘 수 있다.
+        if (image.WrapMode == ImageWrapMode.AsText)
+        {
+            var asTextPara = new Wpf.Paragraph
+            {
+                Tag           = image,
+                Margin        = new Thickness(0, marginTopDip, 0, marginBottomDip),
+                TextAlignment = image.HAlign switch
+                {
+                    ImageHAlign.Center => TextAlignment.Center,
+                    ImageHAlign.Right  => TextAlignment.Right,
+                    _                  => TextAlignment.Left,
+                },
+            };
+            asTextPara.Inlines.Add(new Wpf.InlineUIContainer(visual)
+            {
+                BaselineAlignment = BaselineAlignment.Bottom,
+            });
+            return asTextPara;
+        }
+
+        // ── 래핑 있음(WrapLeft/WrapRight) — Floater 가 든 Paragraph ────
+        // Floater 는 Inline 이라 Paragraph 안에 들어가야 하며,
+        // 인접한 본문 Paragraph 와 같은 흐름 안에 있어야 텍스트가 주변으로 흐른다.
+        var floater = new Wpf.Floater
+        {
+            HorizontalAlignment = image.WrapMode == ImageWrapMode.WrapRight
+                ? HorizontalAlignment.Right
+                : HorizontalAlignment.Left,
+            Padding = new Thickness(0),
+            Margin  = new Thickness(
+                image.WrapMode == ImageWrapMode.WrapRight ? PtToDip(8) : 0,   // 텍스트와의 좌측 간격
+                marginTopDip,
+                image.WrapMode == ImageWrapMode.WrapLeft  ? PtToDip(8) : 0,   // 텍스트와의 우측 간격
+                marginBottomDip),
+        };
+        if (image.WidthMm > 0) floater.Width = MmToDip(image.WidthMm);
+        floater.Blocks.Add(new Wpf.BlockUIContainer(visual));
+
+        // Paragraph 는 비어 있어도 되지만, Tag 로 ImageBlock 을 보존해 라운드트립 가능.
+        // 안에 Floater 만 두고 텍스트가 없으면 다음 Paragraph 의 텍스트가 자동으로 주변에 흐른다.
+        // FontSize=0.1 + Transparent 로 선택 하이라이트(파란 가로줄)가 보이지 않도록 억제.
+        var paragraph = new Wpf.Paragraph(floater)
+        {
+            Tag        = image,
+            Margin     = new Thickness(0),
+            FontSize   = 0.1,
+            Foreground = WpfMedia.Brushes.Transparent,
+            Background = WpfMedia.Brushes.Transparent,
+        };
+        return paragraph;
+    }
+
+    /// <summary>
+    /// ImageBlock 으로부터 캔버스 오버레이용 Image 컨트롤을 생성한다.
+    /// MainWindow 가 InFrontOfText/BehindText 모드 그림을 OverlayImageCanvas/UnderlayImageCanvas 에 배치할 때 사용.
+    /// 테두리·크기·툴팁(설명)을 적용하지만, 위치(OverlayXMm/OverlayYMm)는 호출측에서 Canvas.Left/Top 으로 설정.
+    /// </summary>
+    public static System.Windows.FrameworkElement? BuildOverlayImageControl(ImageBlock image)
+    {
+        if (image.Data.Length == 0) return null;
+
+        var bitmap = new WpfMedia.Imaging.BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
         bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
         bitmap.EndInit();
         bitmap.Freeze();
 
         var control = new System.Windows.Controls.Image
         {
-            Source = bitmap,
-            Stretch = WpfMedia.Stretch.Uniform,
-            HorizontalAlignment = HorizontalAlignment.Left,
+            Source  = bitmap,
+            Stretch = WpfMedia.Stretch.Fill,
         };
-        if (image.WidthMm > 0)
+        if (image.WidthMm > 0)  control.Width  = MmToDip(image.WidthMm);
+        if (image.HeightMm > 0) control.Height = MmToDip(image.HeightMm);
+        if (!string.IsNullOrEmpty(image.Description)) control.ToolTip = image.Description;
+
+        if (!string.IsNullOrEmpty(image.BorderColor) && image.BorderThicknessPt > 0)
         {
-            control.Width = MmToDip(image.WidthMm);
-        }
-        if (image.HeightMm > 0)
-        {
-            control.Height = MmToDip(image.HeightMm);
-        }
-        if (!string.IsNullOrEmpty(image.Description))
-        {
-            control.ToolTip = image.Description;
+            WpfMedia.Brush borderBrush;
+            try { borderBrush = new WpfMedia.SolidColorBrush(
+                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.BorderColor)!); }
+            catch { borderBrush = WpfMedia.Brushes.Black; }
+
+            return new System.Windows.Controls.Border
+            {
+                Child           = control,
+                BorderBrush     = borderBrush,
+                BorderThickness = new Thickness(PtToDip(image.BorderThicknessPt)),
+            };
         }
 
-        container.Child = control;
-        return container;
+        return control;
     }
 
     private static Wpf.Paragraph BuildOpaquePlaceholder(OpaqueBlock opaque)
@@ -428,10 +578,18 @@ public static class FlowDocumentBuilder
         if (img is null)
             return new Wpf.Run($"[{emojiKey}]") { Tag = run };
 
+        // img.Tag 에 iuc 를 저장하지 말 것 — iuc.Child = img 와 함께 순환 참조가 되어
+        // WPF undo 의 XamlWriter.Save() 가 StackOverflow 로 폭주한다 (수식 IUC 와 동일 이슈).
         return new Wpf.InlineUIContainer(img)
         {
             Tag               = run,
-            BaselineAlignment = BaselineAlignment.Center,
+            BaselineAlignment = run.EmojiAlignment switch
+            {
+                EmojiAlignment.TextTop    => BaselineAlignment.TextTop,
+                EmojiAlignment.TextBottom => BaselineAlignment.TextBottom,
+                EmojiAlignment.Baseline   => BaselineAlignment.Baseline,
+                _                         => BaselineAlignment.Center,
+            },
         };
     }
 

@@ -62,6 +62,12 @@ public static class FlowDocumentParser
                     target.Add(opaque);
                     break;
 
+                // 래핑 모드(WrapLeft/WrapRight) 그림은 Floater 가 든 Paragraph 로 빌드됨 — Tag 로 회수.
+                // 반드시 일반 'case Wpf.Paragraph' 보다 먼저 위치해야 한다.
+                case Wpf.Paragraph wrappedImagePara when wrappedImagePara.Tag is ImageBlock wrappedImage:
+                    target.Add(wrappedImage);
+                    break;
+
                 case Wpf.Paragraph wpfPara:
                     target.Add(ParseParagraph(wpfPara, listMarker: null));
                     break;
@@ -252,6 +258,7 @@ public static class FlowDocumentParser
                         LatexSource       = origRun.LatexSource,
                         IsDisplayEquation = origRun.IsDisplayEquation,
                         EmojiKey          = origRun.EmojiKey,
+                        EmojiAlignment    = origRun.EmojiAlignment,
                     });
                 }
                 else if (iuc.Child is System.Windows.Controls.StackPanel panel)
