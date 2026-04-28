@@ -298,7 +298,7 @@ public static class FlowDocumentBuilder
     // ── 오버레이 표 지원 ─────────────────────────────────────────────────
 
     /// <summary>오버레이(InFrontOfText/BehindText/Fixed) 모드 표를 위한 최소 앵커 단락을 반환한다.</summary>
-    private static Wpf.Paragraph BuildTableAnchor(Table table)
+    internal static Wpf.Paragraph BuildTableAnchor(Table table)
         => new Wpf.Paragraph
         {
             Tag        = table,

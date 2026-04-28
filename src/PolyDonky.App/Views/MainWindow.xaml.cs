@@ -495,6 +495,7 @@ public partial class MainWindow : Window
             }
         }
 
+        bool hasOverlay = false;
         foreach (var coreBlock in blocks)
         {
             var wpfBlock = BuildWpfBlockFromCore(coreBlock);
@@ -508,11 +509,21 @@ public partial class MainWindow : Window
                 doc.Blocks.InsertAfter(anchor, wpfBlock);
                 anchor = wpfBlock;
             }
+
+            // 오버레이 객체가 포함된 경우 붙여넣기 후 캔버스도 재구축해야 한다.
+            if (coreBlock is PolyDonky.Core.Table { WrapMode: not PolyDonky.Core.TableWrapMode.Block }
+                || coreBlock is PolyDonky.Core.ImageBlock { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText }
+                || coreBlock is PolyDonky.Core.ShapeObject { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText })
+                hasOverlay = true;
         }
 
-        // 오버레이 표/도형/이미지가 있다면 캔버스 시각 요소도 다시 그려야 한다.
-        // FlowDocumentBuilder 는 본문 Block 만 만들고 오버레이 Canvas 는 ViewModel 재로드 때 처리하므로,
-        // 라운드트립 보장을 위해 dirty 표시 + 다음 번 문서 갱신 시 RebuildOverlays 가 처리하도록 위임.
+        if (hasOverlay)
+        {
+            RebuildOverlayImages();
+            RebuildOverlayShapes();
+            RebuildOverlayTables();
+        }
+
         _viewModel?.MarkDirty();
         return true;
     }
@@ -561,7 +572,9 @@ public partial class MainWindow : Window
         {
             PolyDonky.Core.Table t when t.WrapMode == PolyDonky.Core.TableWrapMode.Block
                 => PolyDonky.App.Services.FlowDocumentBuilder.BuildTable(t),
-            PolyDonky.Core.Table => null, // 오버레이 표는 본문 흐름 외 — 캐릭터 클립보드에 부적합 (별도 처리)
+            // 오버레이 표 — 앵커 단락만 삽입하고 캔버스 시각 요소는 RebuildOverlayTables() 가 담당.
+            PolyDonky.Core.Table t
+                => PolyDonky.App.Services.FlowDocumentBuilder.BuildTableAnchor(t),
             PolyDonky.Core.ImageBlock img
                 => PolyDonky.App.Services.FlowDocumentBuilder.BuildImage(img),
             PolyDonky.Core.ShapeObject sh
