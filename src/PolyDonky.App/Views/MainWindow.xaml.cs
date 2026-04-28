@@ -407,8 +407,12 @@ public partial class MainWindow : Window
         var sel = BodyEditor.Selection;
         if (sel.IsEmpty) return false;
 
+        // 순수 텍스트 선택(특수 객체 미포함)은 WPF 기본 복사에 양보 — 우리 경로는 Block 단위로
+        // 동작하므로 단락 부분 선택이라도 단락 전체를 복제해 사용자 의도와 어긋난다.
+        if (!SelectionHasSpecialObject(sel)) return false;
+
         var coreBlocks = ExtractCoreSelection();
-        if (coreBlocks.Count == 0) return false; // 텍스트만 있는 경우 — WPF 기본 동작에 양보
+        if (coreBlocks.Count == 0) return false;
 
         // ID 충돌 방지를 위해 새 ID 발급 + Modified 표시
         foreach (var b in coreBlocks) ResetCoreBlockId(b);
@@ -526,6 +530,40 @@ public partial class MainWindow : Window
 
         _viewModel?.MarkDirty();
         return true;
+    }
+
+    /// <summary>
+    /// 선택 영역이 특수 객체(표·이미지·도형) 를 포함하는지 검사.
+    /// 포함되지 않으면 우리 커스텀 클립보드 경로를 쓸 필요가 없고(Block 단위 복제로 단락이
+    /// 통째로 복사되는 부작용), WPF 기본 텍스트 복사가 정확하게 처리한다.
+    /// </summary>
+    private bool SelectionHasSpecialObject(System.Windows.Documents.TextSelection sel)
+    {
+        foreach (var block in BodyEditor.Document.Blocks)
+        {
+            if (block.ContentEnd.CompareTo(sel.Start) <= 0) continue;
+            if (block.ContentStart.CompareTo(sel.End) >= 0) break;
+
+            // 본문 흐름 표
+            if (block is System.Windows.Documents.Table) return true;
+            // 인라인 이미지/도형 (Inline 모드 BlockUIContainer)
+            if (block is System.Windows.Documents.BlockUIContainer) return true;
+            // 오버레이 표/이미지/도형 (앵커 단락) 또는 WrapLeft/WrapRight 이미지·도형 (Floater 단락)
+            if (block.Tag is PolyDonky.Core.Table)        return true;
+            if (block.Tag is PolyDonky.Core.ImageBlock)   return true;
+            if (block.Tag is PolyDonky.Core.ShapeObject)  return true;
+
+            // Paragraph 내부에 InlineUIContainer (AsText 모드 이미지) 가 있는 경우
+            if (block is System.Windows.Documents.Paragraph para)
+            {
+                foreach (var inline in para.Inlines)
+                {
+                    if (inline is System.Windows.Documents.InlineUIContainer) return true;
+                    if (inline is System.Windows.Documents.Floater)           return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// <summary>BodyEditor.Selection 영역에 걸쳐 있는 모든 Block 을 Core.Block 으로 추출해 깊은 복사.</summary>
