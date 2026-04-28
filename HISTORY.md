@@ -44,7 +44,22 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Fixed
+- **Fixed** — **WrapLeft/WrapRight 그림 드래그 시 속성(ImageBlock 모델 참조) 이 사라지고 위치 제어 불가하던 핵심 버그**. 원인: WPF Floater 드래그가 클립보드 직렬화를 경유해 `Tag`(ImageBlock 참조)를 통째로 지워버렸음. `PreviewMouseMove e.Handled=true` 로 WPF 드래그를 차단하고 독자 드래그 로직 구현: MouseDown 시 `Block` + `ImageBlock` 참조를 직접 캡처 → MouseMove 에서 8px 임계거리 초과 시 커서를 SizeAll 로 변경 → MouseUp 에서 드롭 X 좌표를 3등분해 WrapLeft(왼쪽 1/3) / Inline 가운데(중앙) / WrapRight(오른쪽 1/3) 로 `WrapMode`·`HAlign` 갱신 후 Block 을 재구축. 기존 `InsertBefore/Remove` 패턴으로 모델 참조가 단 한 번도 클립보드를 통하지 않으므로 이후 우클릭 속성 편집도 정상. Inline 모드 그림은 드래그 후 `HAlign` 만 변경 (WrapMode 유지).
+- **Fixed** — 본문에서 우클릭 시 `System.InvalidOperationException: 'FlowDocument' is not a Visual or Visual3D` 크래시. `TryWalkUpToImage` 의 비주얼 트리 탐색 루프가 `BodyEditor.InputHitTest` 가 반환한 `ContentElement`(Run·Paragraph·FlowDocument 등 — Visual 이 아님) 에 대해 `VisualTreeHelper.GetParent` 를 호출해 예외 발생. Visual 여부를 먼저 확인해 non-Visual 이면 즉시 null 반환하도록 수정.
+- **Fixed** — 이모지·그림 위에서 우클릭/더블클릭해도 **속성 다이얼로그가 열리지 않고 RichTextBox 기본 메뉴(잘라내기/복사/붙여넣기) 만 뜨던 버그**. 두 가지 원인을 함께 수정: 1) `PreviewMouseRightButtonDown` 으로 e.Handled = true 를 세팅해도 RichTextBox 의 기본 컨텍스트 메뉴는 `ContextMenuOpening` 시점에 결정되므로 막을 수 없었음 — 핸들러를 `ContextMenuOpening` 로 옮기고 그 시점에 e.Handled = true 로 기본 메뉴 억제. 2) `e.OriginalSource` 가 RichTextBox 내부 호스팅으로 Image 까지 닿지 않는 경우가 있었음 — `BodyEditor.InputHitTest(마우스위치)` 폴백 추가해 두 경로 모두에서 Image 를 찾도록 보강.
+
 ### Added
+- **Added** — **그림을 텍스트처럼 처리** (`ImageWrapMode.AsText`). 그림 속성 → 배치에 6번째 옵션 '텍스트로 처리 — 글자처럼 한 줄에 인라인' 추가. `BlockUIContainer` 대신 `Paragraph` 안의 `InlineUIContainer` 로 빌드되어 그림이 본문 텍스트와 같은 줄에 글자처럼 흐른다 (사용자가 같은 단락에 텍스트를 추가하면 그림 옆/뒤에 텍스트가 나란히 배치). FlowDocumentParser 가 `Paragraph.Tag = ImageBlock` 케이스를 이미 인식하므로 라운드트립 자동 보장.
+- **Added** — **오버레이 그림(InFrontOfText / BehindText) 드래그 이동**. 캔버스 위 그림을 마우스로 끌어 위치를 바꿀 수 있다 — 드래그 종료 시 `OverlayXMm`/`OverlayYMm` 가 업데이트되고 dirty 마킹. 단일 클릭 = 드래그 시작, 더블클릭 = 속성 다이얼로그, 우클릭 = 속성 컨텍스트 메뉴로 분기. 글상자(`TextBoxOverlay`) 는 기존 드래그 동작 유지. `FlowDocumentBuilder` 에 `DipToMm` 헬퍼 추가.
+- **Added** — **그림 텍스트 배치 모드 5종**. ImageBlock 에 `WrapMode` enum 신설 (Inline / WrapLeft / WrapRight / InFrontOfText / BehindText). 그림 속성 다이얼로그에 '배치' 콤보박스 추가:
+  1. **본문 흐름** — BlockUIContainer (자체 줄, 가로 정렬만 적용; 기본값)
+  2. **왼쪽 배치** — Paragraph + Floater(Left), 텍스트가 오른쪽으로 흐름
+  3. **오른쪽 배치** — Paragraph + Floater(Right), 텍스트가 왼쪽으로 흐름
+  4. **텍스트 앞으로** — `OverlayImageCanvas` (BodyEditor 위)에 절대 위치(`OverlayXMm`/`OverlayYMm`) 로 배치, 본문 위에 겹침
+  5. **텍스트 뒤로** — `UnderlayImageCanvas` (BodyEditor 뒤)에 절대 위치로 배치, 본문 아래에 깔림
+  오버레이 모드 그림은 본문 흐름에는 빈 placeholder Paragraph(Tag=ImageBlock) 만 두고 실제 렌더링은 캔버스에서 처리. 모드 전환 시 컨테이너 종류가 BUC↔Paragraph↔Placeholder 로 자유롭게 바뀌며, FlowDocumentBuilder.BuildImage 가 적절한 Block 타입을 반환해 일괄 교체. 오버레이 그림은 우클릭/더블클릭으로 속성 편집 가능 (X/Y 좌표 조정 포함). FlowDocumentParser 도 Paragraph.Tag = ImageBlock 케이스 인식해 라운드트립 보장.
+- **Added** — **이모지·그림 속성 편집** (`EmojiPropertiesWindow`, `ImagePropertiesWindow`). 이모지/그림 우클릭 → 속성 메뉴, 더블클릭 → 속성 다이얼로그 직접 열기. 이모지: 크기(pt) + 기준선 정렬(위/가운데/아래/기준선) — 변경 즉시 Image 컨트롤에 반영, `Run.EmojiAlignment` 에 저장해 라운드트립 보장. 그림: 크기(mm·비율 유지), 정렬(왼쪽/가운데/오른쪽), 위아래 여백(mm), 테두리(색상·두께 pt), 설명 — 확인 시 `ImageBlock` 갱신 후 `BlockUIContainer` 재빌드해 FlowDocument 교체. `ImageBlock` 에 `HAlign`/`MarginTopMm`/`MarginBottomMm`/`BorderColor`/`BorderThicknessPt` 추가; `Run` 에 `EmojiAlignment` 추가.
 - **Added** — **그림(이미지) 삽입** 기능 구현. 입력 → 그림 메뉴로 `ImageWindow` 다이얼로그 열기: 파일 선택(PNG/JPEG/BMP/GIF/TIFF/WebP), 미리보기, 너비·높이(mm) 입력(비율 유지 옵션), 설명(alt-text) 입력. 삽입 시 SHA-256 해시를 자동 계산해 `ImageBlock` 에 기록, 캐럿 위치 블록 직후에 `BlockUIContainer`(`Tag = ImageBlock`) 로 삽입 — `FlowDocumentParser` 의 기존 라운드트립 경로로 IWPF 저장/재로드 정상 동작. A4 본문 너비(160mm) 초과 이미지는 자동 축소. `FlowDocumentBuilder.BuildImage` 를 `internal` 로 공개.
 - **Added** — 이모지 삽입 다이얼로그에 **크기 선택 콤보박스** 추가 (12/16/20/24/32/48pt, 기본 16pt). 선택한 크기를 `Run.Style.FontSizePt` 에 저장해 저장→재로드 후에도 동일 크기로 복원(라운드트립 보장). `FlowDocumentBuilder.BuildEmojiInline` 의 보정 계수(`× 1.4`) 를 제거해 삽입 크기와 로드 크기를 일치시킴.
 - **Added** — **이모지(Emoji) 입력** 활성화. 8개 섹션 × 10개 = 80개의 문서용 PNG 이모지(상태/반응/동작/우선순위/사람/도구/화살표/장식)를 카테고리별 또는 키워드 검색으로 골라 캐럿 위치에 삽입. 라운드트립용으로 `Run.EmojiKey` 를 신설 (수식 `LatexSource` 와 동일 패턴) — `FlowDocumentBuilder.BuildEmojiInline` 이 pack URI 로 PNG 를 로드해 `InlineUIContainer { Image }` 로 렌더링, `FlowDocumentParser` 가 `Tag` 의 EmojiKey 를 보존. PNG 80개는 `..\..\Resources\Emojis\**\*.png` 글롭으로 WPF Resource 임베드, 빌드 산출물에 포함. 메뉴 라우팅은 `GetActiveTextEditor()` 를 통해 글상자 안쪽 편집 중에도 정상 동작.

@@ -19,6 +19,129 @@ public partial class MainWindow : Window
     private bool _suppressTextChanged;
     private DispatcherTimer? _statusTimer;
 
+    // ── 임베드 이미지 사용자 드래그 ───────────────────────────────────────
+    // WPF 의 Floater 드래그는 HorizontalAlignment 를 조용히 바꾸고, 클립보드 직렬화 과정에서
+    // Tag(ImageBlock 참조)를 잃어버린다. PreviewMouseMove 에서 WPF 의 드래그를 완전 차단하고
+    // 대신 직접 드래그 로직을 구현한다.
+    // - MouseDown: 이미지 위인지 확인, Block + ImageBlock 참조 캡처
+    // - MouseMove: 임계거리 초과 시 active 상태로 전환, 커서 변경
+    // - MouseUp  : 드롭 X 좌표 기반으로 HAlign / WrapMode 결정 → Block 재구축
+    private bool                            _suppressEmbeddedObjectDrag;
+    private PolyDonky.Core.ImageBlock?      _embeddedDragModel;
+    private System.Windows.Documents.Block? _embeddedDragBlock;
+    private bool                            _embeddedDragActive;
+    private Point                           _embeddedDragOrigin;
+
+    private void OnEditorPreviewMouseDownTrackDrag(object sender, MouseButtonEventArgs e)
+    {
+        _embeddedDragModel  = null;
+        _embeddedDragBlock  = null;
+        _embeddedDragActive = false;
+
+        if (!_drawingTextBox) DeselectAllOverlays();
+        var pt = e.GetPosition(BodyEditor);
+
+        var found = FindEmbeddedObjectAt(e.OriginalSource as System.Windows.DependencyObject, pt);
+        if (found is { container: System.Windows.Documents.Block blk } &&
+            GetImageBlockFromBlock(blk) is { } imgModel)
+        {
+            _suppressEmbeddedObjectDrag = true;
+            _embeddedDragModel  = imgModel;
+            _embeddedDragBlock  = blk;
+            _embeddedDragOrigin = pt;
+        }
+        else
+        {
+            _suppressEmbeddedObjectDrag = false;
+        }
+    }
+
+    private void OnEditorPreviewMouseMoveBlockDrag(object sender, MouseEventArgs e)
+    {
+        if (!_suppressEmbeddedObjectDrag) return;
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _embeddedDragActive = false;
+            _suppressEmbeddedObjectDrag = false;
+            Mouse.OverrideCursor = null;
+            return;
+        }
+        // WPF 기본 드래그(Floater 위치 변경 + Tag 손실)를 완전 차단.
+        e.Handled = true;
+
+        var pt = e.GetPosition(BodyEditor);
+        if (!_embeddedDragActive &&
+            (Math.Abs(pt.X - _embeddedDragOrigin.X) > 8 ||
+             Math.Abs(pt.Y - _embeddedDragOrigin.Y) > 8))
+        {
+            _embeddedDragActive  = true;
+            Mouse.OverrideCursor = Cursors.SizeAll;
+        }
+    }
+
+    private void OnEditorPreviewMouseUpEmbedded(object sender, MouseButtonEventArgs e)
+    {
+        Mouse.OverrideCursor = null;
+        _suppressEmbeddedObjectDrag = false;
+
+        if (!_embeddedDragActive) { _embeddedDragActive = false; return; }
+
+        bool   wasActive = _embeddedDragActive;
+        var    model     = _embeddedDragModel;
+        var    oldBlock  = _embeddedDragBlock;
+        _embeddedDragActive = false;
+        _embeddedDragModel  = null;
+        _embeddedDragBlock  = null;
+
+        if (!wasActive || model is null || oldBlock is null) return;
+
+        // InFrontOfText / BehindText 는 Canvas 드래그가 처리. AsText / Inline 에서 WrapLeft/WrapRight
+        // 로의 전환 또는 WrapLeft ↔ WrapRight 전환을 드롭 X 위치로 결정한다.
+        var currentMode = model.WrapMode;
+        if (currentMode is PolyDonky.Core.ImageWrapMode.InFrontOfText
+                        or PolyDonky.Core.ImageWrapMode.BehindText
+                        or PolyDonky.Core.ImageWrapMode.AsText)
+            return;
+
+        var    pt      = e.GetPosition(BodyEditor);
+        double editorW = BodyEditor.ActualWidth;
+        double third   = editorW / 3.0;
+
+        if (currentMode == PolyDonky.Core.ImageWrapMode.Inline)
+        {
+            // Inline: 가로 위치에 따라 HAlign 만 바꾼다 (WrapMode 유지).
+            model.HAlign = pt.X < third          ? PolyDonky.Core.ImageHAlign.Left
+                         : pt.X > third * 2      ? PolyDonky.Core.ImageHAlign.Right
+                         :                         PolyDonky.Core.ImageHAlign.Center;
+        }
+        else
+        {
+            // WrapLeft / WrapRight: 왼쪽 1/3 → WrapLeft, 중앙 1/3 → Inline 가운데, 오른쪽 1/3 → WrapRight.
+            if (pt.X < third)
+            {
+                model.WrapMode = PolyDonky.Core.ImageWrapMode.WrapLeft;
+                model.HAlign   = PolyDonky.Core.ImageHAlign.Left;
+            }
+            else if (pt.X > third * 2)
+            {
+                model.WrapMode = PolyDonky.Core.ImageWrapMode.WrapRight;
+                model.HAlign   = PolyDonky.Core.ImageHAlign.Right;
+            }
+            else
+            {
+                model.WrapMode = PolyDonky.Core.ImageWrapMode.Inline;
+                model.HAlign   = PolyDonky.Core.ImageHAlign.Center;
+            }
+        }
+
+        var newBlock = Services.FlowDocumentBuilder.BuildImage(model);
+        var doc      = BodyEditor.Document;
+        doc.Blocks.InsertBefore(oldBlock, newBlock);
+        doc.Blocks.Remove(oldBlock);
+        RebuildOverlayImages();
+        _viewModel?.MarkDirty();
+    }
+
     // ── 글상자 드래그 생성 / 선택 상태 ────────────────────────────
     private bool _drawingTextBox;
     private bool _drawingInProgress;
@@ -59,10 +182,14 @@ public partial class MainWindow : Window
         }
 
         // RichTextBox 클릭 = 본문 편집 의도. 드래그 생성 모드가 아니면 글상자 선택 해제.
-        BodyEditor.PreviewMouseLeftButtonDown += (_, _) =>
-        {
-            if (!_drawingTextBox) DeselectAllOverlays();
-        };
+        // 동시에 임베드 객체(이미지·이모지) 위에서 드래그를 시작하는지 추적한다.
+        BodyEditor.PreviewMouseLeftButtonDown += OnEditorPreviewMouseDownTrackDrag;
+        BodyEditor.PreviewMouseMove           += OnEditorPreviewMouseMoveBlockDrag;
+        BodyEditor.PreviewMouseLeftButtonUp   += OnEditorPreviewMouseUpEmbedded;
+
+        // 이모지·이미지 우클릭 → 속성 컨텍스트 메뉴, 더블클릭 → 속성 다이얼로그
+        BodyEditor.ContextMenuOpening      += OnEmbeddedObjectContextMenuOpening;
+        BodyEditor.PreviewMouseDoubleClick += OnEmbeddedObjectDoubleClick;
 
         _statusTimer = new DispatcherTimer
         {
@@ -178,6 +305,147 @@ public partial class MainWindow : Window
 
         // 부유 객체 (글상자 등) 오버레이 재구축
         RebuildFloatingObjects();
+
+        // 그림 오버레이 재구축 (InFrontOfText / BehindText 모드)
+        RebuildOverlayImages();
+    }
+
+    /// <summary>
+    /// Document 모델을 순회해 InFrontOfText / BehindText 모드 ImageBlock 들을
+    /// OverlayImageCanvas / UnderlayImageCanvas 에 절대 위치로 배치한다.
+    /// </summary>
+    private void RebuildOverlayImages()
+    {
+        OverlayImageCanvas.Children.Clear();
+        UnderlayImageCanvas.Children.Clear();
+
+        // 모델(_viewModel.Document)은 저장 시에만 FlowDocument 로부터 재구축되므로
+        // 편집 중에는 반드시 live FlowDocument(BodyEditor.Document) 를 직접 순회해야 한다.
+        foreach (var block in BodyEditor.Document.Blocks)
+        {
+            if (block.Tag is not PolyDonky.Core.ImageBlock img) continue;
+            if (img.WrapMode is not (PolyDonky.Core.ImageWrapMode.InFrontOfText
+                                  or PolyDonky.Core.ImageWrapMode.BehindText)) continue;
+
+            var ctrl = Services.FlowDocumentBuilder.BuildOverlayImageControl(img);
+            if (ctrl is null) continue;
+
+            ctrl.Tag = img;
+            System.Windows.Controls.Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(img.OverlayXMm));
+            System.Windows.Controls.Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(img.OverlayYMm));
+            ctrl.Cursor = System.Windows.Input.Cursors.SizeAll;
+
+            // 우클릭 컨텍스트 메뉴 — ContextMenu 를 요소에 직접 설정해 WPF ContextMenuService 가
+            // 처리하도록 한다. MouseRightButtonDown 수동 처리와 달리 BodyEditor 의
+            // ContextMenuOpening 과 충돌하지 않는다.
+            var captured  = img;   // 클로저 캡처
+            var ctxMenu   = new System.Windows.Controls.ContextMenu();
+            var propsItem = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
+            propsItem.Click += (_, _) => OpenOverlayImageProperties(captured);
+            ctxMenu.Items.Add(propsItem);
+            ctrl.ContextMenu = ctxMenu;
+
+            // 좌클릭 → 드래그 시작 또는 더블클릭 시 속성 다이얼로그
+            ctrl.MouseLeftButtonDown += OnOverlayImageMouseDown;
+
+            var canvas = img.WrapMode == PolyDonky.Core.ImageWrapMode.BehindText
+                ? UnderlayImageCanvas
+                : OverlayImageCanvas;
+            canvas.Children.Add(ctrl);
+        }
+    }
+
+    // ── 오버레이 그림 드래그 이동 상태 ────────────────────────────────
+    private System.Windows.FrameworkElement? _draggingOverlayImage;
+    private Point  _overlayDragStart;
+    private double _overlayDragStartLeft;
+    private double _overlayDragStartTop;
+    private bool   _overlayDragMoved;
+
+    private void OnOverlayImageMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.FrameworkElement fe) return;
+
+        // 더블클릭 → 속성 다이얼로그
+        if (e.ClickCount == 2 && fe.Tag is PolyDonky.Core.ImageBlock dblImg)
+        {
+            OpenOverlayImageProperties(dblImg);
+            e.Handled = true;
+            return;
+        }
+
+        // 단일 클릭 → 드래그 시작 (마우스 캡처)
+        if (fe.Parent is not System.Windows.Controls.Canvas canvas) return;
+        _draggingOverlayImage   = fe;
+        _overlayDragStart       = e.GetPosition(canvas);
+        _overlayDragStartLeft   = System.Windows.Controls.Canvas.GetLeft(fe);
+        _overlayDragStartTop    = System.Windows.Controls.Canvas.GetTop(fe);
+        if (double.IsNaN(_overlayDragStartLeft)) _overlayDragStartLeft = 0;
+        if (double.IsNaN(_overlayDragStartTop))  _overlayDragStartTop  = 0;
+        _overlayDragMoved = false;
+        fe.CaptureMouse();
+        fe.MouseMove         += OnOverlayImageDragMove;
+        fe.MouseLeftButtonUp += OnOverlayImageDragUp;
+        e.Handled = true;
+    }
+
+    private void OnOverlayImageDragMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not System.Windows.FrameworkElement fe ||
+            !ReferenceEquals(_draggingOverlayImage, fe)) return;
+        if (fe.Parent is not System.Windows.Controls.Canvas canvas) return;
+
+        var pos = e.GetPosition(canvas);
+        double dx = pos.X - _overlayDragStart.X;
+        double dy = pos.Y - _overlayDragStart.Y;
+        if (Math.Abs(dx) > 0.5 || Math.Abs(dy) > 0.5) _overlayDragMoved = true;
+
+        System.Windows.Controls.Canvas.SetLeft(fe, _overlayDragStartLeft + dx);
+        System.Windows.Controls.Canvas.SetTop (fe, _overlayDragStartTop  + dy);
+    }
+
+    private void OnOverlayImageDragUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.FrameworkElement fe ||
+            !ReferenceEquals(_draggingOverlayImage, fe)) return;
+
+        fe.ReleaseMouseCapture();
+        fe.MouseMove         -= OnOverlayImageDragMove;
+        fe.MouseLeftButtonUp -= OnOverlayImageDragUp;
+        _draggingOverlayImage = null;
+
+        if (_overlayDragMoved && fe.Tag is PolyDonky.Core.ImageBlock img)
+        {
+            double left = System.Windows.Controls.Canvas.GetLeft(fe);
+            double top  = System.Windows.Controls.Canvas.GetTop(fe);
+            if (double.IsNaN(left)) left = 0;
+            if (double.IsNaN(top))  top  = 0;
+            img.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
+            img.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            _viewModel?.MarkDirty();
+        }
+        e.Handled = true;
+    }
+
+    private void OpenOverlayImageProperties(PolyDonky.Core.ImageBlock img)
+    {
+        var dlg = new ImagePropertiesWindow(img) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+
+        // WrapMode 가 InFrontOfText/BehindText 이외로 바뀔 수 있으므로 플레이스홀더를
+        // 새 Block 으로 교체한다. _viewModel.Document(저장 시 재구축)가 아니라
+        // live FlowDocument 를 직접 수정해야 편집 중인 이미지가 누락되지 않는다.
+        var placeholder = BodyEditor.Document.Blocks
+            .FirstOrDefault(b => ReferenceEquals(b.Tag, img));
+        if (placeholder is not null)
+        {
+            var newBlock = Services.FlowDocumentBuilder.BuildImage(img);
+            BodyEditor.Document.Blocks.InsertBefore(placeholder, newBlock);
+            BodyEditor.Document.Blocks.Remove(placeholder);
+        }
+
+        RebuildOverlayImages();
+        _viewModel?.MarkDirty();
     }
 
     private void ApplyPageSettings(PolyDonky.Core.PageSettings? page)
@@ -359,6 +627,134 @@ public partial class MainWindow : Window
             BodyEditor.Focus();
         }
     }
+
+    // ── 이모지·이미지 속성 편집 ─────────────────────────────────────────
+
+    private void OnEmbeddedObjectContextMenuOpening(object sender, System.Windows.Controls.ContextMenuEventArgs e)
+    {
+        // 기본 컨텍스트 메뉴(잘라내기/복사/붙여넣기)를 그대로 두고,
+        // 이모지·이미지 위에서 우클릭한 경우에만 구분선 + 속성 항목을 동적으로 추가.
+        var pt = System.Windows.Input.Mouse.GetPosition(BodyEditor);
+        if (FindEmbeddedObjectAt(e.OriginalSource, pt) is not { } found) return;
+
+        var menu = BodyEditor.ContextMenu;
+        if (menu is null) return;
+
+        var sep  = new System.Windows.Controls.Separator();
+        var item = new System.Windows.Controls.MenuItem { Header = "속성(_P)..." };
+        item.Click += (_, _) => OpenEmbeddedObjectProperties(found.img, found.container);
+
+        menu.Items.Add(sep);
+        menu.Items.Add(item);
+
+        // 메뉴 닫힘 시 동적으로 추가한 항목을 제거 — 다음 일반 우클릭에 속성이 남지 않도록.
+        void Cleanup(object? s, System.Windows.RoutedEventArgs _ev)
+        {
+            menu.Closed -= Cleanup;
+            menu.Items.Remove(sep);
+            menu.Items.Remove(item);
+        }
+        menu.Closed += Cleanup;
+    }
+
+    private void OnEmbeddedObjectDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var pt = e.GetPosition(BodyEditor);
+        if (FindEmbeddedObjectAt(e.OriginalSource, pt) is not { } found) return;
+
+        OpenEmbeddedObjectProperties(found.img, found.container);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// OriginalSource 비주얼 트리 + 마우스 위치 InputHitTest 양쪽으로 이모지·이미지 Image 컨트롤을 찾는다.
+    /// RichTextBox 내부 hosting 으로 OriginalSource 가 Image 까지 닿지 않는 경우의 폴백.
+    /// </summary>
+    private (System.Windows.Controls.Image img, object container)? FindEmbeddedObjectAt(
+        object? originalSource, System.Windows.Point pt)
+    {
+        if (TryWalkUpToImage(originalSource as System.Windows.DependencyObject) is { } a) return a;
+        if (TryWalkUpToImage(BodyEditor.InputHitTest(pt) as System.Windows.DependencyObject) is { } b) return b;
+        return null;
+    }
+
+    private static (System.Windows.Controls.Image img, object container)? TryWalkUpToImage(
+        System.Windows.DependencyObject? dep)
+    {
+        // 1단계: 비주얼 트리에서 Image 찾기.
+        // VisualTreeHelper.GetParent 는 Visual/Visual3D 만 허용. InputHitTest 는
+        // ContentElement(Run, Paragraph, FlowDocument 등)를 반환할 수 있으므로
+        // Visual 인지 확인 후 진행한다.
+        while (dep is not null)
+        {
+            if (dep is System.Windows.Controls.Image img)
+            {
+                // 2단계: Image 의 logical tree 부모를 따라 올라가며 BUC/IUC 컨테이너 찾기.
+                // (Image.Tag 에 컨테이너를 저장하면 container.Child = image 와 순환 참조가 되어
+                //  WPF undo 의 XamlWriter.Save() 가 StackOverflow 로 폭주한다.)
+                System.Windows.DependencyObject? logical = img;
+                while (logical is not null)
+                {
+                    // BlockUIContainer (인라인 모드 그림)
+                    if (logical is System.Windows.Documents.BlockUIContainer buc &&
+                        buc.Tag is PolyDonky.Core.ImageBlock)
+                        return (img, buc);
+                    // Paragraph (래핑 모드 그림 — Floater 가 든 단락의 Tag 에 ImageBlock 보존)
+                    if (logical is System.Windows.Documents.Paragraph wrappedPara &&
+                        wrappedPara.Tag is PolyDonky.Core.ImageBlock)
+                        return (img, wrappedPara);
+                    // InlineUIContainer (이모지)
+                    if (logical is System.Windows.Documents.InlineUIContainer iuc &&
+                        iuc.Tag is PolyDonky.Core.Run { EmojiKey: { Length: > 0 } })
+                        return (img, iuc);
+                    logical = System.Windows.LogicalTreeHelper.GetParent(logical);
+                }
+                return null;
+            }
+            // ContentElement (FlowDocument, Paragraph, Run …) 는 Visual 이 아니므로
+            // VisualTreeHelper.GetParent 를 호출하면 InvalidOperationException 이 발생한다.
+            if (dep is not Visual) return null;
+            dep = VisualTreeHelper.GetParent(dep);
+        }
+        return null;
+    }
+
+    private void OpenEmbeddedObjectProperties(System.Windows.Controls.Image imgControl, object container)
+    {
+        if (container is System.Windows.Documents.InlineUIContainer iuc &&
+            iuc.Tag is PolyDonky.Core.Run emojiRun)
+        {
+            var dlg = new EmojiPropertiesWindow(imgControl, iuc, emojiRun) { Owner = this };
+            if (dlg.ShowDialog() == true)
+                _viewModel?.MarkDirty();
+        }
+        else if (container is System.Windows.Documents.Block oldBlock &&
+                 GetImageBlockFromBlock(oldBlock) is { } imageBlock)
+        {
+            var dlg = new ImagePropertiesWindow(imageBlock) { Owner = this };
+            if (dlg.ShowDialog() == true)
+            {
+                // WrapMode 변경 시 컨테이너 종류가 달라질 수 있음
+                // (BlockUIContainer ↔ Paragraph+Floater ↔ 빈 placeholder for overlay).
+                // BuildImage 가 적절한 Block 타입을 반환하므로 그걸 그대로 교체.
+                var newBlock = Services.FlowDocumentBuilder.BuildImage(imageBlock);
+                var doc      = BodyEditor.Document;
+                doc.Blocks.InsertBefore(oldBlock, newBlock);
+                doc.Blocks.Remove(oldBlock);
+                // 캔버스 오버레이도 갱신 — 모드 전환(예: Inline → BehindText) 반영.
+                RebuildOverlayImages();
+                _viewModel?.MarkDirty();
+            }
+        }
+    }
+
+    private static PolyDonky.Core.ImageBlock? GetImageBlockFromBlock(System.Windows.Documents.Block block) =>
+        block switch
+        {
+            System.Windows.Documents.BlockUIContainer buc when buc.Tag is PolyDonky.Core.ImageBlock ib => ib,
+            System.Windows.Documents.Paragraph p          when p.Tag   is PolyDonky.Core.ImageBlock ib => ib,
+            _ => null,
+        };
 
     // 편집 > 지우기: RichTextBox 는 ApplicationCommands.Delete 를 자체 바인딩하지 않으므로
     // 메뉴에서 직접 호출 시 동작하도록 선택 영역을 지운다. 선택이 비어 있으면 캐럿 직후
