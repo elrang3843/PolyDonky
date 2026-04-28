@@ -125,9 +125,7 @@
             <MenuItem Header="{Binding MenuTools, Source={x:Static svc:LocalizedStrings.Instance}}">
                 <MenuItem Header="{Binding MenuToolsSettings, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding SettingsCommand}" />
                 <MenuItem Header="{Binding MenuToolsDict, Source={x:Static svc:LocalizedStrings.Instance}}" Click="OnDictMenuClick" />
-                <MenuItem Header="{Binding MenuToolsSpell, Source={x:Static svc:LocalizedStrings.Instance}}"
-                          Command="{Binding ToggleSpellCheckCommand}"
-                          IsChecked="{Binding IsSpellCheckEnabled, Mode=OneWay}" />
+                <MenuItem Header="{Binding MenuToolsSpell, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
             </MenuItem>
 
             <MenuItem Header="{Binding MenuHelp, Source={x:Static svc:LocalizedStrings.Instance}}">
@@ -336,7 +334,7 @@
                                      HorizontalScrollBarVisibility="Disabled"
                                      IsDocumentEnabled="True"
                                      IsReadOnly="{Binding IsWriteProtected}"
-                                     SpellCheck.IsEnabled="{Binding IsSpellCheckEnabled}"
+                                     SpellCheck.IsEnabled="False"
                                      Padding="0"
                                      BorderThickness="0"
                                      Background="Transparent"

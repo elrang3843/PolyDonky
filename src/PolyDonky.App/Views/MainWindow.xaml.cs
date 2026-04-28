@@ -7,7 +7,6 @@ using System.Windows.Media;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
-using PolyDonky.App.Services;
 using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
@@ -336,9 +335,6 @@ public partial class MainWindow : Window
             vm.RefreshSystemKeys();
             vm.RefreshMemoryUsage();
         }
-
-        ApplySpellCheckLanguage();
-        LanguageService.LanguageChanged += (_, _) => ApplySpellCheckLanguage();
 
         // RichTextBox 클릭 = 본문 편집 의도. 드래그 생성 모드가 아니면 글상자 선택 해제.
         // 동시에 임베드 객체(이미지·이모지) 위에서 드래그를 시작하는지 추적한다.
@@ -1153,12 +1149,6 @@ public partial class MainWindow : Window
             _dictWindow.Show();
         else
             _dictWindow.Activate();
-    }
-
-    private void ApplySpellCheckLanguage()
-    {
-        var tag = LanguageService.Current == LanguageService.Language.English ? "en-US" : "ko-KR";
-        BodyEditor.Language = System.Windows.Markup.XmlLanguage.GetLanguage(tag);
     }
 
     private void OnOutlineStyleRequested(object? sender, EventArgs e)
