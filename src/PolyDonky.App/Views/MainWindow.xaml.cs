@@ -34,10 +34,12 @@ public partial class MainWindow : Window
     private bool                            _embeddedDragActive;
     private Point                           _embeddedDragOrigin;
 
-    // ── 표 셀 Ctrl+클릭 멀티-선택 앵커 ──────────────────────────────────────
-    // Ctrl+클릭 시 WPF 기본 동작(캐럿 이동 → 선택 해제)을 차단하고,
-    // 최초 클릭 위치(앵커)에서 이번 클릭 위치까지 선택을 확장한다.
-    private System.Windows.Documents.TextPointer? _tableCtrlClickAnchor;
+    // ── 마퀴(범위 드래그) 멀티-선택 상태 ────────────────────────────────────────
+    // 페이지 전체 대상 — 텍스트 블록 + 오버레이(이미지/도형/표/글상자)를 한 번에 선택.
+    // - 빈 여백에서 드래그: 사각형 내 모든 개체 선택
+    // - Ctrl+클릭 오버레이: 해당 개체를 선택에 추가/제거
+    private readonly List<FrameworkElement> _multiSelectedControls = new();
+    private bool _marqueeSelecting;
 
     private void OnEditorPreviewMouseDownTrackDrag(object sender, MouseButtonEventArgs e)
     {
@@ -53,7 +55,6 @@ public partial class MainWindow : Window
             TryHitTableColumnBorder(pt, out var rcWpf, out var rcCore, out int rcIdx, out _))
         {
             _suppressEmbeddedObjectDrag = false;
-            _tableCtrlClickAnchor = null;
             StartTableColumnResize(rcWpf!, rcCore!, rcIdx, pt.X);
             e.Handled = true;
             return;
@@ -64,61 +65,33 @@ public partial class MainWindow : Window
         if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0 &&
             FindCanvasChildAt(UnderlayImageCanvas, pt) is { } underlayCtrl)
         {
-            _tableCtrlClickAnchor = null;
             StartUnderlayImageDrag(underlayCtrl, e);
             e.Handled = true;
             return;
         }
 
-        // Ctrl+클릭 → 표 셀 범위 선택 확장 (첫 클릭에서 이번 클릭 셀까지 사각형 선택)
-        // WPF 기본 동작은 Ctrl+클릭이 캐럿을 이동해 선택을 해제하므로 여기서 차단 후 직접 처리.
+        // Ctrl+클릭 → 오버레이 개체 멀티-선택 토글
+        // 오버레이(InFrontOfText) 개체 위에서 Ctrl+클릭하면 해당 개체를 선택에 추가/제거한다.
+        // WPF 기본 Ctrl+클릭(캐럿 이동)은 차단하지 않고, 오버레이 위일 때만 가로챈다.
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 &&
-            (Keyboard.Modifiers & ModifierKeys.Shift) == 0 &&
-            (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
+            (Keyboard.Modifiers & ModifierKeys.Alt) == 0 &&
+            !_drawingTextBox && !_drawingShape_active && !_drawingPolyline_active)
         {
-            var clickTp   = BodyEditor.GetPositionFromPoint(pt, snapToText: true);
-            var clickCell = FindAncestorCell(clickTp);
-            if (clickCell != null && clickTp != null)
+            var hitCtrl = FindAnyOverlayControlAt(pt);
+            if (hitCtrl != null)
             {
-                try
-                {
-                    // 앵커 확정: 기존 선택 범위의 시작 셀이 있으면 그것을 앵커로, 없으면 이번 클릭을 앵커로.
-                    bool anchorValid = _tableCtrlClickAnchor != null
-                        && !BodyEditor.Selection.IsEmpty
-                        && FindAncestorCell(_tableCtrlClickAnchor) != null;
-
-                    if (!anchorValid)
-                    {
-                        _tableCtrlClickAnchor = clickTp;
-                        BodyEditor.Selection.Select(clickCell.ContentStart, clickCell.ContentEnd);
-                    }
-                    else
-                    {
-                        // 앵커 → 이번 셀 끝까지 선택 확장
-                        var anchor = _tableCtrlClickAnchor!;
-                        if (anchor.CompareTo(clickTp) <= 0)
-                            BodyEditor.Selection.Select(anchor, clickCell.ContentEnd);
-                        else
-                            BodyEditor.Selection.Select(clickCell.ContentStart, anchor);
-                    }
-                }
-                catch
-                {
-                    _tableCtrlClickAnchor = clickTp;
-                    BodyEditor.Selection.Select(clickCell.ContentStart, clickCell.ContentEnd);
-                }
-                _suppressEmbeddedObjectDrag = false;
+                ToggleMultiSelectControl(hitCtrl);
                 BodyEditor.Focus();
-                e.Handled = true;   // WPF 캐럿 이동 차단
+                e.Handled = true;
                 return;
             }
-            // 표 셀 밖 Ctrl+클릭: 앵커 초기화 후 WPF 기본 동작으로 양보
-            _tableCtrlClickAnchor = null;
         }
-        else
+
+        // 일반 클릭 — 멀티-선택이 활성화되어 있으면 오버레이 위가 아닌 경우 해제
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0 && _multiSelectedControls.Count > 0)
         {
-            // Ctrl 없는 일반 클릭: 앵커 초기화
-            _tableCtrlClickAnchor = null;
+            var hitCtrl = FindAnyOverlayControlAt(pt);
+            if (hitCtrl == null) ClearMultiSelect();
         }
 
         var found = FindEmbeddedObjectAt(e.OriginalSource as System.Windows.DependencyObject, pt);
@@ -771,8 +744,14 @@ public partial class MainWindow : Window
                     DispatcherPriority.Input);
                 break;
             case Key.Escape:
-                _tableCtrlClickAnchor = null;  // Ctrl+클릭 멀티 선택 앵커 초기화
-                if (_drawingTextBox || _drawingShape_active || _drawingPolyline_active)
+                if (_marqueeSelecting)
+                {
+                    _marqueeSelecting = false;
+                    DrawPreviewRect.Visibility = Visibility.Collapsed;
+                    if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
+                    e.Handled = true;
+                }
+                else if (_drawingTextBox || _drawingShape_active || _drawingPolyline_active)
                 {
                     EndDrawingMode();
                     e.Handled = true;
@@ -780,6 +759,11 @@ public partial class MainWindow : Window
                 else if (_selectedShape is not null)
                 {
                     DeselectShape();
+                    e.Handled = true;
+                }
+                else if (_multiSelectedControls.Count > 0)
+                {
+                    ClearMultiSelect();
                     e.Handled = true;
                 }
                 else if (_selectedOverlay is not null)
@@ -890,6 +874,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void RebuildOverlayImages()
     {
+        ClearMultiSelect();
         OverlayImageCanvas.Children.Clear();
         UnderlayImageCanvas.Children.Clear();
 
@@ -2427,6 +2412,55 @@ public partial class MainWindow : Window
             return;
         }
 
+        // ── 마퀴(범위 드래그) 시작 — 그리기 모드 아닐 때 ──────────────────────────
+        // 마퀴가 시작되는 조건:
+        //   A) 용지 여백(Padding) 안쪽이고 오버레이 개체가 없을 때 (무수정자 클릭)
+        //   B) Ctrl+드래그로 오버레이 개체가 없는 곳 (Ctrl 없이 텍스트 영역 드래그는 텍스트 선택으로 양보)
+        // Shift·Alt 조합은 텍스트 확장선택·BehindText 드래그에 양보.
+        if (!_drawingTextBox && !_drawingShape_active && !_drawingPolyline_active)
+        {
+            bool alt   = (Keyboard.Modifiers & ModifierKeys.Alt)   != 0;
+            bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+            bool ctrl  = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+
+            if (!alt && !shift)
+            {
+                var ptEditor2 = e.GetPosition(BodyEditor);
+                var ptPaper2  = e.GetPosition(PaperBorder);
+                var hitCtrl2  = FindAnyOverlayControlAt(ptEditor2);
+
+                // 용지 여백 영역: BodyEditor Padding 의 바깥쪽
+                bool inMargin = BodyEditor.ActualWidth > 0 && BodyEditor.ActualHeight > 0
+                    && (ptEditor2.X < BodyEditor.Padding.Left
+                    ||  ptEditor2.X > BodyEditor.ActualWidth  - BodyEditor.Padding.Right
+                    ||  ptEditor2.Y < BodyEditor.Padding.Top
+                    ||  ptEditor2.Y > BodyEditor.ActualHeight - BodyEditor.Padding.Bottom);
+
+                bool startMarquee = hitCtrl2 == null && (inMargin || ctrl);
+
+                if (startMarquee)
+                {
+                    if (!ctrl) ClearMultiSelect();
+
+                    ptPaper2.X = Math.Clamp(ptPaper2.X, 0, PaperBorder.ActualWidth);
+                    ptPaper2.Y = Math.Clamp(ptPaper2.Y, 0, PaperBorder.ActualHeight);
+
+                    _drawStart = ptPaper2;
+                    _marqueeSelecting = true;
+
+                    Canvas.SetLeft(DrawPreviewRect, ptPaper2.X);
+                    Canvas.SetTop(DrawPreviewRect, ptPaper2.Y);
+                    DrawPreviewRect.Width = 0;
+                    DrawPreviewRect.Height = 0;
+                    DrawPreviewRect.Visibility = Visibility.Visible;
+
+                    PaperBorder.CaptureMouse();
+                    e.Handled = true;
+                    return;
+                }
+            }
+        }
+
         if (!_drawingTextBox && !_drawingShape_active) return;
 
         var startPos = e.GetPosition(PaperBorder);
@@ -2457,25 +2491,60 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!_drawingInProgress || (!_drawingTextBox && !_drawingShape_active)) return;
-
         var pos2 = e.GetPosition(PaperBorder);
         pos2.X = Math.Clamp(pos2.X, 0, PaperBorder.ActualWidth);
         pos2.Y = Math.Clamp(pos2.Y, 0, PaperBorder.ActualHeight);
 
-        double x = Math.Min(_drawStart.X, pos2.X);
-        double y = Math.Min(_drawStart.Y, pos2.Y);
-        double w = Math.Abs(pos2.X - _drawStart.X);
-        double h = Math.Abs(pos2.Y - _drawStart.Y);
+        double x2 = Math.Min(_drawStart.X, pos2.X);
+        double y2 = Math.Min(_drawStart.Y, pos2.Y);
+        double w2 = Math.Abs(pos2.X - _drawStart.X);
+        double h2 = Math.Abs(pos2.Y - _drawStart.Y);
 
-        Canvas.SetLeft(DrawPreviewRect, x);
-        Canvas.SetTop(DrawPreviewRect, y);
-        DrawPreviewRect.Width  = w;
-        DrawPreviewRect.Height = h;
+        // 마퀴 드래그 중: DrawPreviewRect 업데이트만 (개체 수집은 MouseUp 에서)
+        if (_marqueeSelecting)
+        {
+            Canvas.SetLeft(DrawPreviewRect, x2);
+            Canvas.SetTop(DrawPreviewRect, y2);
+            DrawPreviewRect.Width  = w2;
+            DrawPreviewRect.Height = h2;
+            return;
+        }
+
+        if (!_drawingInProgress || (!_drawingTextBox && !_drawingShape_active)) return;
+
+        Canvas.SetLeft(DrawPreviewRect, x2);
+        Canvas.SetTop(DrawPreviewRect, y2);
+        DrawPreviewRect.Width  = w2;
+        DrawPreviewRect.Height = h2;
     }
 
     private void OnPaperPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        // ── 마퀴 드래그 완료: 사각형 안의 모든 개체 선택 ──
+        if (_marqueeSelecting)
+        {
+            _marqueeSelecting = false;
+            DrawPreviewRect.Visibility = Visibility.Collapsed;
+            if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
+
+            var mPos = e.GetPosition(PaperBorder);
+            mPos.X = Math.Clamp(mPos.X, 0, PaperBorder.ActualWidth);
+            mPos.Y = Math.Clamp(mPos.Y, 0, PaperBorder.ActualHeight);
+
+            double mx = Math.Min(_drawStart.X, mPos.X);
+            double my = Math.Min(_drawStart.Y, mPos.Y);
+            double mw = Math.Abs(mPos.X - _drawStart.X);
+            double mh = Math.Abs(mPos.Y - _drawStart.Y);
+
+            if (mw >= 4 && mh >= 4)
+            {
+                bool addMode = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+                ApplyMarqueeSelection(new Rect(mx, my, mw, mh), addMode);
+            }
+            e.Handled = true;
+            return;
+        }
+
         if (!_drawingInProgress) return;
 
         var pos = e.GetPosition(PaperBorder);
@@ -2771,8 +2840,9 @@ public partial class MainWindow : Window
     // ── 도형 오버레이 재구축 ──────────────────────────────────────────────
     private void RebuildOverlayShapes()
     {
-        // 재구축 전 선택 해제 — Children.Clear() 직후 _selectedShapeCtrl 이 stale 참조가 됨.
+        // 재구축 전 선택 해제 — Children.Clear() 직후 _selectedShapeCtrl / _multiSelectedControls 이 stale 참조가 됨.
         DeselectShape();
+        ClearMultiSelect();
         OverlayShapeCanvas.Children.Clear();
         UnderlayShapeCanvas.Children.Clear();
 
@@ -2800,6 +2870,7 @@ public partial class MainWindow : Window
 
     private void RebuildOverlayTables()
     {
+        ClearMultiSelect();
         OverlayTableCanvas.Children.Clear();
         UnderlayTableCanvas.Children.Clear();
 
@@ -3114,6 +3185,7 @@ public partial class MainWindow : Window
     /// <summary>현재 섹션의 FloatingObjects 를 캔버스에 다시 채워 그린다 (문서 로드 시).</summary>
     private void RebuildFloatingObjects()
     {
+        ClearMultiSelect();
         FloatingCanvas.Children.Clear();
         _selectedOverlay = null;
         // 옛 InnerEditor 참조는 기각 — 다시 만들 overlay 의 InnerEditor 가 GotKeyboardFocus 시 갱신.
@@ -3248,9 +3320,15 @@ public partial class MainWindow : Window
         _selectedShapeCtrl = null;
     }
 
-    /// <summary>선택된 객체(도형/글상자)를 종류 무관하게 삭제. 새 객체 추가 시 여기에 한 줄만 더하면 된다.</summary>
+    /// <summary>선택된 객체(도형/글상자/멀티-선택)를 종류 무관하게 삭제.</summary>
     private bool TryDeleteSelectedObject()
     {
+        // 멀티-선택: 모든 선택 개체를 삭제
+        if (_multiSelectedControls.Count > 0)
+        {
+            DeleteMultiSelected();
+            return true;
+        }
         if (_selectedShape is { } shape)
         {
             DeleteOverlayShape(shape);
@@ -3274,6 +3352,7 @@ public partial class MainWindow : Window
     /// <summary>선택된 객체를 종류 무관하게 클립보드로 복사.</summary>
     private bool TryCopySelectedObject()
     {
+        if (_multiSelectedControls.Count > 0) return CopyMultiSelectedToClipboard();
         if (_selectedShape is { } shape) return CopyShapeToClipboard(shape);
         return TryCopySelectedFloatingObject();
     }
@@ -3281,6 +3360,12 @@ public partial class MainWindow : Window
     /// <summary>잘라내기 = 복사 후 삭제.</summary>
     private bool TryCutSelectedObject()
     {
+        if (_multiSelectedControls.Count > 0)
+        {
+            if (!CopyMultiSelectedToClipboard()) return false;
+            DeleteMultiSelected();
+            return true;
+        }
         if (_selectedShape is { } shape)
         {
             if (!CopyShapeToClipboard(shape)) return false;
@@ -3332,6 +3417,254 @@ public partial class MainWindow : Window
             return true;
         }
         return false;
+    }
+
+    // ── 마퀴(범위 드래그) 멀티-선택 헬퍼 ──────────────────────────────────────
+
+    /// <summary>지정 점(BodyEditor 좌표)에 위치한 오버레이 Canvas 자식 반환. 없으면 null.</summary>
+    private FrameworkElement? FindAnyOverlayControlAt(Point ptEditor)
+    {
+        // 오버레이 Canvas 와 BodyEditor 는 같은 Grid 좌표계 사용 — 좌표 변환 불필요.
+        return FindCanvasChildAt(OverlayImageCanvas,  ptEditor)
+            ?? FindCanvasChildAt(OverlayShapeCanvas,  ptEditor)
+            ?? FindCanvasChildAt(OverlayTableCanvas,  ptEditor)
+            ?? FindFloatingCanvasChildAt(ptEditor)
+            ?? FindCanvasChildAt(UnderlayImageCanvas, ptEditor)
+            ?? FindCanvasChildAt(UnderlayShapeCanvas, ptEditor)
+            ?? FindCanvasChildAt(UnderlayTableCanvas, ptEditor);
+    }
+
+    /// <summary>FloatingCanvas 자식(TextBoxOverlay) 중 지정 점을 포함하는 것 반환.</summary>
+    private FrameworkElement? FindFloatingCanvasChildAt(Point pt)
+    {
+        foreach (UIElement child in FloatingCanvas.Children)
+        {
+            if (child is not FrameworkElement fe) continue;
+            double left = Canvas.GetLeft(fe); if (double.IsNaN(left)) left = 0;
+            double top  = Canvas.GetTop(fe);  if (double.IsNaN(top))  top  = 0;
+            double w = fe.ActualWidth  > 0 ? fe.ActualWidth  : fe.Width;
+            double h = fe.ActualHeight > 0 ? fe.ActualHeight : fe.Height;
+            if (double.IsNaN(w) || w <= 0 || double.IsNaN(h) || h <= 0) continue;
+            if (pt.X >= left && pt.X <= left + w && pt.Y >= top && pt.Y <= top + h) return fe;
+        }
+        return null;
+    }
+
+    /// <summary>Canvas 자식의 Rect (Canvas 기준 좌표)를 반환한다.</summary>
+    private static Rect GetCanvasChildRect(FrameworkElement fe)
+    {
+        double left = Canvas.GetLeft(fe); if (double.IsNaN(left)) left = 0;
+        double top  = Canvas.GetTop(fe);  if (double.IsNaN(top))  top  = 0;
+        double w = fe.ActualWidth  > 0 ? fe.ActualWidth  : (double.IsNaN(fe.Width)  ? 0 : fe.Width);
+        double h = fe.ActualHeight > 0 ? fe.ActualHeight : (double.IsNaN(fe.Height) ? 0 : fe.Height);
+        return new Rect(left, top, Math.Max(w, 0), Math.Max(h, 0));
+    }
+
+    /// <summary>멀티-선택 하이라이트(파란 글로우 효과) on/off.</summary>
+    private static void SetMultiSelectHighlight(FrameworkElement fe, bool on)
+    {
+        fe.Effect = on
+            ? new System.Windows.Media.Effects.DropShadowEffect
+              {
+                  Color       = WpfMedia.Colors.DodgerBlue,
+                  ShadowDepth = 0,
+                  BlurRadius  = 14,
+                  Opacity     = 0.9,
+              }
+            : null;
+    }
+
+    /// <summary>모든 멀티-선택 해제.</summary>
+    private void ClearMultiSelect()
+    {
+        foreach (var fe in _multiSelectedControls)
+            SetMultiSelectHighlight(fe, false);
+        _multiSelectedControls.Clear();
+    }
+
+    /// <summary>오버레이 개체를 멀티-선택에 추가하거나, 이미 있으면 제거(토글).</summary>
+    private void ToggleMultiSelectControl(FrameworkElement fe)
+    {
+        int idx = _multiSelectedControls.IndexOf(fe);
+        if (idx >= 0)
+        {
+            SetMultiSelectHighlight(fe, false);
+            _multiSelectedControls.RemoveAt(idx);
+        }
+        else
+        {
+            // 단일 선택(도형/글상자) 과 공존하지 않도록 단일 선택 먼저 해제
+            DeselectAllOverlays();
+            _multiSelectedControls.Add(fe);
+            SetMultiSelectHighlight(fe, true);
+        }
+    }
+
+    /// <summary>
+    /// 마퀴 사각형(PaperBorder 좌표) 안에 위치하는 모든 오버레이 개체를 선택하고
+    /// 본문 텍스트 블록도 해당 범위로 선택한다.
+    /// </summary>
+    private void ApplyMarqueeSelection(Rect marqueePaper, bool addToExisting)
+    {
+        if (!addToExisting) ClearMultiSelect();
+
+        // 모든 오버레이 Canvas 순회 — 마퀴와 겹치는 자식 수집
+        Canvas[] canvases = { OverlayImageCanvas, OverlayShapeCanvas, OverlayTableCanvas,
+                               FloatingCanvas,
+                               UnderlayImageCanvas, UnderlayShapeCanvas, UnderlayTableCanvas };
+        foreach (var canvas in canvases)
+        {
+            foreach (UIElement child in canvas.Children)
+            {
+                if (child is not FrameworkElement fe) continue;
+                var feRect = GetCanvasChildRect(fe);
+                if (feRect.Width <= 0 || feRect.Height <= 0) continue;
+                if (!feRect.IntersectsWith(marqueePaper)) continue;
+                if (_multiSelectedControls.Contains(fe)) continue;
+                _multiSelectedControls.Add(fe);
+                SetMultiSelectHighlight(fe, true);
+            }
+        }
+
+        // 본문 텍스트: BodyEditor 좌표 = PaperBorder 좌표 (같은 Grid)
+        // GetPositionFromPoint 로 시작·끝 TextPointer 를 구해 Selection 을 설정한다.
+        try
+        {
+            var tl = marqueePaper.TopLeft;
+            var br = marqueePaper.BottomRight;
+            var startTp = BodyEditor.GetPositionFromPoint(tl, snapToText: true);
+            var endTp   = BodyEditor.GetPositionFromPoint(br, snapToText: true);
+            if (startTp != null && endTp != null)
+            {
+                if (startTp.CompareTo(endTp) > 0)
+                    (startTp, endTp) = (endTp, startTp);
+                BodyEditor.Selection.Select(startTp, endTp);
+            }
+        }
+        catch { /* GetPositionFromPoint 실패 시 무시 */ }
+
+        // 멀티-선택이 있으면 Window 로 포커스 이동 → Delete/Ctrl+C 처리를 Window 가 받는다.
+        if (_multiSelectedControls.Count > 0)
+        {
+            Focus();
+            Keyboard.Focus(this);
+        }
+        else
+        {
+            BodyEditor.Focus();
+        }
+    }
+
+    /// <summary>멀티-선택된 오버레이 개체들을 모두 삭제.</summary>
+    private void DeleteMultiSelected()
+    {
+        var toDelete = _multiSelectedControls.ToList();
+        ClearMultiSelect();
+
+        foreach (var fe in toDelete)
+        {
+            if (fe is TextBoxOverlay tbo)
+            {
+                FloatingCanvas.Children.Remove(tbo);
+                _viewModel?.RemoveFloatingObject(tbo.Model);
+            }
+            else if (fe.Tag is PolyDonky.Core.ShapeObject shape)
+            {
+                DeleteOverlayShape(shape);
+            }
+            else if (fe.Tag is PolyDonky.Core.ImageBlock img)
+            {
+                // ImageBlock anchor paragraph 찾아서 제거
+                foreach (var block in BodyEditor.Document.Blocks.ToList())
+                {
+                    if (ReferenceEquals(block.Tag, img))
+                    {
+                        BodyEditor.Document.Blocks.Remove(block);
+                        break;
+                    }
+                }
+                RebuildOverlayImages();
+            }
+            else if (fe.Tag is PolyDonky.Core.Table tbl)
+            {
+                foreach (var block in BodyEditor.Document.Blocks.ToList())
+                {
+                    if (ReferenceEquals(block.Tag, tbl))
+                    {
+                        BodyEditor.Document.Blocks.Remove(block);
+                        break;
+                    }
+                }
+                RebuildOverlayTables();
+            }
+        }
+
+        // 본문 텍스트 선택도 삭제
+        if (!BodyEditor.Selection.IsEmpty)
+            BodyEditor.Selection.Text = string.Empty;
+
+        _viewModel?.MarkDirty();
+        BodyEditor.Focus();
+    }
+
+    /// <summary>
+    /// 멀티-선택된 모든 개체(오버레이 이미지/도형/표/글상자 + 본문 텍스트)를
+    /// PolyDonky.FlowSelection.v1 포맷으로 클립보드에 저장한다.
+    /// </summary>
+    private bool CopyMultiSelectedToClipboard()
+    {
+        var blocks = new List<PolyDonky.Core.Block>();
+
+        // 오버레이 개체: Tag 에서 Core.Block 추출 (TextBoxOverlay 는 FloatingObject 라 스킵)
+        foreach (var fe in _multiSelectedControls)
+        {
+            PolyDonky.Core.Block? coreBlock = fe.Tag switch
+            {
+                PolyDonky.Core.ImageBlock  img   => img,
+                PolyDonky.Core.ShapeObject shape => shape,
+                PolyDonky.Core.Table       tbl   => tbl,
+                _                                => null,
+            };
+            if (coreBlock is null) continue;
+            try
+            {
+                var jsonClone = System.Text.Json.JsonSerializer.Serialize(coreBlock, PolyDonky.Core.JsonDefaults.Options);
+                var clone = System.Text.Json.JsonSerializer.Deserialize<PolyDonky.Core.Block>(jsonClone, PolyDonky.Core.JsonDefaults.Options);
+                if (clone != null) { ResetCoreBlockId(clone); blocks.Add(clone); }
+            }
+            catch { }
+        }
+
+        // 본문 텍스트 선택도 포함
+        if (!BodyEditor.Selection.IsEmpty)
+        {
+            var textBlocks = ExtractCoreSelection();
+            foreach (var b in textBlocks) { ResetCoreBlockId(b); blocks.Add(b); }
+        }
+
+        // TextBoxOverlay 는 FloatingObject — 별도 슬롯으로 저장
+        var floatingOverlays = _multiSelectedControls.OfType<TextBoxOverlay>().ToList();
+
+        if (blocks.Count == 0 && floatingOverlays.Count == 0) return false;
+
+        var json = System.Text.Json.JsonSerializer.Serialize(blocks, PolyDonky.Core.JsonDefaults.Options);
+        var dataObj = new DataObject();
+        dataObj.SetData(FlowSelectionClipboardFormat, json);
+
+        if (floatingOverlays.Count == 1)
+        {
+            var tbJson = System.Text.Json.JsonSerializer.Serialize<FloatingObject>(
+                floatingOverlays[0].Model, PolyDonky.Core.JsonDefaults.Options);
+            dataObj.SetData(FloatingObjectClipboardFormat, tbJson);
+        }
+
+        // plain-text 폴백
+        var plainParts = blocks.OfType<PolyDonky.Core.Paragraph>().Select(p => p.GetPlainText())
+            .Concat(floatingOverlays.Select(o => o.Model.GetPlainText()));
+        dataObj.SetText(string.Join('\n', plainParts));
+
+        Clipboard.SetDataObject(dataObj, copy: true);
+        return true;
     }
 
 }
