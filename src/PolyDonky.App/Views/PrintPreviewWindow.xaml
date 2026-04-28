@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:svc="clr-namespace:PolyDonky.App.Services"
         Title="{Binding MenuFilePreview, Source={x:Static svc:LocalizedStrings.Instance}}"
-        Width="960" Height="720"
-        MinWidth="640" MinHeight="480"
+        Width="1120" Height="720"
+        MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Icon="pack://application:,,,/Assets/PolyDonky.ico"
@@ -84,37 +84,179 @@
             </DockPanel>
         </Border>
 
-        <!-- DocumentViewer — 기본 툴바는 숨기고 뷰어만 사용 -->
-        <DocumentViewer x:Name="PreviewViewer"
-                        Grid.Row="1">
-            <DocumentViewer.Style>
-                <Style TargetType="DocumentViewer">
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="DocumentViewer">
-                                <Border Background="#FF404040">
-                                    <ScrollViewer x:Name="PART_ContentHost"
-                                                  CanContentScroll="True"
-                                                  HorizontalScrollBarVisibility="Auto"
-                                                  VerticalScrollBarVisibility="Auto" />
-                                </Border>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                </Style>
-            </DocumentViewer.Style>
-        </DocumentViewer>
+        <!-- 콘텐츠 영역: 설정 패널 + 뷰어 -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" MinWidth="160" MaxWidth="320"/>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-        <!-- 생성 중 스피너 -->
-        <Border x:Name="LoadingOverlay"
-                Grid.Row="1"
-                Background="{DynamicResource Surface}"
-                Visibility="Visible">
-            <TextBlock Text="미리보기 생성 중..."
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"
-                       Foreground="{DynamicResource OnSurfaceMuted}"
-                       FontSize="14" />
-        </Border>
+            <!-- ── 좌측 인쇄 설정 패널 ── -->
+            <Border Grid.Column="0"
+                    Background="{DynamicResource Surface}"
+                    BorderBrush="{DynamicResource Outline}"
+                    BorderThickness="0,0,1,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="12,14,12,14">
+
+                        <!-- 용지 섹션 -->
+                        <TextBlock Text="용지"
+                                   FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{DynamicResource OnSurface}"
+                                   Margin="0,0,0,8"/>
+
+                        <TextBlock Text="크기"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <ComboBox x:Name="PaperSizeCombo"
+                                  Height="26" FontSize="12"
+                                  Margin="0,0,0,10"
+                                  SelectionChanged="OnPaperSizeChanged">
+                            <ComboBoxItem Tag="Default" Content="문서 기본값"  IsSelected="True"/>
+                            <ComboBoxItem Tag="A4"      Content="A4  (210 × 297 mm)"/>
+                            <ComboBoxItem Tag="A3"      Content="A3  (297 × 420 mm)"/>
+                            <ComboBoxItem Tag="A5"      Content="A5  (148 × 210 mm)"/>
+                            <ComboBoxItem Tag="B5_JIS"  Content="B5  (182 × 257 mm)"/>
+                            <ComboBoxItem Tag="B4_JIS"  Content="B4  (257 × 364 mm)"/>
+                            <ComboBoxItem Tag="Letter"  Content="Letter  (215.9 × 279.4 mm)"/>
+                            <ComboBoxItem Tag="Legal"   Content="Legal  (215.9 × 355.6 mm)"/>
+                        </ComboBox>
+
+                        <TextBlock Text="방향"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <RadioButton x:Name="PortraitRadio"
+                                         Content="세로" FontSize="12"
+                                         IsChecked="True"
+                                         GroupName="Orientation"
+                                         Margin="0,0,16,0"
+                                         Checked="OnOrientationChanged"/>
+                            <RadioButton x:Name="LandscapeRadio"
+                                         Content="가로" FontSize="12"
+                                         GroupName="Orientation"
+                                         Checked="OnOrientationChanged"/>
+                        </StackPanel>
+
+                        <TextBlock Text="여백"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <ComboBox x:Name="MarginPresetCombo"
+                                  Height="26" FontSize="12"
+                                  Margin="0,0,0,0"
+                                  SelectionChanged="OnMarginPresetChanged">
+                            <ComboBoxItem Tag="Default" Content="문서 기본값"  IsSelected="True"/>
+                            <ComboBoxItem Tag="Normal"  Content="보통  (25 mm)"/>
+                            <ComboBoxItem Tag="Narrow"  Content="좁게  (12.7 mm)"/>
+                            <ComboBoxItem Tag="Wide"    Content="넓게  (38.1 mm)"/>
+                            <ComboBoxItem Tag="None"    Content="여백 없음"/>
+                        </ComboBox>
+
+                        <Separator Margin="0,14,0,14"
+                                   Background="{DynamicResource Outline}"/>
+
+                        <!-- 인쇄 섹션 -->
+                        <TextBlock Text="인쇄"
+                                   FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{DynamicResource OnSurface}"
+                                   Margin="0,0,0,8"/>
+
+                        <TextBlock Text="색상"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <RadioButton x:Name="ColorRadio"
+                                         Content="컬러" FontSize="12"
+                                         IsChecked="True"
+                                         GroupName="ColorMode"
+                                         Margin="0,0,16,0"
+                                         Checked="OnColorModeChanged"/>
+                            <RadioButton x:Name="MonoRadio"
+                                         Content="흑백" FontSize="12"
+                                         GroupName="ColorMode"
+                                         Checked="OnColorModeChanged"/>
+                        </StackPanel>
+
+                        <TextBlock Text="매수"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="26"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="CopiesBox"
+                                     Grid.Column="0"
+                                     Height="26" FontSize="12"
+                                     Text="1"
+                                     TextAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     PreviewTextInput="OnCopiesPreviewInput"/>
+                            <Grid Grid.Column="1" Margin="2,0,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Button Grid.Row="0"
+                                        Content="▲" FontSize="7" Padding="0"
+                                        Click="OnCopiesUp"/>
+                                <Button Grid.Row="1"
+                                        Content="▼" FontSize="7" Padding="0"
+                                        Click="OnCopiesDown"/>
+                            </Grid>
+                        </Grid>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- GridSplitter -->
+            <GridSplitter Grid.Column="1"
+                          Width="4"
+                          HorizontalAlignment="Stretch"
+                          Background="{DynamicResource Outline}"
+                          Cursor="SizeWE"/>
+
+            <!-- DocumentViewer — 기본 툴바는 숨기고 뷰어만 사용 -->
+            <DocumentViewer x:Name="PreviewViewer"
+                            Grid.Column="2">
+                <DocumentViewer.Style>
+                    <Style TargetType="DocumentViewer">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="DocumentViewer">
+                                    <Border Background="#FF404040">
+                                        <ScrollViewer x:Name="PART_ContentHost"
+                                                      CanContentScroll="True"
+                                                      HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Auto" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </DocumentViewer.Style>
+            </DocumentViewer>
+
+            <!-- 생성 중 오버레이 -->
+            <Border x:Name="LoadingOverlay"
+                    Grid.Column="2"
+                    Background="{DynamicResource Surface}"
+                    Visibility="Visible">
+                <TextBlock x:Name="LoadingText"
+                           Text="미리보기 생성 중..."
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
+                           FontSize="14" />
+            </Border>
+        </Grid>
     </Grid>
 </Window>
