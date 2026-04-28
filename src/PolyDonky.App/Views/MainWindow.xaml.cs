@@ -515,7 +515,8 @@ public partial class MainWindow : Window
             ? vm2.Document.OutlineStyles
             : PolyDonky.Core.OutlineStyleSet.CreateDefault();
         var dlg = new OutlineStyleWindow(current) { Owner = this };
-        dlg.StyleApplied += (_, styleSet) => _viewModel?.ApplyOutlineStyles(styleSet);
+        // live FlowDocument 를 함께 전달해 재빌드 전 모델 동기화 — 편집 중 이미지·글상자 손실 방지.
+        dlg.StyleApplied += (_, styleSet) => _viewModel?.ApplyOutlineStyles(styleSet, BodyEditor.Document);
         dlg.ShowDialog();
     }
 
@@ -578,7 +579,10 @@ public partial class MainWindow : Window
         {
             if (_viewModel?.Document.Sections.FirstOrDefault() is { } section)
                 section.Page = dlg.ResultSettings;
-            _viewModel?.RebuildFlowDocument();
+            // PageSettings 는 FlowDocument 블록 내용과 무관하다 (종이 크기·여백·배경색만 바뀜).
+            // RebuildFlowDocument() 로 전체 재구성하면 저장 이후 편집한 이미지·글상자를 잃으므로
+            // 레이아웃 속성만 직접 갱신한다.
+            ApplyPageSettings(dlg.ResultSettings);
             _viewModel?.MarkDirty();
         }
     }

@@ -547,9 +547,13 @@ public partial class MainViewModel : ObservableObject
 
     public event EventHandler? OutlineStyleRequested;
 
-    /// <summary>개요 서식 적용. OutlineStyleWindow 가 OK 시 호출해 문서에 반영하고 FlowDocument 재빌드.</summary>
-    public void ApplyOutlineStyles(PolyDonky.Core.OutlineStyleSet styleSet)
+    /// <summary>
+    /// 개요 서식 적용. live FlowDocument 를 먼저 _document 에 동기화해
+    /// 저장 이후 편집한 이미지·글상자를 보존한 뒤 재빌드한다.
+    /// </summary>
+    public void ApplyOutlineStyles(PolyDonky.Core.OutlineStyleSet styleSet, Wpf.FlowDocument liveDoc)
     {
+        _document = FlowDocumentParser.Parse(liveDoc, _document);
         _document.OutlineStyles = styleSet;
         RebuildFlowDocument();
     }
@@ -603,8 +607,11 @@ public partial class MainViewModel : ObservableObject
     /// <summary>드래그/리사이즈/본문 편집 변경 시 View 가 호출.</summary>
     public void NotifyFloatingObjectChanged() => MarkDirty();
 
-    /// <summary>PageSettings 변경 후 FlowDocument 를 재빌드해 화면에 반영한다.</summary>
-    public void RebuildFlowDocument()
+    /// <summary>
+    /// _document 로부터 FlowDocument 를 재빌드한다. 호출 전 반드시 _document 가 최신 상태여야 한다.
+    /// 편집 중 그림·글상자를 잃지 않으려면 먼저 live FlowDocument 를 Parse 해 _document 를 동기화할 것.
+    /// </summary>
+    private void RebuildFlowDocument()
     {
         _suppressDirty = true;
         FlowDocument = FlowDocumentBuilder.Build(_document);
