@@ -64,6 +64,99 @@ public static class FlowDocumentParser
         return bucket.FirstOrDefault();
     }
 
+    /// <summary>
+    /// 단락을 [clipStart, clipEnd] 선택 범위로 잘라 파싱한다.
+    /// Run 은 범위 내 글자만 추출하고, InlineUIContainer / Floater 등 내장 객체는
+    /// 범위 내에 있으면 회피 없이 그대로 포함한다.
+    /// </summary>
+    public static Paragraph ParseParagraphClipped(
+        Wpf.Paragraph wpfPara,
+        Wpf.TextPointer clipStart,
+        Wpf.TextPointer clipEnd)
+    {
+        var p = wpfPara.Tag is Paragraph orig ? CloneShallow(orig) : new Paragraph();
+        p.Runs.Clear();
+        p.Style.ListMarker = null;
+
+        p.Style.Alignment = wpfPara.TextAlignment switch
+        {
+            TextAlignment.Center  => Alignment.Center,
+            TextAlignment.Right   => Alignment.Right,
+            TextAlignment.Justify => Alignment.Justify,
+            _                     => Alignment.Left,
+        };
+
+        if (wpfPara.Tag is Paragraph tagged && tagged.Style.Outline > OutlineLevel.Body)
+            p.Style.Outline = tagged.Style.Outline;
+        else
+            p.Style.Outline = InferHeadingFromFontSize(wpfPara.FontSize);
+
+        if (wpfPara.Tag is Paragraph baseP)
+        {
+            p.Style.IndentFirstLineMm  = baseP.Style.IndentFirstLineMm;
+            p.Style.IndentLeftMm       = baseP.Style.IndentLeftMm;
+            p.Style.IndentRightMm      = baseP.Style.IndentRightMm;
+            p.Style.SpaceBeforePt      = baseP.Style.SpaceBeforePt;
+            p.Style.SpaceAfterPt       = baseP.Style.SpaceAfterPt;
+            p.Style.LineHeightFactor   = baseP.Style.LineHeightFactor;
+        }
+
+        foreach (var inline in wpfPara.Inlines)
+            ParseInlineClipped(p, inline, new RunStyle(), clipStart, clipEnd);
+
+        if (p.Runs.Count == 0) p.AddText(string.Empty);
+        return p;
+    }
+
+    private static void ParseInlineClipped(
+        Paragraph p, Wpf.Inline inline, RunStyle baseStyle,
+        Wpf.TextPointer clipStart, Wpf.TextPointer clipEnd)
+    {
+        // 이 Inline 이 선택 범위 밖이면 건너뜀
+        if (inline.ContentEnd.CompareTo(clipStart) <= 0) return;
+        if (inline.ContentStart.CompareTo(clipEnd) >= 0) return;
+
+        switch (inline)
+        {
+            case Wpf.Run r:
+            {
+                var effStart = r.ContentStart.CompareTo(clipStart) < 0 ? clipStart : r.ContentStart;
+                var effEnd   = r.ContentEnd.CompareTo(clipEnd)     > 0 ? clipEnd   : r.ContentEnd;
+                var text = new Wpf.TextRange(effStart, effEnd).Text;
+                if (string.IsNullOrEmpty(text)) return;
+                var seed = r.Tag is Run original ? Clone(original.Style) : Clone(baseStyle);
+                ExtractRunStyle(r, seed);
+                p.AddText(text, seed);
+                break;
+            }
+            case Wpf.Span span:
+            {
+                // per-char Span (자간·글자폭) — 선택 범위 교차 텍스트만 잘라냄
+                if (span.Tag is Run spanRun && TryMergePerCharSpan(span, spanRun, out _))
+                {
+                    var effStart = span.ContentStart.CompareTo(clipStart) < 0 ? clipStart : span.ContentStart;
+                    var effEnd   = span.ContentEnd.CompareTo(clipEnd)     > 0 ? clipEnd   : span.ContentEnd;
+                    var clipped  = new Wpf.TextRange(effStart, effEnd).Text;
+                    if (!string.IsNullOrEmpty(clipped)) p.AddText(clipped, Clone(spanRun.Style));
+                    break;
+                }
+                var spanStyle = Clone(baseStyle);
+                MergeInlineProperties(spanStyle, span);
+                foreach (var child in span.Inlines)
+                    ParseInlineClipped(p, child, spanStyle, clipStart, clipEnd);
+                break;
+            }
+            case Wpf.LineBreak:
+                p.AddText("\n", Clone(baseStyle));
+                break;
+            default:
+                // InlineUIContainer(이미지·수식·이모지), Floater(WrapLeft/WrapRight 이미지·도형) 등
+                // 선택 범위 내에 있으면 회피 없이 그대로 포함
+                ParseInline(p, inline, baseStyle);
+                break;
+        }
+    }
+
     private static void ParseInto(IList<Block> target, IEnumerable<Wpf.Block> blocks)
     {
         foreach (var block in blocks)

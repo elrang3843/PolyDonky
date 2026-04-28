@@ -398,18 +398,11 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// 본문 선택 영역을 Core.Block 리스트로 추출해 PolyDonky.FlowSelection.v1 포맷으로 클립보드에 저장.
-    /// 텍스트만 포함된 단일 단락 내부 부분 선택은 기존 WPF 기본 동작에 양보 (return false).
-    /// </summary>
+    /// <summary>본문 선택 영역을 Core.Block 리스트로 추출해 PolyDonky.FlowSelection.v1 포맷으로 클립보드에 저장.</summary>
     private bool TryCopyFlowSelection(bool cut)
     {
         var sel = BodyEditor.Selection;
         if (sel.IsEmpty) return false;
-
-        // 순수 텍스트 선택(특수 객체 미포함)은 WPF 기본 복사에 양보 — 우리 경로는 Block 단위로
-        // 동작하므로 단락 부분 선택이라도 단락 전체를 복제해 사용자 의도와 어긋난다.
-        if (!SelectionHasSpecialObject(sel)) return false;
 
         var coreBlocks = ExtractCoreSelection();
         if (coreBlocks.Count == 0) return false;
@@ -459,9 +452,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// PolyDonky.FlowSelection.v1 클립보드 데이터를 캐럿 위치에 붙여넣는다.
-    /// FlowDocumentBuilder 가 모든 Tag 를 다시 부착하므로 우클릭 메뉴·저장이 즉시 정상 동작.
-    /// </summary>
+    /// PolyDonky.FlowSelection.v1 클립보드 데이터를 캐럿 위치에 붙여넣는다.</summary>
     private bool TryPasteFlowSelection()
     {
         if (!System.Windows.Clipboard.ContainsData(FlowSelectionClipboardFormat)) return false;
@@ -474,29 +465,29 @@ public partial class MainWindow : Window
             blocks = System.Text.Json.JsonSerializer.Deserialize<List<PolyDonky.Core.Block>>(
                 json, PolyDonky.Core.JsonDefaults.Options);
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
         if (blocks is null || blocks.Count == 0) return false;
 
-        // 새 인스턴스 표시 — ID 재발급 + Modified
         foreach (var b in blocks) ResetCoreBlockId(b);
 
-        // 선택이 있으면 우선 비우고 캐럿 위치 확보
         if (!BodyEditor.Selection.IsEmpty) BodyEditor.Selection.Text = string.Empty;
         var caret = BodyEditor.CaretPosition;
-        var doc = BodyEditor.Document;
 
-        // 캐럿이 속한 최상위 Block 을 앵커로 — 그 뒤에 차례로 삽입.
+        // 단일 단락 콘텐츠 → 캐럿 위치에 인라인 삽입 (새 단락 블록 생성 않음)
+        if (blocks.Count == 1 && blocks[0] is PolyDonky.Core.Paragraph singlePara)
+        {
+            InsertParagraphInline(singlePara, caret);
+            _viewModel?.MarkDirty();
+            return true;
+        }
+
+        // 복수 블록 또는 표·이미지·도형 — 앵커 뒤에 새 Block 으로 삽입
+        var doc = BodyEditor.Document;
         System.Windows.Documents.Block? anchor = null;
         foreach (var b in doc.Blocks)
         {
             if (b.ContentStart.CompareTo(caret) <= 0 && caret.CompareTo(b.ContentEnd) <= 0)
-            {
-                anchor = b;
-                break;
-            }
+            { anchor = b; break; }
         }
 
         bool hasOverlay = false;
@@ -504,66 +495,99 @@ public partial class MainWindow : Window
         {
             var wpfBlock = BuildWpfBlockFromCore(coreBlock);
             if (wpfBlock is null) continue;
-            if (anchor is null)
-            {
-                doc.Blocks.Add(wpfBlock);
-            }
-            else
-            {
-                doc.Blocks.InsertAfter(anchor, wpfBlock);
-                anchor = wpfBlock;
-            }
+            if (anchor is null) doc.Blocks.Add(wpfBlock);
+            else { doc.Blocks.InsertAfter(anchor, wpfBlock); anchor = wpfBlock; }
 
-            // 오버레이 객체가 포함된 경우 붙여넣기 후 캔버스도 재구축해야 한다.
             if (coreBlock is PolyDonky.Core.Table { WrapMode: not PolyDonky.Core.TableWrapMode.Block }
                 || coreBlock is PolyDonky.Core.ImageBlock { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText }
                 || coreBlock is PolyDonky.Core.ShapeObject { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText })
                 hasOverlay = true;
         }
 
-        if (hasOverlay)
-        {
-            RebuildOverlayImages();
-            RebuildOverlayShapes();
-            RebuildOverlayTables();
-        }
-
+        if (hasOverlay) { RebuildOverlayImages(); RebuildOverlayShapes(); RebuildOverlayTables(); }
         _viewModel?.MarkDirty();
         return true;
     }
 
     /// <summary>
-    /// 선택 영역이 특수 객체(표·이미지·도형) 를 포함하는지 검사.
-    /// 포함되지 않으면 우리 커스텀 클립보드 경로를 쓸 필요가 없고(Block 단위 복제로 단락이
-    /// 통째로 복사되는 부작용), WPF 기본 텍스트 복사가 정확하게 처리한다.
+    /// Core.Paragraph 의 Inline 들을 캐럿 위치 단락에 인라인으로 삽입한다.
+    /// 캐럿이 Run 중간에 있으면 그 Run 을 분리하고 사이에 삽입한다.
     /// </summary>
-    private bool SelectionHasSpecialObject(System.Windows.Documents.TextSelection sel)
+    private void InsertParagraphInline(PolyDonky.Core.Paragraph corePara,
+        System.Windows.Documents.TextPointer caretPos)
     {
-        foreach (var block in BodyEditor.Document.Blocks)
+        var tempPara = Services.FlowDocumentBuilder.BuildParagraph(corePara);
+        var inlines = tempPara.Inlines.ToList();
+        foreach (var il in inlines.ToArray()) tempPara.Inlines.Remove(il);  // parent 분리
+
+        var insertPos  = caretPos.GetInsertionPosition(System.Windows.Documents.LogicalDirection.Forward);
+        var targetPara = insertPos.Paragraph;
+
+        if (targetPara is null)
         {
-            if (block.ContentEnd.CompareTo(sel.Start) <= 0) continue;
-            if (block.ContentStart.CompareTo(sel.End) >= 0) break;
-
-            // 본문 흐름 표
-            if (block is System.Windows.Documents.Table) return true;
-            // 인라인 이미지/도형 (Inline 모드 BlockUIContainer)
-            if (block is System.Windows.Documents.BlockUIContainer) return true;
-            // 오버레이 표/이미지/도형 (앵커 단락) 또는 WrapLeft/WrapRight 이미지·도형 (Floater 단락)
-            if (block.Tag is PolyDonky.Core.Table)        return true;
-            if (block.Tag is PolyDonky.Core.ImageBlock)   return true;
-            if (block.Tag is PolyDonky.Core.ShapeObject)  return true;
-
-            // Paragraph 내부에 InlineUIContainer (AsText 모드 이미지) 가 있는 경우
-            if (block is System.Windows.Documents.Paragraph para)
-            {
-                foreach (var inline in para.Inlines)
-                {
-                    if (inline is System.Windows.Documents.InlineUIContainer) return true;
-                    if (inline is System.Windows.Documents.Floater)           return true;
-                }
-            }
+            string plain = string.Concat(corePara.Runs.Select(r => r.Text));
+            if (!string.IsNullOrEmpty(plain)) insertPos.InsertTextInRun(plain);
+            return;
         }
-        return false;
+
+        System.Windows.Documents.Run? splitRun = null;
+        int splitOffset = 0;
+        System.Windows.Documents.Inline? insertAfter = null;
+
+        foreach (var il in targetPara.Inlines)
+        {
+            if (il.ContentEnd.CompareTo(insertPos) <= 0) { insertAfter = il; continue; }
+            if (il.ContentStart.CompareTo(insertPos) >= 0) break;
+            if (il is System.Windows.Documents.Run r)
+            {
+                splitOffset = new System.Windows.Documents.TextRange(r.ContentStart, insertPos).Text.Length;
+                if (splitOffset > 0 && splitOffset < r.Text.Length)
+                    splitRun = r;
+                else
+                    insertAfter = splitOffset == 0 ? null : (System.Windows.Documents.Inline)r;
+            }
+            break;
+        }
+
+        if (splitRun != null)
+        {
+            var before = CloneWpfRun(splitRun, splitRun.Text[..splitOffset]);
+            var after  = CloneWpfRun(splitRun, splitRun.Text[splitOffset..]);
+            targetPara.Inlines.InsertBefore(splitRun, before);
+            foreach (var il in inlines) targetPara.Inlines.InsertBefore(splitRun, il);
+            targetPara.Inlines.InsertBefore(splitRun, after);
+            targetPara.Inlines.Remove(splitRun);
+        }
+        else if (insertAfter != null)
+        {
+            foreach (var il in Enumerable.Reverse(inlines))
+                targetPara.Inlines.InsertAfter(insertAfter, il);
+        }
+        else
+        {
+            var first = targetPara.Inlines.FirstInline;
+            if (first != null)
+                foreach (var il in Enumerable.Reverse(inlines)) targetPara.Inlines.InsertBefore(first, il);
+            else
+                foreach (var il in inlines) targetPara.Inlines.Add(il);
+        }
+    }
+
+    private static System.Windows.Documents.Run CloneWpfRun(System.Windows.Documents.Run src, string text)
+    {
+        var r = new System.Windows.Documents.Run(text)
+        {
+            FontFamily        = src.FontFamily,
+            FontSize          = src.FontSize,
+            FontWeight        = src.FontWeight,
+            FontStyle         = src.FontStyle,
+            Foreground        = src.Foreground,
+            Background        = src.Background,
+            BaselineAlignment = src.BaselineAlignment,
+            Tag               = src.Tag,
+        };
+        foreach (var td in src.TextDecorations) r.TextDecorations.Add(td);
+        return r;
     }
 
     /// <summary>BodyEditor.Selection 영역에 걸쳐 있는 모든 Block 을 Core.Block 으로 추출해 깊은 복사.</summary>
@@ -575,29 +599,41 @@ public partial class MainWindow : Window
 
         foreach (var block in BodyEditor.Document.Blocks)
         {
-            // Block 이 selection 범위와 겹치는지: end > sel.Start && start < sel.End
             if (block.ContentEnd.CompareTo(sel.Start) <= 0) continue;
             if (block.ContentStart.CompareTo(sel.End) >= 0) break;
 
-            // 표는 Tag 미부착(붙여넣기 직후 등) 이어도 EnsureCoreTable 로 즉석 부착.
             if (block is System.Windows.Documents.Table wpfTable)
-            {
                 EnsureCoreTable(wpfTable);
+
+            PolyDonky.Core.Block? core;
+
+            // 일반 Paragraph 가 선택 범위를 부분적으로 덮는 경우 → 선택된 Run/Inline 만 추출.
+            // 오버레이 앵커 단락(Tag = Table/ImageBlock/ShapeObject) 은 통째로 추출.
+            if (block is System.Windows.Documents.Paragraph wpfPara
+                && block.Tag is not PolyDonky.Core.Table
+                && block.Tag is not PolyDonky.Core.ImageBlock
+                && block.Tag is not PolyDonky.Core.ShapeObject)
+            {
+                bool clippedAtStart = block.ContentStart.CompareTo(sel.Start) < 0;
+                bool clippedAtEnd   = block.ContentEnd.CompareTo(sel.End)     > 0;
+                core = (clippedAtStart || clippedAtEnd)
+                    ? PolyDonky.App.Services.FlowDocumentParser.ParseParagraphClipped(wpfPara, sel.Start, sel.End)
+                    : PolyDonky.App.Services.FlowDocumentParser.ParseSingleBlock(block);
+            }
+            else
+            {
+                core = PolyDonky.App.Services.FlowDocumentParser.ParseSingleBlock(block);
             }
 
-            var core = PolyDonky.App.Services.FlowDocumentParser.ParseSingleBlock(block);
             if (core is null) continue;
 
-            // 깊은 복사 — 원본 인스턴스를 건드리지 않게 JSON round-trip.
             try
             {
-                var jsonClone = System.Text.Json.JsonSerializer.Serialize(
-                    core, PolyDonky.Core.JsonDefaults.Options);
-                var clone = System.Text.Json.JsonSerializer.Deserialize<PolyDonky.Core.Block>(
-                    jsonClone, PolyDonky.Core.JsonDefaults.Options);
+                var jsonClone = System.Text.Json.JsonSerializer.Serialize(core, PolyDonky.Core.JsonDefaults.Options);
+                var clone = System.Text.Json.JsonSerializer.Deserialize<PolyDonky.Core.Block>(jsonClone, PolyDonky.Core.JsonDefaults.Options);
                 if (clone != null) result.Add(clone);
             }
-            catch { /* 직렬화 실패한 블록은 건너뜀 */ }
+            catch { }
         }
 
         return result;
