@@ -165,7 +165,7 @@ public static class FlowDocumentBuilder
         }
     }
 
-    private static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null)
+    internal static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null)
     {
         var wtable = new Wpf.Table { CellSpacing = 0 };
         foreach (var col in table.Columns)
@@ -179,9 +179,15 @@ public static class FlowDocumentBuilder
         var rowGroup = new Wpf.TableRowGroup();
         wtable.RowGroups.Add(rowGroup);
 
+        var headerBrush = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xE8, 0xEA, 0xED));
+        headerBrush.Freeze();
+
         foreach (var row in table.Rows)
         {
             var wrow = new Wpf.TableRow();
+            if (row.IsHeader)
+                wrow.Background = headerBrush;
+
             foreach (var cell in row.Cells)
             {
                 var wcell = new Wpf.TableCell
@@ -192,6 +198,8 @@ public static class FlowDocumentBuilder
                     ColumnSpan = Math.Max(cell.ColumnSpan, 1),
                     RowSpan = Math.Max(cell.RowSpan, 1),
                 };
+                if (row.IsHeader)
+                    wcell.FontWeight = FontWeights.SemiBold;
                 AppendBlocks(wcell.Blocks, cell.Blocks, outlineStyles);
                 if (wcell.Blocks.Count == 0)
                 {

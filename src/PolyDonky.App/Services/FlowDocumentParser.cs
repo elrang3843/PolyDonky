@@ -143,7 +143,7 @@ public static class FlowDocumentParser
         {
             var wpfRow = rowGroup.Rows[rowIndex];
             var origRow = (wpfTable.Tag is Table o && rowIndex < o.Rows.Count) ? o.Rows[rowIndex] : null;
-            var row = new TableRow { HeightMm = origRow?.HeightMm ?? 0 };
+            var row = new TableRow { HeightMm = origRow?.HeightMm ?? 0, IsHeader = origRow?.IsHeader ?? false };
 
             for (int cellIndex = 0; cellIndex < wpfRow.Cells.Count; cellIndex++)
             {

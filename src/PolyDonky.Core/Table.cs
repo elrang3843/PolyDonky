@@ -22,6 +22,8 @@ public sealed class TableRow
     public IList<TableCell> Cells { get; set; } = new List<TableCell>();
     /// <summary>0 이하면 자동 높이.</summary>
     public double HeightMm { get; set; }
+    /// <summary>머리글 행 여부. true 이면 렌더러가 배경색·굵기를 강조해 표시한다.</summary>
+    public bool IsHeader { get; set; }
 }
 
 public sealed class TableCell

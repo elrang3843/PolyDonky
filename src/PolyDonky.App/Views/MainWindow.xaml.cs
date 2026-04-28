@@ -742,6 +742,46 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnInsertTable(object sender, RoutedEventArgs e)
+    {
+        var dlg = new TableInsertDialog { Owner = this };
+        if (dlg.ShowDialog() != true || dlg.ResultTable is null) return;
+        InsertTableBlock(BodyEditor, dlg.ResultTable);
+        _viewModel?.MarkDirty();
+        BodyEditor.Focus();
+    }
+
+    private static void InsertTableBlock(RichTextBox editor, PolyDonky.Core.Table table)
+    {
+        var wpfTable = PolyDonky.App.Services.FlowDocumentBuilder.BuildTable(table);
+        var flowDoc  = editor.Document;
+
+        // 캐럿이 속한 최상위 Block 바로 뒤에 표를 삽입한다.
+        System.Windows.Documents.Block? current = null;
+        var pos = editor.CaretPosition;
+        if (pos.Paragraph is { } para)
+        {
+            foreach (var b in flowDoc.Blocks)
+                if (b == para) { current = para; break; }
+        }
+        if (current is null)
+        {
+            foreach (var b in flowDoc.Blocks)
+            {
+                if (b.ContentStart.CompareTo(pos) <= 0 && pos.CompareTo(b.ContentEnd) <= 0)
+                { current = b; break; }
+            }
+        }
+
+        if (current is not null)
+            flowDoc.Blocks.InsertAfter(current, wpfTable);
+        else
+            flowDoc.Blocks.Add(wpfTable);
+
+        try { editor.CaretPosition = wpfTable.ContentEnd; }
+        catch { /* 포지션 이동 실패는 무시 */ }
+    }
+
     private void OnInsertImage(object sender, RoutedEventArgs e)
     {
         // 그림은 블록 단위 삽입 — 본문 편집기에만 삽입하고 글상자 안은 지원하지 않는다.

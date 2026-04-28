@@ -84,7 +84,8 @@
                     <MenuItem Header="타원(_E)"     Command="{Binding InsertTextBoxCommand}" CommandParameter="Ellipse" />
                     <MenuItem Header="파이(_I)"     Command="{Binding InsertTextBoxCommand}" CommandParameter="Pie" />
                 </MenuItem>
-                <MenuItem Header="{Binding MenuInsertTable, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuInsertTable, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertTable" />
                 <MenuItem Header="{Binding MenuInsertGraph, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
                 <MenuItem Header="{Binding MenuInsertSpecialChar, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertSpecialChar" />
