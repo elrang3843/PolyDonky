@@ -1,0 +1,236 @@
+<Window x:Class="PolyDonky.App.Views.ShapePropertiesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="도형 속성"
+        Width="480" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="{DynamicResource UiFont}"
+        Background="{DynamicResource Surface}"
+        Foreground="{DynamicResource OnSurface}">
+    <DockPanel Margin="16">
+
+        <!-- 확인/취소 버튼 -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="BtnOk" Content="확인" IsDefault="True"
+                    Width="80" Margin="0,0,8,0" Click="OnOk" />
+            <Button Content="취소" IsCancel="True" Width="80" />
+        </StackPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <!-- 배치 모드 -->
+                <GroupBox Header="배치 방식" Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Label Grid.Row="0" Grid.Column="0" Content="배치:" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CboWrapMode" Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3"
+                                  Margin="4,2" VerticalAlignment="Center">
+                            <ComboBoxItem Tag="Inline">본문 흐름 (블록)</ComboBoxItem>
+                            <ComboBoxItem Tag="WrapLeft">왼쪽 배치 (텍스트 오른쪽으로)</ComboBoxItem>
+                            <ComboBoxItem Tag="WrapRight">오른쪽 배치 (텍스트 왼쪽으로)</ComboBoxItem>
+                            <ComboBoxItem Tag="InFrontOfText">텍스트 위</ComboBoxItem>
+                            <ComboBoxItem Tag="BehindText">텍스트 뒤</ComboBoxItem>
+                        </ComboBox>
+
+                        <Label Grid.Row="1" Grid.Column="0" Content="정렬:" VerticalAlignment="Center"
+                               x:Name="LblHAlign" />
+                        <ComboBox x:Name="CboHAlign" Grid.Row="1" Grid.Column="1"
+                                  Margin="4,2" VerticalAlignment="Center">
+                            <ComboBoxItem Tag="Left">왼쪽</ComboBoxItem>
+                            <ComboBoxItem Tag="Center">가운데</ComboBoxItem>
+                            <ComboBoxItem Tag="Right">오른쪽</ComboBoxItem>
+                        </ComboBox>
+                    </Grid>
+                </GroupBox>
+
+                <!-- 크기 -->
+                <GroupBox Header="크기" Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <Label Grid.Column="0" Content="너비 (mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtWidth" Grid.Column="1" Margin="4,2" Width="70" />
+                        <Label Grid.Column="2" Content="높이 (mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtHeight" Grid.Column="3" Margin="4,2" Width="70" />
+                    </Grid>
+                </GroupBox>
+
+                <!-- 오버레이 위치 -->
+                <GroupBox Header="오버레이 위치 (텍스트 위/뒤 모드에서만)" x:Name="GrpOverlay"
+                          Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <Label Grid.Column="0" Content="X (mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtOverlayX" Grid.Column="1" Margin="4,2" Width="70" />
+                        <Label Grid.Column="2" Content="Y (mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtOverlayY" Grid.Column="3" Margin="4,2" Width="70" />
+                    </Grid>
+                </GroupBox>
+
+                <!-- 선 속성 -->
+                <GroupBox Header="선" Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Label Grid.Row="0" Grid.Column="0" Content="색상 (hex):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtStrokeColor" Grid.Row="0" Grid.Column="1" Margin="4,2" />
+                        <Label Grid.Row="0" Grid.Column="2" Content="두께 (pt):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtStrokePt" Grid.Row="0" Grid.Column="3" Margin="4,2" />
+
+                        <Label Grid.Row="1" Grid.Column="0" Content="선 종류:" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CboStrokeDash" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                                  Margin="4,2">
+                            <ComboBoxItem Tag="Solid">실선</ComboBoxItem>
+                            <ComboBoxItem Tag="Dashed">파선</ComboBoxItem>
+                            <ComboBoxItem Tag="Dotted">점선</ComboBoxItem>
+                            <ComboBoxItem Tag="DashDot">일점쇄선</ComboBoxItem>
+                        </ComboBox>
+                    </Grid>
+                </GroupBox>
+
+                <!-- 채우기 -->
+                <GroupBox Header="채우기" Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Label Grid.Column="0" Content="색상 (hex):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtFillColor" Grid.Column="1" Margin="4,2"
+                                 ToolTip="비워두면 채우기 없음(투명)" />
+                        <Label Grid.Column="2" Content="불투명도:" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtFillOpacity" Grid.Column="3" Margin="4,2"
+                                 ToolTip="0.0 ~ 1.0" />
+                    </Grid>
+                </GroupBox>
+
+                <!-- 화살촉 (선 계열) -->
+                <GroupBox Header="화살촉 (직선·폴리곤선·스플라인선에서만)" x:Name="GrpArrows"
+                          Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Label Grid.Column="0" Content="시작:" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CboStartArrow" Grid.Column="1" Margin="4,2">
+                            <ComboBoxItem Tag="None">없음</ComboBoxItem>
+                            <ComboBoxItem Tag="Open">열린 화살촉</ComboBoxItem>
+                            <ComboBoxItem Tag="Filled">채운 화살촉</ComboBoxItem>
+                            <ComboBoxItem Tag="Diamond">다이아몬드</ComboBoxItem>
+                            <ComboBoxItem Tag="Circle">원</ComboBoxItem>
+                        </ComboBox>
+                        <Label Grid.Column="2" Content="끝:" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CboEndArrow" Grid.Column="3" Margin="4,2">
+                            <ComboBoxItem Tag="None">없음</ComboBoxItem>
+                            <ComboBoxItem Tag="Open">열린 화살촉</ComboBoxItem>
+                            <ComboBoxItem Tag="Filled">채운 화살촉</ComboBoxItem>
+                            <ComboBoxItem Tag="Diamond">다이아몬드</ComboBoxItem>
+                            <ComboBoxItem Tag="Circle">원</ComboBoxItem>
+                        </ComboBox>
+                    </Grid>
+                </GroupBox>
+
+                <!-- 모양 파라미터 -->
+                <GroupBox Header="모양 파라미터" x:Name="GrpShapeParams"
+                          Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Label Grid.Row="0" Grid.Column="0" x:Name="LblSideCount"
+                               Content="꼭짓점 수:" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtSideCount" Grid.Row="0" Grid.Column="1" Margin="4,2" />
+                        <Label Grid.Row="0" Grid.Column="2" x:Name="LblInnerRadius"
+                               Content="내부 반지름 비율:" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtInnerRadius" Grid.Row="0" Grid.Column="3" Margin="4,2"
+                                 ToolTip="별 내부 반지름 비율 (0.1~0.9)" />
+
+                        <Label Grid.Row="1" Grid.Column="0" x:Name="LblCornerRadius"
+                               Content="모서리 반지름 (mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtCornerRadius" Grid.Row="1" Grid.Column="1" Margin="4,2" />
+                        <Label Grid.Row="1" Grid.Column="2" Content="회전각 (°):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtRotation" Grid.Row="1" Grid.Column="3" Margin="4,2" />
+                    </Grid>
+                </GroupBox>
+
+                <!-- 레이블 -->
+                <GroupBox Header="레이블 텍스트" Margin="0,0,0,10" Padding="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Label Grid.Row="0" Grid.Column="0" Content="텍스트:" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtLabelText" Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3"
+                                 Margin="4,2" />
+
+                        <Label Grid.Row="1" Grid.Column="0" Content="글꼴:" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtLabelFont" Grid.Row="1" Grid.Column="1" Margin="4,2" />
+                        <Label Grid.Row="1" Grid.Column="2" Content="크기 (pt):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtLabelSize" Grid.Row="1" Grid.Column="3" Margin="4,2" />
+
+                        <Label Grid.Row="2" Grid.Column="0" Content="색상 (hex):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtLabelColor" Grid.Row="2" Grid.Column="1" Margin="4,2" />
+                        <StackPanel Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2"
+                                    Orientation="Horizontal" Margin="4,2">
+                            <CheckBox x:Name="ChkLabelBold"   Content="굵게"   VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <CheckBox x:Name="ChkLabelItalic" Content="기울임" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Grid>
+                </GroupBox>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

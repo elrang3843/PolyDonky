@@ -92,7 +92,20 @@
                           Click="OnInsertEquation" />
                 <MenuItem Header="{Binding MenuInsertEmoji, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertEmoji" />
-                <MenuItem Header="{Binding MenuInsertShape, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuInsertShape, Source={x:Static svc:LocalizedStrings.Instance}}">
+                    <MenuItem Header="직선(_L)"     Command="{Binding InsertShapeCommand}" CommandParameter="Line" />
+                    <MenuItem Header="폴리곤선(_P)" Command="{Binding InsertShapeCommand}" CommandParameter="Polyline" />
+                    <MenuItem Header="폴리곤면(_Y)" Command="{Binding InsertShapeCommand}" CommandParameter="Polygon" />
+                    <MenuItem Header="스플라인선(_S)" Command="{Binding InsertShapeCommand}" CommandParameter="Spline" />
+                    <MenuItem Header="스플라인면(_N)" Command="{Binding InsertShapeCommand}" CommandParameter="ClosedSpline" />
+                    <Separator />
+                    <MenuItem Header="사각형(_R)"   Command="{Binding InsertShapeCommand}" CommandParameter="Rectangle" />
+                    <MenuItem Header="둥근사각형(_O)" Command="{Binding InsertShapeCommand}" CommandParameter="RoundedRect" />
+                    <MenuItem Header="타원(_E)"     Command="{Binding InsertShapeCommand}" CommandParameter="Ellipse" />
+                    <MenuItem Header="삼각형(_T)"   Command="{Binding InsertShapeCommand}" CommandParameter="Triangle" />
+                    <MenuItem Header="정다각형(_G)" Command="{Binding InsertShapeCommand}" CommandParameter="RegularPolygon" />
+                    <MenuItem Header="별모양(_A)"   Command="{Binding InsertShapeCommand}" CommandParameter="Star" />
+                </MenuItem>
                 <MenuItem Header="{Binding MenuInsertImage, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertImage" />
                 <MenuItem Header="{Binding MenuInsertSign, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
@@ -303,7 +316,8 @@
                         BorderThickness="0.5"
                         PreviewMouseLeftButtonDown="OnPaperPreviewMouseLeftButtonDown"
                         PreviewMouseMove="OnPaperPreviewMouseMove"
-                        PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp">
+                        PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp"
+                        PreviewMouseRightButtonDown="OnPaperPreviewMouseRightButtonDown">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="18" ShadowDepth="6"
                                           Opacity="0.38" Direction="270" Color="Black" />
@@ -311,6 +325,8 @@
                     <Grid>
                         <!-- 그림 오버레이(BehindText) — 본문 텍스트 뒤에 위치. IsHitTestVisible 은 코드에서 토글. -->
                         <Canvas x:Name="UnderlayImageCanvas" />
+                        <!-- 도형 오버레이(BehindText) — 그림 뒤, 본문 텍스트 뒤. -->
+                        <Canvas x:Name="UnderlayShapeCanvas" />
                         <RichTextBox x:Name="BodyEditor"
                                      AcceptsReturn="True"
                                      AcceptsTab="True"
@@ -339,6 +355,8 @@
                         <Canvas x:Name="FloatingCanvas" />
                         <!-- 그림 오버레이(InFrontOfText) — 본문 텍스트 위에 위치. -->
                         <Canvas x:Name="OverlayImageCanvas" />
+                        <!-- 도형 오버레이(InFrontOfText) — 그림 위. -->
+                        <Canvas x:Name="OverlayShapeCanvas" />
                         <!-- 드래그 생성 미리보기. 본 객체 위에 그려짐. -->
                         <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
                             <Rectangle x:Name="DrawPreviewRect"

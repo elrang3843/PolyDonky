@@ -45,6 +45,14 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- **Fixed** — **직선(Line) 도형이 저장→불러오기 후 사각형으로 표시되던 버그**. `ShapeKind.Line = 0` 이 enum 의 default(0) 이라 `JsonIgnoreCondition.WhenWritingDefault` 정책에 의해 `"kind"` 필드가 JSON 에서 누락되었고, 역직렬화 시 ShapeObject.Kind 의 C# 기본값(Rectangle) 으로 복원되었음. `ShapeObject.Kind` 에 `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]` 를 명시해 항상 직렬화하도록 수정.
+
+### Changed
+- **Changed** — **직선(Line) 입력 방식을 폴리곤선과 동일한 click-click 으로 통일**. 시작점 클릭 → 끝점 클릭 → 자동 마감. 기존 드래그 방식 제거. Polyline / Spline / Polygon / ClosedSpline 과 동일한 입력 코드 경로를 사용 — 코드 단순화 + UX 일관성.
+- **Changed** — **부유 객체(도형·글상자) 의 키보드/클립보드 처리를 객체 타입 무관 핸들러로 일반화**. 기존 코드는 `_selectedOverlay` (TextBoxOverlay) 한정이었음 — 도형이나 다른 객체를 추가할 때마다 핸들러를 손봐야 했음. 이제 `TryDeleteSelectedObject` / `TryCopySelectedObject` / `TryCutSelectedObject` / `TryPasteSelectedObject` 가 선택된 객체 종류를 보고 자동 분기. **도형 선택**: 오버레이 도형 클릭 시 시각 표시(드롭섀도 글로우) + 키보드 라우팅. **Delete 키**: 선택된 부유 객체가 있으면 삭제, 없으면 본문 텍스트 삭제로 양보. **Ctrl+C/X/V**: 도형은 `BlockJsonConverter` 를 통해 `PolyDonky.Block.v1` 클립보드 포맷으로 직렬화 — 향후 다른 Block 타입(이미지 등) 도 같은 포맷으로 자동 처리 가능.
+
+### Fixed
+- **Fixed** — **저장→불러오기 후 모든 도형이 사각형으로 표시되던 버그**. `BlockJsonConverter.Write()` 에서 레거시 `"kind"` discriminator 제거를 위해 `"kind"` 이름의 JSON 필드를 전부 스킵했는데, `ShapeObject.Kind` 와 `OpaqueBlock.Kind` 도 camelCase 직렬화 시 `"kind"` 가 되어 함께 누락됨. `"$type"` 중복만 방지하도록 수정 (읽기 경로에서 `"$type"` 이 `"kind"` 보다 우선하므로 레거시 호환 유지).
 - **Fixed** — **그림 "본문 흐름" 모드에서 정렬(왼쪽/가운데/오른쪽)을 바꿔도 위치가 변하지 않던 버그**. `BlockUIContainer.TextAlignment`는 텍스트 Glyph 정렬이며 UIElement 위치에 무효. 명시적 `Width`가 있는 `Image`의 기본 `HorizontalAlignment`(Stretch)가 WPF 레이아웃에서 중앙 배치처럼 동작하므로, 정렬을 Left로 바꿔도 이미지가 항상 가운데에 그려졌다. 이미지(Image) 및 테두리 래퍼(Border) 생성 시 `HorizontalAlignment = imgHA`를 명시적으로 설정해 수정.
 - **Fixed** — **그림 속성 다이얼로그에서 "오른쪽 배치" 선택 시 그림 사라지던 버그** (근본 원인 수정). 기존 코드는 `FlowDocument.PageWidth = 종이 전체 폭`으로 설정하고 `BodyEditor.Padding`으로 좌우 여백을 별도 적용했다. 이로 인해 FlowDocument 오른쪽 끝이 가시 영역 밖(`padLeft + padRight` 만큼)으로 밀려, `HorizontalAlignment.Right` Floater를 비롯한 모든 우측 정렬 객체가 클리핑되어 사라졌다. `FlowDocumentBuilder.ComputeContentWidthDip` 헬퍼를 추가하고 `PageWidth = 종이 폭 − 좌여백 − 우여백(본문 폭)`으로 수정. 여백 변경 시에도 `ApplyPageSettings`가 `Document.PageWidth`를 즉시 갱신. anchor `Run`의 문자도 빈 문자열 → 비줄바꿈 공백(U+00A0)으로 교체해 WPF TextFormatter가 라인을 유효하게 처리하도록 보강.
 - **Fixed** — **그림을 "텍스트 앞으로/뒤로" 모드로 처음 전환 시 페이지 좌상단(0,0) 으로 점프하던 버그**. 모드 전환 직전 `imgControl.TransformToVisual(PaperBorder)` 로 현재 화면 좌표를 캡처하고, 전환 후 `OverlayXMm/OverlayYMm` 가 기본값(0,0) 인 경우에만 캡처한 좌표를 mm 로 변환해 적용 — 사용자가 의도적으로 0,0 을 입력한 경우와 충돌하지 않는다.
@@ -55,6 +63,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - **Fixed** — 이모지·그림 위에서 우클릭/더블클릭해도 **속성 다이얼로그가 열리지 않고 RichTextBox 기본 메뉴(잘라내기/복사/붙여넣기) 만 뜨던 버그**. 두 가지 원인을 함께 수정: 1) `PreviewMouseRightButtonDown` 으로 e.Handled = true 를 세팅해도 RichTextBox 의 기본 컨텍스트 메뉴는 `ContextMenuOpening` 시점에 결정되므로 막을 수 없었음 — 핸들러를 `ContextMenuOpening` 로 옮기고 그 시점에 e.Handled = true 로 기본 메뉴 억제. 2) `e.OriginalSource` 가 RichTextBox 내부 호스팅으로 Image 까지 닿지 않는 경우가 있었음 — `BodyEditor.InputHitTest(마우스위치)` 폴백 추가해 두 경로 모두에서 Image 를 찾도록 보강.
 
 ### Added
+- **Added** — **폴리곤면(Polygon)·스플라인면(ClosedSpline) 입력 추가**. 폴리곤선/스플라인선과 동일한 클릭 방식이되 마지막에 시작점으로 닫히는 닫힌 면 도형. 최소 3점 필요. 채우기 색상 기본 적용(다른 닫힌 도형과 동일). 닫힌 스플라인은 wrap-around Catmull-Rom Bezier로 이음매 없이 매끄럽게 닫힘.
+- **Added** — **폴리곤선·스플라인선 다중 점 클릭 입력 모드**. 기존 드래그(2점 고정) 대신 클릭마다 점을 추가하고 더블클릭 또는 우클릭 메뉴(완료 / 마지막 점 취소 / 시작점에 닫기 / 전체 취소) 또는 Enter 키로 마침. 입력 중 마우스 위치까지 점선 고무줄 미리보기(DrawPreviewCanvas)를 실시간 표시. Esc 로 전체 취소.
+- **Added** — **도형 입력 구현** (`ShapeObject`). 입력 > 도형 메뉴에 직선·폴리곤선·스플라인선·사각형·둥근사각형·타원·삼각형·정다각형·별 9종 추가. 그림과 동일한 5모드 배치 체계(`ImageWrapMode`) 공유 — 본문 흐름(블록), 왼쪽/오른쪽 배치(텍스트 감싸기), 텍스트 위/뒤(캔버스 오버레이). 레이블 텍스트 입력 지원. 오버레이 도형은 드래그 이동·더블클릭 속성창 지원. 도형 속성 다이얼로그(`ShapePropertiesWindow`)로 선/채우기/크기/위치/레이블 편집. `ShapeObject : Block` 코어 모델, `BlockJsonConverter` `"shape"` discriminator, `FlowDocumentBuilder.BuildShape()` 추가.
 - **Added** — **그림을 텍스트처럼 처리** (`ImageWrapMode.AsText`). 그림 속성 → 배치에 6번째 옵션 '텍스트로 처리 — 글자처럼 한 줄에 인라인' 추가. `BlockUIContainer` 대신 `Paragraph` 안의 `InlineUIContainer` 로 빌드되어 그림이 본문 텍스트와 같은 줄에 글자처럼 흐른다 (사용자가 같은 단락에 텍스트를 추가하면 그림 옆/뒤에 텍스트가 나란히 배치). FlowDocumentParser 가 `Paragraph.Tag = ImageBlock` 케이스를 이미 인식하므로 라운드트립 자동 보장.
 - **Added** — **오버레이 그림(InFrontOfText / BehindText) 드래그 이동**. 캔버스 위 그림을 마우스로 끌어 위치를 바꿀 수 있다 — 드래그 종료 시 `OverlayXMm`/`OverlayYMm` 가 업데이트되고 dirty 마킹. 단일 클릭 = 드래그 시작, 더블클릭 = 속성 다이얼로그, 우클릭 = 속성 컨텍스트 메뉴로 분기. 글상자(`TextBoxOverlay`) 는 기존 드래그 동작 유지. `FlowDocumentBuilder` 에 `DipToMm` 헬퍼 추가.
 - **Added** — **그림 텍스트 배치 모드 5종**. ImageBlock 에 `WrapMode` enum 신설 (Inline / WrapLeft / WrapRight / InFrontOfText / BehindText). 그림 속성 다이얼로그에 '배치' 콤보박스 추가:

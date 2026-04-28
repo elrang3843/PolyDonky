@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
@@ -10,6 +11,7 @@ using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
 using WpfMedia = System.Windows.Media;
+using WpfShapes = System.Windows.Shapes;
 
 namespace PolyDonky.App.Views;
 
@@ -211,6 +213,23 @@ public partial class MainWindow : Window
         _viewModel?.MarkDirty();
     }
 
+    // ── 도형 드래그 생성 / 오버레이 상태 ──────────────────────────
+    private bool _drawingShape_active;
+    private ShapeKind _drawingShape_kind = ShapeKind.Rectangle;
+
+    // ── 도형 선택 상태 ────────────────────────────────────────────
+    // 글상자 선택(_selectedOverlay)과 동일한 패턴 — 클릭으로 선택, ESC 로 해제,
+    // Delete / Ctrl+C / Ctrl+X / Ctrl+V 로 통합 키보드 처리.
+    private FrameworkElement? _selectedShapeCtrl;
+    private PolyDonky.Core.ShapeObject? _selectedShape;
+
+    // ── 폴리선/스플라인 클릭 입력 상태 ───────────────────────────
+    // 각 클릭마다 점을 추가하고 더블클릭 또는 우클릭 메뉴로 마침.
+    private bool               _drawingPolyline_active;
+    private ShapeKind          _drawingPolyline_kind = ShapeKind.Polyline;
+    private List<Point>        _drawingPolyline_points = new();
+    private WpfShapes.Polyline? _polylinePreview;        // DrawPreviewCanvas 위의 고무줄 미리보기
+
     // ── 글상자 드래그 생성 / 선택 상태 ────────────────────────────
     private bool _drawingTextBox;
     private bool _drawingInProgress;
@@ -246,6 +265,7 @@ public partial class MainWindow : Window
             vm.SettingsRequested     += OnSettingsRequested;
             vm.OutlineStyleRequested += OnOutlineStyleRequested;
             vm.InsertTextBoxRequested += OnInsertTextBoxRequested;
+            vm.InsertShapeRequested   += OnInsertShapeRequested;
             vm.RefreshSystemKeys();
             vm.RefreshMemoryUsage();
         }
@@ -299,9 +319,14 @@ public partial class MainWindow : Window
                     DispatcherPriority.Input);
                 break;
             case Key.Escape:
-                if (_drawingTextBox)
+                if (_drawingTextBox || _drawingShape_active || _drawingPolyline_active)
                 {
                     EndDrawingMode();
+                    e.Handled = true;
+                }
+                else if (_selectedShape is not null)
+                {
+                    DeselectShape();
                     e.Handled = true;
                 }
                 else if (_selectedOverlay is not null)
@@ -322,17 +347,35 @@ public partial class MainWindow : Window
                 }
                 break;
 
-            // 글상자(부유 객체) 자체의 복사/잘라내기/붙여넣기.
-            // 안쪽 본문(InnerEditor)이 포커스 중이면 가로채지 않고 RichTextBox 의
-            // 일반 텍스트 클립보드 동작으로 넘긴다.
+            case Key.Delete:
+                // 선택된 객체(도형/글상자)가 있을 때만 가로채기. 본문 텍스트 삭제는 양보.
+                if (TryDeleteSelectedObject()) e.Handled = true;
+                break;
+
+            case Key.Return:
+            {
+                int need = (_drawingPolyline_active &&
+                            _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline) ? 3 : 2;
+                if (_drawingPolyline_active && _drawingPolyline_points.Count >= need)
+                {
+                    FinishPolylineShape();
+                    e.Handled = true;
+                }
+                break;
+            }
+
+            // 부유 객체(도형·글상자) 자체의 복사/잘라내기/붙여넣기.
+            // 객체 종류 무관하게 동작 — 새 객체 추가 시 TryDelete/TryCopy/TryPaste*Object 한 곳만 손보면 됨.
+            // 안쪽 본문(InnerEditor)이 포커스 중이거나 본문 텍스트 selection 이 있으면 가로채지 않고
+            // RichTextBox 의 일반 텍스트 클립보드 동작으로 넘긴다.
             case Key.C when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
-                if (TryCopySelectedFloatingObject()) e.Handled = true;
+                if (TryCopySelectedObject()) e.Handled = true;
                 break;
             case Key.X when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
-                if (TryCutSelectedFloatingObject()) e.Handled = true;
+                if (TryCutSelectedObject()) e.Handled = true;
                 break;
             case Key.V when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
-                if (TryPasteFloatingObject()) e.Handled = true;
+                if (TryPasteSelectedObject()) e.Handled = true;
                 break;
         }
     }
@@ -377,6 +420,9 @@ public partial class MainWindow : Window
 
         // 그림 오버레이 재구축 (InFrontOfText / BehindText 모드)
         RebuildOverlayImages();
+
+        // 도형 오버레이 재구축
+        RebuildOverlayShapes();
     }
 
     /// <summary>
@@ -890,11 +936,12 @@ public partial class MainWindow : Window
             _ => null,
         };
 
-    // 편집 > 지우기: RichTextBox 는 ApplicationCommands.Delete 를 자체 바인딩하지 않으므로
-    // 메뉴에서 직접 호출 시 동작하도록 선택 영역을 지운다. 선택이 비어 있으면 캐럿 직후
-    // 한 글자(EditingCommands.Delete) 를 지우는 일반 워드프로세서 동작을 따른다.
+    // 편집 > 지우기: 선택된 부유 객체(도형/글상자)가 있으면 그것을 삭제, 아니면 본문 텍스트 삭제.
+    // RichTextBox 는 ApplicationCommands.Delete 를 자체 바인딩하지 않으므로 본문 분기에서는
+    // 선택 영역을 지운다. selection 이 비어 있으면 캐럿 직후 한 글자(EditingCommands.Delete).
     private void OnEditDelete(object sender, RoutedEventArgs e)
     {
+        if (TryDeleteSelectedObject()) return;
         if (!BodyEditor.Selection.IsEmpty)
         {
             BodyEditor.Selection.Text = string.Empty;
@@ -1016,29 +1063,117 @@ public partial class MainWindow : Window
             _viewModel.StatusMessage = SR.StatusDrawTextBox;
     }
 
+    private void OnInsertShapeRequested(object? sender, PolyDonky.Core.ShapeKind kind)
+    {
+        if (kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline
+                 or ShapeKind.Polygon or ShapeKind.ClosedSpline)
+        {
+            _drawingPolyline_active = true;
+            _drawingPolyline_kind   = kind;
+            _drawingPolyline_points.Clear();
+            Mouse.OverrideCursor = Cursors.Cross;
+            if (_viewModel is not null)
+                _viewModel.StatusMessage = SR.StatusDrawPolyline;
+        }
+        else
+        {
+            _drawingShape_active = true;
+            _drawingShape_kind   = kind;
+            Mouse.OverrideCursor = Cursors.Cross;
+            if (_viewModel is not null)
+                _viewModel.StatusMessage = SR.StatusDrawShape;
+        }
+    }
+
     private void EndDrawingMode()
     {
-        _drawingTextBox = false;
-        _drawingInProgress = false;
+        _drawingTextBox       = false;
+        _drawingShape_active  = false;
+        _drawingInProgress    = false;
+        _drawingPolyline_active = false;
+        _drawingPolyline_points.Clear();
+        ClearPolylinePreview();
         Mouse.OverrideCursor = null;
         DrawPreviewRect.Visibility = Visibility.Collapsed;
         if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
         if (_viewModel is not null) _viewModel.StatusMessage = SR.StatusReady;
     }
 
+    private void ClearPolylinePreview()
+    {
+        if (_polylinePreview is not null)
+        {
+            DrawPreviewCanvas.Children.Remove(_polylinePreview);
+            _polylinePreview = null;
+        }
+    }
+
+    private void UpdatePolylinePreview(Point mousePos)
+    {
+        // DrawPreviewCanvas 위에 커밋된 점들 + 마우스 위치를 잇는 Polyline 을 그린다.
+        if (_polylinePreview is null)
+        {
+            _polylinePreview = new WpfShapes.Polyline
+            {
+                Stroke = WpfMedia.Brushes.SteelBlue,
+                StrokeThickness = 1.5,
+                StrokeDashArray = new DoubleCollection { 4, 2 },
+                IsHitTestVisible = false,
+            };
+            DrawPreviewCanvas.Children.Add(_polylinePreview);
+        }
+
+        _polylinePreview.Points.Clear();
+        foreach (var pt in _drawingPolyline_points)
+            _polylinePreview.Points.Add(pt);
+        _polylinePreview.Points.Add(mousePos);
+    }
+
     private void OnPaperPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!_drawingTextBox) return;
+        // ── 폴리선/스플라인 클릭 입력 모드 ──────────────────────────────
+        if (_drawingPolyline_active)
+        {
+            var pos = e.GetPosition(PaperBorder);
+            pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
+            pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
 
-        var pos = e.GetPosition(PaperBorder);
-        pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-        pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+            if (e.ClickCount >= 2)
+            {
+                // 더블클릭: ClickCount==1 단계에서 이미 그 위치에 점이 추가되었으므로
+                // 그대로 마감하면 더블클릭 위치가 마지막 점이 된다.
+                int need = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
+                if (_drawingPolyline_points.Count >= need)
+                    FinishPolylineShape();
+                else
+                    EndDrawingMode();
+            }
+            else
+            {
+                // 단일 클릭: 점 추가
+                _drawingPolyline_points.Add(pos);
+                UpdatePolylinePreview(pos);
 
-        _drawStart = pos;
+                // 직선은 2점 도달 시 자동 마감 (사용자: 시작점 클릭 → 끝점 클릭 → 끝)
+                if (_drawingPolyline_kind == ShapeKind.Line && _drawingPolyline_points.Count >= 2)
+                    FinishPolylineShape();
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (!_drawingTextBox && !_drawingShape_active) return;
+
+        var startPos = e.GetPosition(PaperBorder);
+        startPos.X = Math.Clamp(startPos.X, 0, PaperBorder.ActualWidth);
+        startPos.Y = Math.Clamp(startPos.Y, 0, PaperBorder.ActualHeight);
+
+        _drawStart = startPos;
         _drawingInProgress = true;
 
-        Canvas.SetLeft(DrawPreviewRect, pos.X);
-        Canvas.SetTop(DrawPreviewRect, pos.Y);
+        Canvas.SetLeft(DrawPreviewRect, startPos.X);
+        Canvas.SetTop(DrawPreviewRect, startPos.Y);
         DrawPreviewRect.Width = 0;
         DrawPreviewRect.Height = 0;
         DrawPreviewRect.Visibility = Visibility.Visible;
@@ -1049,16 +1184,25 @@ public partial class MainWindow : Window
 
     private void OnPaperPreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (!_drawingInProgress) return;
+        if (_drawingPolyline_active && _drawingPolyline_points.Count > 0)
+        {
+            var pos = e.GetPosition(PaperBorder);
+            pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
+            pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+            UpdatePolylinePreview(pos);
+            return;
+        }
 
-        var pos = e.GetPosition(PaperBorder);
-        pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-        pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+        if (!_drawingInProgress || (!_drawingTextBox && !_drawingShape_active)) return;
 
-        double x = Math.Min(_drawStart.X, pos.X);
-        double y = Math.Min(_drawStart.Y, pos.Y);
-        double w = Math.Abs(pos.X - _drawStart.X);
-        double h = Math.Abs(pos.Y - _drawStart.Y);
+        var pos2 = e.GetPosition(PaperBorder);
+        pos2.X = Math.Clamp(pos2.X, 0, PaperBorder.ActualWidth);
+        pos2.Y = Math.Clamp(pos2.Y, 0, PaperBorder.ActualHeight);
+
+        double x = Math.Min(_drawStart.X, pos2.X);
+        double y = Math.Min(_drawStart.Y, pos2.Y);
+        double w = Math.Abs(pos2.X - _drawStart.X);
+        double h = Math.Abs(pos2.Y - _drawStart.Y);
 
         Canvas.SetLeft(DrawPreviewRect, x);
         Canvas.SetTop(DrawPreviewRect, y);
@@ -1079,12 +1223,20 @@ public partial class MainWindow : Window
         double w = Math.Abs(pos.X - _drawStart.X);
         double h = Math.Abs(pos.Y - _drawStart.Y);
 
+        bool wasShape = _drawingShape_active;
         EndDrawingMode();
 
-        // 너무 작은 드래그(클릭에 가까움) 는 생성 안 함.
+        // 너무 작은 드래그(클릭에 가까움)는 생성 안 함.
         const double minDip = 10;
         if (w < minDip || h < minDip)
         {
+            e.Handled = true;
+            return;
+        }
+
+        if (wasShape)
+        {
+            FinishShapeDraw(x, y, w, h);
             e.Handled = true;
             return;
         }
@@ -1103,6 +1255,306 @@ public partial class MainWindow : Window
         SelectOverlay(overlay);
         overlay.BeginEditing();
 
+        e.Handled = true;
+    }
+
+    private void OnPaperPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_drawingPolyline_active) return;
+
+        // 우클릭 컨텍스트 메뉴 — 폴리선/스플라인 입력 제어
+        var menu = new ContextMenu { PlacementTarget = PaperBorder };
+
+        int finishMin = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
+        var itemFinish = new MenuItem { Header = "완료(_F)" };
+        itemFinish.IsEnabled = _drawingPolyline_points.Count >= finishMin;
+        itemFinish.Click += (_, _) => FinishPolylineShape();
+
+        var itemUndo = new MenuItem { Header = "마지막 점 취소(_Z)" };
+        itemUndo.IsEnabled = _drawingPolyline_points.Count >= 1;
+        itemUndo.Click += (_, _) =>
+        {
+            if (_drawingPolyline_points.Count > 0)
+            {
+                _drawingPolyline_points.RemoveAt(_drawingPolyline_points.Count - 1);
+                var curPos = Mouse.GetPosition(PaperBorder);
+                if (_drawingPolyline_points.Count > 0)
+                    UpdatePolylinePreview(curPos);
+                else
+                    ClearPolylinePreview();
+            }
+        };
+
+        var itemClose = new MenuItem { Header = "시작점에 닫기(_L)" };
+        itemClose.IsEnabled = _drawingPolyline_points.Count >= 3;
+        itemClose.Click += (_, _) =>
+        {
+            if (_drawingPolyline_points.Count >= 3)
+            {
+                _drawingPolyline_points.Add(_drawingPolyline_points[0]);
+                FinishPolylineShape();
+            }
+        };
+
+        var itemCancel = new MenuItem { Header = "전체 취소(_C)" };
+        itemCancel.Click += (_, _) => EndDrawingMode();
+
+        menu.Items.Add(itemFinish);
+        menu.Items.Add(itemUndo);
+        menu.Items.Add(itemClose);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(itemCancel);
+        menu.IsOpen = true;
+
+        e.Handled = true;
+    }
+
+    private void FinishPolylineShape()
+    {
+        const double DipsPerMm = TextBoxOverlay.DipsPerMm;
+        var pts = _drawingPolyline_points;
+        // 닫힌 면(Polygon/ClosedSpline)은 최소 3점, 열린 선은 최소 2점 필요.
+        int minPts = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
+        if (pts.Count < minPts) { EndDrawingMode(); return; }
+
+        // 바운딩박스 계산
+        double minX = double.MaxValue, minY = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue;
+        foreach (var pt in pts)
+        {
+            if (pt.X < minX) minX = pt.X;
+            if (pt.Y < minY) minY = pt.Y;
+            if (pt.X > maxX) maxX = pt.X;
+            if (pt.Y > maxY) maxY = pt.Y;
+        }
+        double wDip = Math.Max(maxX - minX, 1.0);
+        double hDip = Math.Max(maxY - minY, 1.0);
+
+        var kind  = _drawingPolyline_kind;
+        var shape = new PolyDonky.Core.ShapeObject
+        {
+            Kind              = kind,
+            WrapMode          = PolyDonky.Core.ImageWrapMode.InFrontOfText,
+            WidthMm           = wDip / DipsPerMm,
+            HeightMm          = hDip / DipsPerMm,
+            OverlayXMm        = minX / DipsPerMm,
+            OverlayYMm        = minY / DipsPerMm,
+            StrokeColor       = "#2C3E50",
+            StrokeThicknessPt = 1.5,
+            FillColor         = kind is PolyDonky.Core.ShapeKind.Polygon
+                                     or PolyDonky.Core.ShapeKind.ClosedSpline
+                                 ? "#7FB3D9" : null,
+            FillOpacity       = 0.7,
+            Status            = NodeStatus.Modified,
+        };
+
+        // 점들을 바운딩박스 기준 상대 좌표(mm) 로 저장
+        foreach (var pt in pts)
+        {
+            shape.Points.Add(new PolyDonky.Core.ShapePoint
+            {
+                X = (pt.X - minX) / DipsPerMm,
+                Y = (pt.Y - minY) / DipsPerMm,
+            });
+        }
+
+        EndDrawingMode();
+        InsertShapeBlock(shape);
+    }
+
+    private void FinishShapeDraw(double xDip, double yDip, double wDip, double hDip)
+    {
+        const double DipsPerMm = TextBoxOverlay.DipsPerMm;
+
+        var kind = _drawingShape_kind;
+        var shape = new PolyDonky.Core.ShapeObject
+        {
+            Kind              = kind,
+            WrapMode          = PolyDonky.Core.ImageWrapMode.InFrontOfText,
+            WidthMm           = wDip / DipsPerMm,
+            HeightMm          = hDip / DipsPerMm,
+            OverlayXMm        = xDip / DipsPerMm,
+            OverlayYMm        = yDip / DipsPerMm,
+            StrokeColor       = "#2C3E50",
+            StrokeThicknessPt = 1.5,
+            FillColor         = kind is PolyDonky.Core.ShapeKind.Line
+                                     or PolyDonky.Core.ShapeKind.Polyline
+                                     or PolyDonky.Core.ShapeKind.Spline
+                                 ? null : "#7FB3D9",
+            FillOpacity = 0.7,
+            Status      = NodeStatus.Modified,
+        };
+
+        // Line 계열: 드래그 방향을 바운딩박스 기준 상대 좌표(mm)로 저장.
+        // _drawStart 가 bounding-box 어느 모서리인지는 (_drawStart - topLeft) 로 결정된다.
+        if (kind is PolyDonky.Core.ShapeKind.Line
+                 or PolyDonky.Core.ShapeKind.Polyline
+                 or PolyDonky.Core.ShapeKind.Spline)
+        {
+            double sxDip = _drawStart.X - xDip; // 0 or wDip
+            double syDip = _drawStart.Y - yDip; // 0 or hDip
+            double exDip = wDip - sxDip;
+            double eyDip = hDip - syDip;
+            shape.Points.Add(new PolyDonky.Core.ShapePoint { X = sxDip / DipsPerMm, Y = syDip / DipsPerMm });
+            shape.Points.Add(new PolyDonky.Core.ShapePoint { X = exDip / DipsPerMm, Y = eyDip / DipsPerMm });
+            shape.HeightMm = Math.Max(shape.HeightMm, 1.0);
+        }
+
+        InsertShapeBlock(shape);
+    }
+
+    private void InsertShapeBlock(PolyDonky.Core.ShapeObject shape)
+    {
+        // 현재 캐럿 위치에 빈 paragraph 처럼 삽입 (overlay 모드이므로 placeholder 만 들어감)
+        var block = Services.FlowDocumentBuilder.BuildShape(shape);
+        var doc   = BodyEditor.Document;
+
+        // 캐럿이 있는 단락 뒤에 삽입. 캐럿이 없으면 맨 끝에 추가.
+        var caretBlock = BodyEditor.CaretPosition?.Paragraph
+                         ?? BodyEditor.CaretPosition?.GetAdjacentElement(
+                             System.Windows.Documents.LogicalDirection.Backward) as System.Windows.Documents.Block;
+        if (caretBlock is not null && doc.Blocks.Contains(caretBlock))
+            doc.Blocks.InsertAfter(caretBlock, block);
+        else
+            doc.Blocks.Add(block);
+
+        _viewModel?.AddShapeToCurrentSection(shape);
+        RebuildOverlayShapes();
+    }
+
+    // ── 도형 오버레이 재구축 ──────────────────────────────────────────────
+    private void RebuildOverlayShapes()
+    {
+        // 재구축 전 선택 해제 — Children.Clear() 직후 _selectedShapeCtrl 이 stale 참조가 됨.
+        DeselectShape();
+        OverlayShapeCanvas.Children.Clear();
+        UnderlayShapeCanvas.Children.Clear();
+
+        foreach (var block in BodyEditor.Document.Blocks)
+        {
+            if (block.Tag is not PolyDonky.Core.ShapeObject shape) continue;
+            if (shape.WrapMode is not (PolyDonky.Core.ImageWrapMode.InFrontOfText
+                                    or PolyDonky.Core.ImageWrapMode.BehindText)) continue;
+
+            var ctrl = Services.FlowDocumentBuilder.BuildOverlayShapeControl(shape);
+            ctrl.Tag = shape;
+            Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(shape.OverlayXMm));
+            Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(shape.OverlayYMm));
+            ctrl.Cursor = Cursors.SizeAll;
+
+            var captured  = shape;
+            var ctxMenu   = new ContextMenu();
+            var propsItem = new MenuItem { Header = "도형 속성(_P)..." };
+            propsItem.Click += (_, _) => OpenOverlayShapeProperties(captured);
+            ctxMenu.Items.Add(propsItem);
+            var delItem = new MenuItem { Header = "삭제(_D)" };
+            delItem.Click += (_, _) => DeleteOverlayShape(captured);
+            ctxMenu.Items.Add(delItem);
+            ctrl.ContextMenu = ctxMenu;
+
+            ctrl.MouseLeftButtonDown += OnOverlayShapeMouseDown;
+
+            var canvas = shape.WrapMode == PolyDonky.Core.ImageWrapMode.BehindText
+                ? UnderlayShapeCanvas
+                : OverlayShapeCanvas;
+            canvas.Children.Add(ctrl);
+        }
+    }
+
+    private void DeleteOverlayShape(PolyDonky.Core.ShapeObject shape)
+    {
+        var placeholder = BodyEditor.Document.Blocks
+            .FirstOrDefault(b => ReferenceEquals(b.Tag, shape));
+        if (placeholder is not null)
+            BodyEditor.Document.Blocks.Remove(placeholder);
+        _viewModel?.RemoveShape(shape);
+        RebuildOverlayShapes();
+    }
+
+    private void OpenOverlayShapeProperties(PolyDonky.Core.ShapeObject shape)
+    {
+        var dlg = new ShapePropertiesWindow(shape) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+
+        // WrapMode 변경으로 Block 타입이 달라질 수 있으므로 교체
+        var placeholder = BodyEditor.Document.Blocks
+            .FirstOrDefault(b => ReferenceEquals(b.Tag, shape));
+        if (placeholder is not null)
+        {
+            var newBlock = Services.FlowDocumentBuilder.BuildShape(shape);
+            BodyEditor.Document.Blocks.InsertBefore(placeholder, newBlock);
+            BodyEditor.Document.Blocks.Remove(placeholder);
+        }
+        RebuildOverlayShapes();
+        _viewModel?.MarkDirty();
+    }
+
+    // ── 오버레이 도형 드래그 이동 상태 ───────────────────────────────────
+    private FrameworkElement? _draggingOverlayShape;
+    private Point  _overlayShapeDragStart;
+    private double _overlayShapeDragStartLeft;
+    private double _overlayShapeDragStartTop;
+    private bool   _overlayShapeDragMoved;
+
+    private void OnOverlayShapeMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+
+        if (e.ClickCount == 2 && fe.Tag is PolyDonky.Core.ShapeObject dblShape)
+        {
+            OpenOverlayShapeProperties(dblShape);
+            e.Handled = true;
+            return;
+        }
+
+        // 단일 클릭 → 선택 + 드래그 시작
+        if (fe.Tag is PolyDonky.Core.ShapeObject clickShape)
+            SelectShape(fe, clickShape);
+
+        if (fe.Parent is not Canvas canvas) return;
+        _draggingOverlayShape       = fe;
+        _overlayShapeDragStart      = e.GetPosition(canvas);
+        _overlayShapeDragStartLeft  = Canvas.GetLeft(fe);
+        _overlayShapeDragStartTop   = Canvas.GetTop(fe);
+        if (double.IsNaN(_overlayShapeDragStartLeft)) _overlayShapeDragStartLeft = 0;
+        if (double.IsNaN(_overlayShapeDragStartTop))  _overlayShapeDragStartTop  = 0;
+        _overlayShapeDragMoved = false;
+        fe.CaptureMouse();
+        fe.MouseMove         += OnOverlayShapeDragMove;
+        fe.MouseLeftButtonUp += OnOverlayShapeDragUp;
+        e.Handled = true;
+    }
+
+    private void OnOverlayShapeDragMove(object sender, MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || !ReferenceEquals(_draggingOverlayShape, fe)) return;
+        if (fe.Parent is not Canvas canvas) return;
+        var pos = e.GetPosition(canvas);
+        double dx = pos.X - _overlayShapeDragStart.X;
+        double dy = pos.Y - _overlayShapeDragStart.Y;
+        if (Math.Abs(dx) > 0.5 || Math.Abs(dy) > 0.5) _overlayShapeDragMoved = true;
+        Canvas.SetLeft(fe, _overlayShapeDragStartLeft + dx);
+        Canvas.SetTop (fe, _overlayShapeDragStartTop  + dy);
+    }
+
+    private void OnOverlayShapeDragUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || !ReferenceEquals(_draggingOverlayShape, fe)) return;
+        fe.ReleaseMouseCapture();
+        fe.MouseMove         -= OnOverlayShapeDragMove;
+        fe.MouseLeftButtonUp -= OnOverlayShapeDragUp;
+        _draggingOverlayShape = null;
+
+        if (_overlayShapeDragMoved && fe.Tag is PolyDonky.Core.ShapeObject s)
+        {
+            double left = Canvas.GetLeft(fe);
+            double top  = Canvas.GetTop(fe);
+            if (double.IsNaN(left)) left = 0;
+            if (double.IsNaN(top))  top  = 0;
+            s.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
+            s.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            _viewModel?.MarkDirty();
+        }
         e.Handled = true;
     }
 
@@ -1269,13 +1721,138 @@ public partial class MainWindow : Window
             _selectedOverlay.IsSelected = false;
         _selectedOverlay = overlay;
         overlay.IsSelected = true;
+        // 다른 종류 선택 해제
+        DeselectShape();
     }
 
     private void DeselectAllOverlays()
     {
-        if (_selectedOverlay is null) return;
-        _selectedOverlay.IsSelected = false;
-        _selectedOverlay = null;
+        if (_selectedOverlay is not null)
+        {
+            _selectedOverlay.IsSelected = false;
+            _selectedOverlay = null;
+        }
+        DeselectShape();
+    }
+
+    // ── 도형 선택 / 키보드 일반화 ─────────────────────────────────
+    private void SelectShape(FrameworkElement ctrl, PolyDonky.Core.ShapeObject shape)
+    {
+        if (ReferenceEquals(_selectedShape, shape)) return;
+        DeselectShape();
+        // 다른 종류 선택 해제 (글상자)
+        if (_selectedOverlay is not null)
+        {
+            _selectedOverlay.IsSelected = false;
+            _selectedOverlay = null;
+        }
+
+        _selectedShape     = shape;
+        _selectedShapeCtrl = ctrl;
+        ctrl.Effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color       = WpfMedia.Colors.DodgerBlue,
+            ShadowDepth = 0,
+            BlurRadius  = 14,
+            Opacity     = 0.9,
+        };
+        // 윈도우로 키보드 포커스 — Delete/Ctrl+C 가 BodyEditor 가 아닌 윈도우에서 처리되도록.
+        Focus();
+        Keyboard.Focus(this);
+    }
+
+    private void DeselectShape()
+    {
+        if (_selectedShapeCtrl is not null)
+            _selectedShapeCtrl.Effect = null;
+        _selectedShape     = null;
+        _selectedShapeCtrl = null;
+    }
+
+    /// <summary>선택된 객체(도형/글상자)를 종류 무관하게 삭제. 새 객체 추가 시 여기에 한 줄만 더하면 된다.</summary>
+    private bool TryDeleteSelectedObject()
+    {
+        if (_selectedShape is { } shape)
+        {
+            DeleteOverlayShape(shape);
+            DeselectShape();
+            return true;
+        }
+        if (_selectedOverlay is { } overlay)
+        {
+            // 안쪽 본문에 텍스트 selection 이 있으면 일반 텍스트 삭제에 양보.
+            if (overlay.InnerEditor.IsKeyboardFocusWithin && !overlay.InnerEditor.Selection.IsEmpty)
+                return false;
+            FloatingCanvas.Children.Remove(overlay);
+            _viewModel?.RemoveFloatingObject(overlay.Model);
+            _selectedOverlay = null;
+            BodyEditor.Focus();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>선택된 객체를 종류 무관하게 클립보드로 복사.</summary>
+    private bool TryCopySelectedObject()
+    {
+        if (_selectedShape is { } shape) return CopyShapeToClipboard(shape);
+        return TryCopySelectedFloatingObject();
+    }
+
+    /// <summary>잘라내기 = 복사 후 삭제.</summary>
+    private bool TryCutSelectedObject()
+    {
+        if (_selectedShape is { } shape)
+        {
+            if (!CopyShapeToClipboard(shape)) return false;
+            DeleteOverlayShape(shape);
+            DeselectShape();
+            return true;
+        }
+        return TryCutSelectedFloatingObject();
+    }
+
+    /// <summary>붙여넣기는 클립보드 포맷에 따라 자동 분기 — 도형 → 글상자 순.</summary>
+    private bool TryPasteSelectedObject()
+    {
+        if (Clipboard.ContainsData(BlockClipboardFormat))   return TryPasteBlockFromClipboard();
+        if (Clipboard.ContainsData(FloatingObjectClipboardFormat)) return TryPasteFloatingObject();
+        return false;
+    }
+
+    private const string BlockClipboardFormat = "PolyDonky.Block.v1";
+
+    private bool CopyShapeToClipboard(PolyDonky.Core.ShapeObject shape)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize<PolyDonky.Core.Block>(
+            shape, PolyDonky.Core.JsonDefaults.Options);
+        var dataObj = new DataObject();
+        dataObj.SetData(BlockClipboardFormat, json);
+        if (!string.IsNullOrEmpty(shape.LabelText))
+            dataObj.SetText(shape.LabelText);
+        Clipboard.SetDataObject(dataObj, copy: true);
+        return true;
+    }
+
+    private bool TryPasteBlockFromClipboard()
+    {
+        var json = Clipboard.GetData(BlockClipboardFormat) as string;
+        if (string.IsNullOrEmpty(json)) return false;
+        PolyDonky.Core.Block? block;
+        try { block = System.Text.Json.JsonSerializer.Deserialize<PolyDonky.Core.Block>(
+                  json, PolyDonky.Core.JsonDefaults.Options); }
+        catch { return false; }
+
+        if (block is PolyDonky.Core.ShapeObject shape)
+        {
+            shape.Id = null;
+            shape.OverlayXMm += 5;
+            shape.OverlayYMm += 5;
+            shape.Status = NodeStatus.Modified;
+            InsertShapeBlock(shape);
+            return true;
+        }
+        return false;
     }
 
 }

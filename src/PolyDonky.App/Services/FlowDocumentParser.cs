@@ -63,9 +63,13 @@ public static class FlowDocumentParser
                     break;
 
                 // 래핑 모드(WrapLeft/WrapRight) 그림은 Floater 가 든 Paragraph 로 빌드됨 — Tag 로 회수.
-                // 반드시 일반 'case Wpf.Paragraph' 보다 먼저 위치해야 한다.
+                // ShapeObject 래핑 모드도 동일. 반드시 일반 'case Wpf.Paragraph' 보다 먼저 위치해야 한다.
                 case Wpf.Paragraph wrappedImagePara when wrappedImagePara.Tag is ImageBlock wrappedImage:
                     target.Add(wrappedImage);
+                    break;
+
+                case Wpf.Paragraph wrappedShapePara when wrappedShapePara.Tag is ShapeObject wrappedShape:
+                    target.Add(wrappedShape);
                     break;
 
                 case Wpf.Paragraph wpfPara:
@@ -103,6 +107,10 @@ public static class FlowDocumentParser
 
                 case Wpf.BlockUIContainer container when container.Tag is ImageBlock image:
                     target.Add(image);
+                    break;
+
+                case Wpf.BlockUIContainer container when container.Tag is ShapeObject shapeInline:
+                    target.Add(shapeInline);
                     break;
 
                 case Wpf.Section nested:
