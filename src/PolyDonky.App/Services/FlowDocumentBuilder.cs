@@ -141,7 +141,10 @@ public static class FlowDocumentBuilder
                 case Table t:
                     currentList = null;
                     currentKind = null;
-                    target.Add(BuildTable(t, outlineStyles));
+                    if (t.WrapMode == TableWrapMode.Block)
+                        target.Add(BuildTable(t, outlineStyles));
+                    else
+                        target.Add(BuildTableAnchor(t));   // 오버레이 모드 — 앵커만 추가
                     break;
 
                 case ImageBlock image:
@@ -165,9 +168,12 @@ public static class FlowDocumentBuilder
         }
     }
 
-    private static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null)
+    internal static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null)
     {
         var wtable = new Wpf.Table { CellSpacing = 0 };
+
+        ApplyTableLevelPropertiesToWpf(wtable, table);
+
         foreach (var col in table.Columns)
         {
             var width = col.WidthMm > 0
@@ -179,24 +185,28 @@ public static class FlowDocumentBuilder
         var rowGroup = new Wpf.TableRowGroup();
         wtable.RowGroups.Add(rowGroup);
 
+        var headerBrush = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xE8, 0xEA, 0xED));
+        headerBrush.Freeze();
+
         foreach (var row in table.Rows)
         {
             var wrow = new Wpf.TableRow();
+            if (row.IsHeader)
+                wrow.Background = headerBrush;
+
             foreach (var cell in row.Cells)
             {
                 var wcell = new Wpf.TableCell
                 {
-                    BorderBrush = WpfMedia.Brushes.LightGray,
-                    BorderThickness = new Thickness(1),
-                    Padding = new Thickness(4),
                     ColumnSpan = Math.Max(cell.ColumnSpan, 1),
-                    RowSpan = Math.Max(cell.RowSpan, 1),
+                    RowSpan    = Math.Max(cell.RowSpan, 1),
                 };
+
+                ApplyCellPropertiesToWpf(wcell, cell, row.IsHeader, table);
                 AppendBlocks(wcell.Blocks, cell.Blocks, outlineStyles);
                 if (wcell.Blocks.Count == 0)
-                {
                     wcell.Blocks.Add(new Wpf.Paragraph(new Wpf.Run(string.Empty)));
-                }
+
                 wrow.Cells.Add(wcell);
             }
             rowGroup.Rows.Add(wrow);
@@ -204,6 +214,194 @@ public static class FlowDocumentBuilder
 
         wtable.Tag = table;
         return wtable;
+    }
+
+    /// <summary>표 수준 속성(배경·바깥여백·외곽선·정렬)을 WPF Table 에 적용.</summary>
+    internal static void ApplyTableLevelPropertiesToWpf(Wpf.Table wtable, Table table)
+    {
+        // 배경색
+        if (!string.IsNullOrEmpty(table.BackgroundColor) &&
+            TryParseColor(table.BackgroundColor) is { } bg)
+            wtable.Background = new WpfMedia.SolidColorBrush(bg);
+        else
+            wtable.Background = null;
+
+        // 바깥 여백
+        wtable.Margin = new Thickness(
+            table.OuterMarginLeftMm   > 0 ? MmToDip(table.OuterMarginLeftMm)   : 0,
+            table.OuterMarginTopMm    > 0 ? MmToDip(table.OuterMarginTopMm)    : 0,
+            table.OuterMarginRightMm  > 0 ? MmToDip(table.OuterMarginRightMm)  : 0,
+            table.OuterMarginBottomMm > 0 ? MmToDip(table.OuterMarginBottomMm) : 0);
+
+        // 표 외곽선
+        if (table.BorderThicknessPt > 0)
+        {
+            var borderColor = TryParseColor(table.BorderColor)
+                ?? WpfMedia.Color.FromRgb(0xC8, 0xC8, 0xC8);
+            wtable.BorderBrush     = new WpfMedia.SolidColorBrush(borderColor);
+            wtable.BorderThickness = new Thickness(PtToDip(table.BorderThicknessPt));
+        }
+        else
+        {
+            wtable.BorderBrush     = null;
+            wtable.BorderThickness = new Thickness(0);
+        }
+    }
+
+    internal static void ApplyCellPropertiesToWpf(
+        Wpf.TableCell wcell,
+        TableCell cell,
+        bool isHeader,
+        Table? tableDefaults = null)
+    {
+        var borderColor = TryParseColor(cell.BorderColor)
+            ?? WpfMedia.Color.FromRgb(0xC8, 0xC8, 0xC8);
+        double borderDip = cell.BorderThicknessPt > 0
+            ? PtToDip(cell.BorderThicknessPt) : PtToDip(0.75);
+        wcell.BorderBrush     = new WpfMedia.SolidColorBrush(borderColor);
+        wcell.BorderThickness = new Thickness(borderDip);
+
+        double defTop    = tableDefaults?.DefaultCellPaddingTopMm    > 0 ? tableDefaults.DefaultCellPaddingTopMm    : 1.0;
+        double defBottom = tableDefaults?.DefaultCellPaddingBottomMm > 0 ? tableDefaults.DefaultCellPaddingBottomMm : 1.0;
+        double defLeft   = tableDefaults?.DefaultCellPaddingLeftMm   > 0 ? tableDefaults.DefaultCellPaddingLeftMm   : 1.5;
+        double defRight  = tableDefaults?.DefaultCellPaddingRightMm  > 0 ? tableDefaults.DefaultCellPaddingRightMm  : 1.5;
+
+        double padTop   = MmToDip(cell.PaddingTopMm    > 0 ? cell.PaddingTopMm    : defTop);
+        double padBottom= MmToDip(cell.PaddingBottomMm > 0 ? cell.PaddingBottomMm : defBottom);
+        double padLeft  = MmToDip(cell.PaddingLeftMm   > 0 ? cell.PaddingLeftMm   : defLeft);
+        double padRight = MmToDip(cell.PaddingRightMm  > 0 ? cell.PaddingRightMm  : defRight);
+        wcell.Padding = new Thickness(padLeft, padTop, padRight, padBottom);
+
+        if (!string.IsNullOrEmpty(cell.BackgroundColor) &&
+            TryParseColor(cell.BackgroundColor) is { } bg)
+            wcell.Background = new WpfMedia.SolidColorBrush(bg);
+        else
+            wcell.Background = null;
+
+        wcell.FontWeight = isHeader ? FontWeights.SemiBold : FontWeights.Normal;
+        ApplyCellTextAlign(wcell, cell.TextAlign);
+    }
+
+    private static void ApplyCellTextAlign(Wpf.TableCell wcell, CellTextAlign align)
+    {
+        var wpfAlign = align switch
+        {
+            CellTextAlign.Center  => TextAlignment.Center,
+            CellTextAlign.Right   => TextAlignment.Right,
+            CellTextAlign.Justify => TextAlignment.Justify,
+            _                     => TextAlignment.Left,
+        };
+        foreach (var b in wcell.Blocks)
+            if (b is Wpf.Paragraph p) p.TextAlignment = wpfAlign;
+    }
+
+    // ── 오버레이 표 지원 ─────────────────────────────────────────────────
+
+    /// <summary>오버레이(InFrontOfText/BehindText/Fixed) 모드 표를 위한 최소 앵커 단락을 반환한다.</summary>
+    internal static Wpf.Paragraph BuildTableAnchor(Table table)
+        => new Wpf.Paragraph
+        {
+            Tag        = table,
+            Margin     = new Thickness(0),
+            FontSize   = 0.1,
+            Foreground = WpfMedia.Brushes.Transparent,
+            Background = WpfMedia.Brushes.Transparent,
+        };
+
+    /// <summary>
+    /// 오버레이 Canvas 에 배치할 표 시각 요소를 생성한다.
+    /// System.Windows.Controls.Grid 기반으로 셀 테두리·배경·텍스트를 렌더링한다.
+    /// </summary>
+    internal static System.Windows.FrameworkElement? BuildOverlayTableControl(Table table)
+    {
+        if (table.Rows.Count == 0 || table.Columns.Count == 0) return null;
+
+        var grid = new System.Windows.Controls.Grid();
+        grid.Tag = table;
+
+        // 컬럼 정의
+        foreach (var col in table.Columns)
+        {
+            var w = col.WidthMm > 0
+                ? new System.Windows.GridLength(MmToDip(col.WidthMm))
+                : new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+            grid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = w });
+        }
+
+        // 행 정의
+        foreach (var row in table.Rows)
+        {
+            var h = row.HeightMm > 0
+                ? new System.Windows.GridLength(MmToDip(row.HeightMm))
+                : System.Windows.GridLength.Auto;
+            grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = h });
+        }
+
+        // 셀
+        var headerBg = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xE8, 0xEA, 0xED));
+        for (int r = 0; r < table.Rows.Count; r++)
+        {
+            var row = table.Rows[r];
+            for (int c = 0; c < row.Cells.Count; c++)
+            {
+                var cell = row.Cells[c];
+                var borderColor = TryParseColor(cell.BorderColor) ?? WpfMedia.Color.FromRgb(0xC8, 0xC8, 0xC8);
+                double borderDip = cell.BorderThicknessPt > 0 ? PtToDip(cell.BorderThicknessPt) : PtToDip(0.75);
+
+                WpfMedia.Brush? cellBg = null;
+                if (row.IsHeader)
+                    cellBg = headerBg;
+                else if (!string.IsNullOrEmpty(cell.BackgroundColor) &&
+                         TryParseColor(cell.BackgroundColor) is { } bg)
+                    cellBg = new WpfMedia.SolidColorBrush(bg);
+
+                double padL = MmToDip(cell.PaddingLeftMm   > 0 ? cell.PaddingLeftMm   : 1.5);
+                double padT = MmToDip(cell.PaddingTopMm    > 0 ? cell.PaddingTopMm    : 1.0);
+                double padR = MmToDip(cell.PaddingRightMm  > 0 ? cell.PaddingRightMm  : 1.5);
+                double padB = MmToDip(cell.PaddingBottomMm > 0 ? cell.PaddingBottomMm : 1.0);
+
+                // 셀 내용 텍스트 (첫 Paragraph 의 텍스트만 표시)
+                string text = string.Concat(
+                    cell.Blocks.OfType<Paragraph>().Take(1)
+                               .SelectMany(p => p.Runs.Select(run => run.Text)));
+
+                var textBlock = new System.Windows.Controls.TextBlock
+                {
+                    Text = text,
+                    TextWrapping = System.Windows.TextWrapping.Wrap,
+                    Padding = new Thickness(padL, padT, padR, padB),
+                    FontWeight = row.IsHeader ? FontWeights.SemiBold : FontWeights.Normal,
+                };
+
+                var border = new System.Windows.Controls.Border
+                {
+                    BorderBrush     = new WpfMedia.SolidColorBrush(borderColor),
+                    BorderThickness = new Thickness(borderDip),
+                    Background      = cellBg,
+                    Child           = textBlock,
+                };
+
+                System.Windows.Controls.Grid.SetRow(border, r);
+                System.Windows.Controls.Grid.SetColumn(border, c);
+                if (cell.ColumnSpan > 1) System.Windows.Controls.Grid.SetColumnSpan(border, cell.ColumnSpan);
+                if (cell.RowSpan    > 1) System.Windows.Controls.Grid.SetRowSpan(border, cell.RowSpan);
+                grid.Children.Add(border);
+            }
+        }
+
+        // 표 배경
+        if (!string.IsNullOrEmpty(table.BackgroundColor) &&
+            TryParseColor(table.BackgroundColor) is { } tableBg)
+            grid.Background = new WpfMedia.SolidColorBrush(tableBg);
+
+        return grid;
+    }
+
+    private static WpfMedia.Color? TryParseColor(string? hex)
+    {
+        if (string.IsNullOrEmpty(hex)) return null;
+        try { return (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(hex)!; }
+        catch { return null; }
     }
 
     /// <summary>
@@ -859,7 +1057,7 @@ public static class FlowDocumentBuilder
         return paragraph;
     }
 
-    private static Wpf.Paragraph BuildParagraph(Paragraph p, OutlineStyleSet? outlineStyles = null)
+    internal static Wpf.Paragraph BuildParagraph(Paragraph p, OutlineStyleSet? outlineStyles = null)
     {
         var wpfPara = new Wpf.Paragraph();
         ApplyParagraphStyle(wpfPara, p.Style, outlineStyles);

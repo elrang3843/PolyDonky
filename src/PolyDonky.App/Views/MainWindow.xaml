@@ -84,7 +84,8 @@
                     <MenuItem Header="타원(_E)"     Command="{Binding InsertTextBoxCommand}" CommandParameter="Ellipse" />
                     <MenuItem Header="파이(_I)"     Command="{Binding InsertTextBoxCommand}" CommandParameter="Pie" />
                 </MenuItem>
-                <MenuItem Header="{Binding MenuInsertTable, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuInsertTable, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertTable" />
                 <MenuItem Header="{Binding MenuInsertGraph, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
                 <MenuItem Header="{Binding MenuInsertSpecialChar, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertSpecialChar" />
@@ -327,6 +328,8 @@
                         <Canvas x:Name="UnderlayImageCanvas" />
                         <!-- 도형 오버레이(BehindText) — 그림 뒤, 본문 텍스트 뒤. -->
                         <Canvas x:Name="UnderlayShapeCanvas" />
+                        <!-- 표 오버레이(BehindText) — 텍스트 뒤. -->
+                        <Canvas x:Name="UnderlayTableCanvas" />
                         <RichTextBox x:Name="BodyEditor"
                                      AcceptsReturn="True"
                                      AcceptsTab="True"
@@ -340,15 +343,7 @@
                                      Background="Transparent"
                                      Foreground="{DynamicResource OnSurface}"
                                      PreviewKeyDown="OnEditorPreviewKeyDown"
-                                     PreviewTextInput="OnEditorPreviewTextInput">
-                            <RichTextBox.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Command="Cut"   Header="잘라내기(_T)" InputGestureText="Ctrl+X" />
-                                    <MenuItem Command="Copy"  Header="복사(_C)"     InputGestureText="Ctrl+C" />
-                                    <MenuItem Command="Paste" Header="붙여넣기(_P)" InputGestureText="Ctrl+V" />
-                                </ContextMenu>
-                            </RichTextBox.ContextMenu>
-                        </RichTextBox>
+                                     PreviewTextInput="OnEditorPreviewTextInput" />
                         <!-- 부유 객체 (글상자 등) 오버레이.
                              Background 미설정 → 빈 영역은 hit-test 통과해 RichTextBox 가 받음.
                              각 자식(TextBoxOverlay) 만 마우스를 받는다. -->
@@ -357,6 +352,8 @@
                         <Canvas x:Name="OverlayImageCanvas" />
                         <!-- 도형 오버레이(InFrontOfText) — 그림 위. -->
                         <Canvas x:Name="OverlayShapeCanvas" />
+                        <!-- 표 오버레이(InFrontOfText/Fixed) — 도형 위. -->
+                        <Canvas x:Name="OverlayTableCanvas" />
                         <!-- 드래그 생성 미리보기. 본 객체 위에 그려짐. -->
                         <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
                             <Rectangle x:Name="DrawPreviewRect"
@@ -373,6 +370,9 @@
                                    Fill="Transparent"
                                    IsHitTestVisible="False"
                                    Visibility="Collapsed" />
+                        <!-- 페이지 구분선 — 본문이 한 페이지를 넘을 때 경계를 시각적으로 표시.
+                             IsHitTestVisible=False 로 편집 방해 없음. -->
+                        <Canvas x:Name="PageBreakCanvas" IsHitTestVisible="False" />
                     </Grid>
                 </Border>
             </StackPanel>
