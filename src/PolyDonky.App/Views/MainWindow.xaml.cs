@@ -1117,11 +1117,8 @@ public partial class MainWindow : Window
 
             if (e.ClickCount >= 2)
             {
-                // 더블클릭: 마지막 점(앞서 단일 클릭에서 이미 추가됨) 제거 후 마감
-                // WPF 는 MouseDown ClickCount==1 → ClickCount==2 순으로 두 번 발생하므로
-                // ClickCount==2 직전에 이미 점이 추가되어 있음 → 중복 제거.
-                if (_drawingPolyline_points.Count >= 1)
-                    _drawingPolyline_points.RemoveAt(_drawingPolyline_points.Count - 1);
+                // 더블클릭: ClickCount==1 단계에서 이미 그 위치에 점이 추가되었으므로
+                // 그대로 마감하면 더블클릭 위치가 마지막 점이 된다.
                 if (_drawingPolyline_points.Count >= 2)
                     FinishPolylineShape();
                 else
