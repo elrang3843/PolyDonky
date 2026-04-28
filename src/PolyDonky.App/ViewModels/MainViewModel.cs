@@ -569,7 +569,9 @@ public partial class MainViewModel : ObservableObject
         {
             "Line"           => PolyDonky.Core.ShapeKind.Line,
             "Polyline"       => PolyDonky.Core.ShapeKind.Polyline,
+            "Polygon"        => PolyDonky.Core.ShapeKind.Polygon,
             "Spline"         => PolyDonky.Core.ShapeKind.Spline,
+            "ClosedSpline"   => PolyDonky.Core.ShapeKind.ClosedSpline,
             "RoundedRect"    => PolyDonky.Core.ShapeKind.RoundedRect,
             "Ellipse"        => PolyDonky.Core.ShapeKind.Ellipse,
             "Triangle"       => PolyDonky.Core.ShapeKind.Triangle,

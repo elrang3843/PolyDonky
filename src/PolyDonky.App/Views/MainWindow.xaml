@@ -95,7 +95,9 @@
                 <MenuItem Header="{Binding MenuInsertShape, Source={x:Static svc:LocalizedStrings.Instance}}">
                     <MenuItem Header="직선(_L)"     Command="{Binding InsertShapeCommand}" CommandParameter="Line" />
                     <MenuItem Header="폴리곤선(_P)" Command="{Binding InsertShapeCommand}" CommandParameter="Polyline" />
+                    <MenuItem Header="폴리곤면(_Y)" Command="{Binding InsertShapeCommand}" CommandParameter="Polygon" />
                     <MenuItem Header="스플라인선(_S)" Command="{Binding InsertShapeCommand}" CommandParameter="Spline" />
+                    <MenuItem Header="스플라인면(_N)" Command="{Binding InsertShapeCommand}" CommandParameter="ClosedSpline" />
                     <Separator />
                     <MenuItem Header="사각형(_R)"   Command="{Binding InsertShapeCommand}" CommandParameter="Rectangle" />
                     <MenuItem Header="둥근사각형(_O)" Command="{Binding InsertShapeCommand}" CommandParameter="RoundedRect" />

@@ -12,6 +12,8 @@ public enum ShapeKind
     Triangle,
     RegularPolygon,
     Star,
+    Polygon,
+    ClosedSpline,
 }
 
 /// <summary>선 종류 (실선·파선·점선·일점쇄선).</summary>

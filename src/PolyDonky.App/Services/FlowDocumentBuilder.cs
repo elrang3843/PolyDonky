@@ -562,7 +562,7 @@ public static class FlowDocumentBuilder
             Stretch         = WpfMedia.Stretch.None,
         };
 
-        // 화살촉 (선 계열)
+        // 화살촉 (선 계열 — 열린 선에만)
         if (shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline)
         {
             ApplyArrows(path, shape.StartArrow, shape.EndArrow);
@@ -724,6 +724,40 @@ public static class FlowDocumentBuilder
                     }
                 }
 
+                pg.Figures.Add(fig);
+                return pg;
+            }
+
+            case ShapeKind.Polygon:
+            {
+                var pts = GetPointsDip(shape.Points, wDip, hDip);
+                if (pts.Count < 3) goto default;
+                var pg  = new WpfMedia.PathGeometry();
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0], IsClosed = true, IsFilled = true };
+                for (int i = 1; i < pts.Count; i++)
+                    fig.Segments.Add(new WpfMedia.LineSegment(pts[i], true));
+                pg.Figures.Add(fig);
+                return pg;
+            }
+
+            case ShapeKind.ClosedSpline:
+            {
+                var pts = GetPointsDip(shape.Points, wDip, hDip);
+                if (pts.Count < 3) goto default;
+                int n   = pts.Count;
+                var pg  = new WpfMedia.PathGeometry();
+                // 닫힌 Catmull-Rom: 마지막 구간도 wrap-around 이웃을 사용해 매끄럽게 처음 점으로 연결.
+                var fig = new WpfMedia.PathFigure { StartPoint = pts[0], IsFilled = true };
+                for (int i = 0; i < n; i++)
+                {
+                    var p0 = pts[(i - 1 + n) % n];
+                    var p1 = pts[i];
+                    var p2 = pts[(i + 1) % n];
+                    var p3 = pts[(i + 2) % n];
+                    var c1 = new Point(p1.X + (p2.X - p0.X) / 6.0, p1.Y + (p2.Y - p0.Y) / 6.0);
+                    var c2 = new Point(p2.X - (p3.X - p1.X) / 6.0, p2.Y - (p3.Y - p1.Y) / 6.0);
+                    fig.Segments.Add(new WpfMedia.BezierSegment(c1, c2, p2, true));
+                }
                 pg.Figures.Add(fig);
                 return pg;
             }

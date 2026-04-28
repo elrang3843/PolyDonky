@@ -337,12 +337,16 @@ public partial class MainWindow : Window
                 break;
 
             case Key.Return:
-                if (_drawingPolyline_active && _drawingPolyline_points.Count >= 2)
+            {
+                int need = (_drawingPolyline_active &&
+                            _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline) ? 3 : 2;
+                if (_drawingPolyline_active && _drawingPolyline_points.Count >= need)
                 {
                     FinishPolylineShape();
                     e.Handled = true;
                 }
                 break;
+            }
 
             // 글상자(부유 객체) 자체의 복사/잘라내기/붙여넣기.
             // 안쪽 본문(InnerEditor)이 포커스 중이면 가로채지 않고 RichTextBox 의
@@ -1043,7 +1047,8 @@ public partial class MainWindow : Window
 
     private void OnInsertShapeRequested(object? sender, PolyDonky.Core.ShapeKind kind)
     {
-        if (kind is ShapeKind.Polyline or ShapeKind.Spline)
+        if (kind is ShapeKind.Polyline or ShapeKind.Spline
+                 or ShapeKind.Polygon or ShapeKind.ClosedSpline)
         {
             _drawingPolyline_active = true;
             _drawingPolyline_kind   = kind;
@@ -1119,7 +1124,8 @@ public partial class MainWindow : Window
             {
                 // 더블클릭: ClickCount==1 단계에서 이미 그 위치에 점이 추가되었으므로
                 // 그대로 마감하면 더블클릭 위치가 마지막 점이 된다.
-                if (_drawingPolyline_points.Count >= 2)
+                int need = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
+                if (_drawingPolyline_points.Count >= need)
                     FinishPolylineShape();
                 else
                     EndDrawingMode();
@@ -1237,8 +1243,9 @@ public partial class MainWindow : Window
         // 우클릭 컨텍스트 메뉴 — 폴리선/스플라인 입력 제어
         var menu = new ContextMenu { PlacementTarget = PaperBorder };
 
+        int finishMin = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
         var itemFinish = new MenuItem { Header = "완료(_F)" };
-        itemFinish.IsEnabled = _drawingPolyline_points.Count >= 2;
+        itemFinish.IsEnabled = _drawingPolyline_points.Count >= finishMin;
         itemFinish.Click += (_, _) => FinishPolylineShape();
 
         var itemUndo = new MenuItem { Header = "마지막 점 취소(_Z)" };
@@ -1284,7 +1291,9 @@ public partial class MainWindow : Window
     {
         const double DipsPerMm = TextBoxOverlay.DipsPerMm;
         var pts = _drawingPolyline_points;
-        if (pts.Count < 2) { EndDrawingMode(); return; }
+        // 닫힌 면(Polygon/ClosedSpline)은 최소 3점, 열린 선은 최소 2점 필요.
+        int minPts = _drawingPolyline_kind is ShapeKind.Polygon or ShapeKind.ClosedSpline ? 3 : 2;
+        if (pts.Count < minPts) { EndDrawingMode(); return; }
 
         // 바운딩박스 계산
         double minX = double.MaxValue, minY = double.MaxValue;
@@ -1310,7 +1319,9 @@ public partial class MainWindow : Window
             OverlayYMm        = minY / DipsPerMm,
             StrokeColor       = "#2C3E50",
             StrokeThicknessPt = 1.5,
-            FillColor         = null,
+            FillColor         = kind is PolyDonky.Core.ShapeKind.Polygon
+                                     or PolyDonky.Core.ShapeKind.ClosedSpline
+                                 ? "#7FB3D9" : null,
             FillOpacity       = 0.7,
             Status            = NodeStatus.Modified,
         };
