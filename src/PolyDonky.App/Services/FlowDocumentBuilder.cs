@@ -312,7 +312,7 @@ public static class FlowDocumentBuilder
     /// 오버레이 Canvas 에 배치할 표 시각 요소를 생성한다.
     /// System.Windows.Controls.Grid 기반으로 셀 테두리·배경·텍스트를 렌더링한다.
     /// </summary>
-    internal static System.Windows.Controls.FrameworkElement? BuildOverlayTableControl(Table table)
+    internal static System.Windows.FrameworkElement? BuildOverlayTableControl(Table table)
     {
         if (table.Rows.Count == 0 || table.Columns.Count == 0) return null;
 
