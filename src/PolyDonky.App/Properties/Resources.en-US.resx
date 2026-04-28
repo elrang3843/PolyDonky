@@ -107,6 +107,7 @@
   <data name="StatusDocClosed" xml:space="preserve"><value>Document closed.</value></data>
   <data name="StatusDrawTextBox" xml:space="preserve"><value>Drag a region for the text box. (Esc to cancel)</value></data>
   <data name="StatusDrawShape" xml:space="preserve"><value>Drag a region for the shape. (Esc to cancel)</value></data>
+  <data name="StatusDrawPolyline" xml:space="preserve"><value>Click to add a point, double-click to finish. (Esc to cancel)</value></data>
 
   <!-- Common dialogs -->
   <data name="DlgOK" xml:space="preserve"><value>OK</value></data>

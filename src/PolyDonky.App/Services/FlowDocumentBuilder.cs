@@ -695,7 +695,35 @@ public static class FlowDocumentBuilder
                 if (pts.Count < 2) goto default;
                 var pg  = new WpfMedia.PathGeometry();
                 var fig = new WpfMedia.PathFigure { StartPoint = pts[0] };
-                fig.Segments.Add(new WpfMedia.PolyBezierSegment(pts.Skip(1), true));
+
+                if (pts.Count == 2)
+                {
+                    // 점이 2개면 그냥 직선
+                    fig.Segments.Add(new WpfMedia.LineSegment(pts[1], true));
+                }
+                else
+                {
+                    // Catmull-Rom 스플라인을 cubic Bezier 로 변환:
+                    // 각 구간 P[i] → P[i+1] 의 제어점은 좌우 이웃점에서 1/6 만큼 떨어진 위치.
+                    // 양 끝 구간은 이웃이 없으므로 자기 자신을 사용한다.
+                    for (int i = 0; i < pts.Count - 1; i++)
+                    {
+                        var p0 = i == 0 ? pts[i] : pts[i - 1];
+                        var p1 = pts[i];
+                        var p2 = pts[i + 1];
+                        var p3 = i + 2 < pts.Count ? pts[i + 2] : pts[i + 1];
+
+                        var c1 = new Point(
+                            p1.X + (p2.X - p0.X) / 6.0,
+                            p1.Y + (p2.Y - p0.Y) / 6.0);
+                        var c2 = new Point(
+                            p2.X - (p3.X - p1.X) / 6.0,
+                            p2.Y - (p3.Y - p1.Y) / 6.0);
+
+                        fig.Segments.Add(new WpfMedia.BezierSegment(c1, c2, p2, true));
+                    }
+                }
+
                 pg.Figures.Add(fig);
                 return pg;
             }
