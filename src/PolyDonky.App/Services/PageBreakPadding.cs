@@ -126,19 +126,47 @@ public sealed class PageBreakPadder
         {
             double pageBodyEndY = padTop + (pageIndex + 1) * bodyHeight + pageIndex * syntheticH;
 
-            // 본문을 끝에서부터 훑어 이 Y 를 넘어가는 첫 블록을 찾음.
             // GetCharacterRect 는 layout 갱신이 필요할 수 있어 UpdateLayout 먼저.
             _editor.UpdateLayout();
 
+            // sentinel 제외한 블록 리스트
+            var liveBlocks = doc.Blocks.Where(b => !IsPagePadding(b)).ToList();
+            if (liveBlocks.Count == 0) break;
+
             Wpf.Block? firstOverflow = null;
-            foreach (var b in doc.Blocks)
+            for (int i = 0; i < liveBlocks.Count; i++)
             {
-                Rect rect;
-                try { rect = b.ContentStart.GetCharacterRect(LogicalDirection.Forward); }
-                catch { continue; }
-                if (double.IsInfinity(rect.Y) || double.IsNaN(rect.Y)) continue;
-                // 블록 시작 Y 가 페이지 끝을 이미 넘었으면 이 블록은 다음 페이지로 밀려야 함.
-                if (rect.Y >= pageBodyEndY)
+                var b = liveBlocks[i];
+
+                double startY = TryGetTopY(b);
+                if (double.IsNaN(startY)) continue;
+
+                // 시작 Y 가 이미 페이지 끝을 넘으면 → 이 블록부터 다음 페이지로 가야 함
+                if (startY >= pageBodyEndY)
+                {
+                    firstOverflow = b;
+                    break;
+                }
+
+                // 시작은 이 페이지 안이지만 *끝* 이 페이지 경계를 넘는지 확인.
+                // 다음 블록의 시작 Y = 현재 블록의 끝 Y. 마지막 블록이면 ContentEnd.Bottom 사용.
+                // 끝이 넘으면 (단락이 페이지 경계를 가로지르면) 통째로 다음 페이지로 밀어낸다 (블록 분할은 안 함).
+                double endY = double.NaN;
+                if (i + 1 < liveBlocks.Count)
+                {
+                    endY = TryGetTopY(liveBlocks[i + 1]);
+                }
+                if (double.IsNaN(endY))
+                {
+                    try
+                    {
+                        var endRect = b.ContentEnd.GetCharacterRect(LogicalDirection.Backward);
+                        if (!double.IsInfinity(endRect.Y) && !double.IsNaN(endRect.Y))
+                            endY = endRect.Y + endRect.Height;
+                    }
+                    catch { }
+                }
+                if (!double.IsNaN(endY) && endY > pageBodyEndY)
                 {
                     firstOverflow = b;
                     break;
@@ -152,6 +180,21 @@ public sealed class PageBreakPadder
 
             pageIndex++;
             if (pageIndex > 1000) break; // 안전 한계 — 무한 루프 방지
+        }
+    }
+
+    /// <summary>블록의 화면상 위쪽 Y 좌표 (BodyEditor 좌표계). 측정 불가 시 NaN.</summary>
+    private static double TryGetTopY(Wpf.Block b)
+    {
+        try
+        {
+            var r = b.ContentStart.GetCharacterRect(LogicalDirection.Forward);
+            if (double.IsInfinity(r.Y) || double.IsNaN(r.Y)) return double.NaN;
+            return r.Y;
+        }
+        catch
+        {
+            return double.NaN;
         }
     }
 
