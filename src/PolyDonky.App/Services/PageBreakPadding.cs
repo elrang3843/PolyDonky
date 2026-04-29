@@ -1,8 +1,10 @@
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Threading;
 using PolyDonky.Core;
+using Wpf = System.Windows.Documents;
 
 namespace PolyDonky.App.Services;
 
@@ -78,7 +80,7 @@ public sealed class PageBreakPadder
     }
 
     /// <summary>해당 Block 이 합성 페이지 갭 패딩이면 true.</summary>
-    public static bool IsPagePadding(Block? block)
+    public static bool IsPagePadding(Wpf.Block? block)
         => block is not null && ReferenceEquals(block.Tag, PageBreakPaddingMarker.Instance);
 
     private void SafeRepaginate()
@@ -128,7 +130,7 @@ public sealed class PageBreakPadder
             // GetCharacterRect 는 layout 갱신이 필요할 수 있어 UpdateLayout 먼저.
             _editor.UpdateLayout();
 
-            Block? firstOverflow = null;
+            Wpf.Block? firstOverflow = null;
             foreach (var b in doc.Blocks)
             {
                 Rect rect;
@@ -153,7 +155,7 @@ public sealed class PageBreakPadder
         }
     }
 
-    private static Block BuildSyntheticPaddingBlock(double heightDip)
+    private static Wpf.Block BuildSyntheticPaddingBlock(double heightDip)
     {
         var spacer = new System.Windows.Controls.Border
         {
