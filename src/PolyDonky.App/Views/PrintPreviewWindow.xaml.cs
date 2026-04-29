@@ -220,7 +220,7 @@ public partial class PrintPreviewWindow : Window
 
             var overlays = BuildOverlays(docForBuild);
             DocumentPaginator paginator = overlays.Count > 0
-                ? new OverlayCompositingPaginator(innerPaginator, overlays, new Size(_pageWidthDip, _pageHeightDip), _monochrome, padT)
+                ? new OverlayCompositingPaginator(innerPaginator, overlays, new Size(_pageWidthDip, _pageHeightDip), _monochrome)
                 : _monochrome
                     ? new GrayscalePaginator(innerPaginator, new Size(_pageWidthDip, _pageHeightDip))
                     : innerPaginator;
@@ -379,7 +379,11 @@ public partial class PrintPreviewWindow : Window
 
     // ── 오버레이 합성 ────────────────────────────────────────────────────
 
-    private readonly record struct OverlayItem(UIElement Element, double X, double Y, bool Behind);
+    /// <summary>
+    /// 오버레이는 페이지-로컬 좌표를 직접 사용 — <see cref="PageIndex"/> 가 어느 페이지에
+    /// 그릴지 결정하고, X/Y 는 그 페이지 좌상단 기준 DIP 좌표.
+    /// </summary>
+    private readonly record struct OverlayItem(UIElement Element, int PageIndex, double X, double Y, bool Behind);
 
     private static List<OverlayItem> BuildOverlays(PolyDonkyument doc)
     {
@@ -388,6 +392,7 @@ public partial class PrintPreviewWindow : Window
         if (section is null) return list;
 
         // 통합 모델 — 도형·이미지·표·글상자 모두 section.Blocks 안에서 함께 순회.
+        // 좌표는 항상 (AnchorPageIndex, OverlayXMm/YMm) — 페이지 로컬.
         foreach (var block in section.Blocks)
         {
             switch (block)
@@ -399,7 +404,7 @@ public partial class PrintPreviewWindow : Window
                         Width  = Fdb.MmToDip(tb.WidthMm),
                         Height = Fdb.MmToDip(tb.HeightMm),
                     };
-                    list.Add(new OverlayItem(ctrl,
+                    list.Add(new OverlayItem(ctrl, tb.AnchorPageIndex,
                         Fdb.MmToDip(tb.OverlayXMm), Fdb.MmToDip(tb.OverlayYMm),
                         Behind: tb.WrapMode == ImageWrapMode.BehindText));
                     break;
@@ -409,7 +414,7 @@ public partial class PrintPreviewWindow : Window
                 {
                     var ctrl = Fdb.BuildOverlayImageControl(img);
                     if (ctrl is null) break;
-                    list.Add(new OverlayItem(ctrl,
+                    list.Add(new OverlayItem(ctrl, img.AnchorPageIndex,
                         Fdb.MmToDip(img.OverlayXMm), Fdb.MmToDip(img.OverlayYMm),
                         Behind: img.WrapMode == ImageWrapMode.BehindText));
                     break;
@@ -418,7 +423,7 @@ public partial class PrintPreviewWindow : Window
                                                             or ImageWrapMode.BehindText:
                 {
                     var ctrl = Fdb.BuildOverlayShapeControl(shape);
-                    list.Add(new OverlayItem(ctrl,
+                    list.Add(new OverlayItem(ctrl, shape.AnchorPageIndex,
                         Fdb.MmToDip(shape.OverlayXMm), Fdb.MmToDip(shape.OverlayYMm),
                         Behind: shape.WrapMode == ImageWrapMode.BehindText));
                     break;
@@ -427,7 +432,7 @@ public partial class PrintPreviewWindow : Window
                 {
                     var ctrl = Fdb.BuildOverlayTableControl(tbl);
                     if (ctrl is null) break;
-                    list.Add(new OverlayItem(ctrl,
+                    list.Add(new OverlayItem(ctrl, tbl.AnchorPageIndex,
                         Fdb.MmToDip(tbl.OverlayXMm), Fdb.MmToDip(tbl.OverlayYMm),
                         Behind: tbl.WrapMode == TableWrapMode.BehindText));
                     break;
@@ -448,34 +453,24 @@ public partial class PrintPreviewWindow : Window
         private readonly IReadOnlyList<OverlayItem> _overlays;
         private readonly Size   _pageSize;
         private readonly bool   _monochrome;
-        private readonly double _padTopDip;   // 미리보기 페이지별 상단 여백 (DIP)
 
         public OverlayCompositingPaginator(DocumentPaginator inner,
-            IReadOnlyList<OverlayItem> overlays, Size pageSize, bool monochrome,
-            double padTopDip)
+            IReadOnlyList<OverlayItem> overlays, Size pageSize, bool monochrome)
         {
             _inner      = inner;
             _overlays   = overlays;
             _pageSize   = pageSize;
             _monochrome = monochrome;
-            _padTopDip  = padTopDip;
         }
 
         public override DocumentPage GetPage(int pageNumber)
         {
             var inner = _inner.GetPage(pageNumber);
 
-            double pageTop    = pageNumber       * _pageSize.Height;
-            double pageBottom = (pageNumber + 1) * _pageSize.Height;
-
-            // MainWindow 연속 보기에는 페이지별 상단 여백이 없지만,
-            // 미리보기 paginator 는 각 페이지에 padT 를 추가한다.
-            // 2페이지 이후 오버레이가 padT 만큼 위로 올라가는 것을 보정한다.
-            double yCorrection = pageNumber > 0 ? _padTopDip : 0;
-
+            // 좌표가 이미 페이지 로컬 — PageIndex 가 일치하는 오버레이만 그 페이지에 그린다.
+            // 별도 Y 보정 불필요 (예전의 padT yCorrection 패치 제거됨).
             var pageOverlays = _overlays
-                .Where(ov => ov.Y >= pageTop && ov.Y < pageBottom)
-                .Select(ov => ov with { Y = ov.Y - pageTop + yCorrection })
+                .Where(ov => ov.PageIndex == pageNumber)
                 .ToList();
 
             DocumentPage result;

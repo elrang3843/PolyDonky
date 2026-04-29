@@ -71,7 +71,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // (Ctrl+클릭 오버레이 토글·멀티-선택 해제는 PaperBorder.PreviewMouseLeftButtonDown
+        // (Ctrl+클릭 오버레이 토글·멀티-선택 해제는 PaperHost.PreviewMouseLeftButtonDown
         //  통합 핸들러가 처리 — 오버레이 컨트롤은 BodyEditor 의 형제라 여기로는 안 옴.)
 
         var found = FindEmbeddedObjectAt(e.OriginalSource as System.Windows.DependencyObject, pt);
@@ -141,8 +141,7 @@ public partial class MainWindow : Window
             double top  = System.Windows.Controls.Canvas.GetTop(fe);
             if (double.IsNaN(left)) left = 0;
             if (double.IsNaN(top))  top  = 0;
-            img.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
-            img.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            CommitOverlayDragPosition(img, left, top);
             _viewModel?.MarkDirty();
         }
         e.Handled = true;
@@ -745,7 +744,7 @@ public partial class MainWindow : Window
                 {
                     _marqueeSelecting = false;
                     DrawPreviewRect.Visibility = Visibility.Collapsed;
-                    if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
+                    if (PaperHost.IsMouseCaptured) PaperHost.ReleaseMouseCapture();
                     e.Handled = true;
                 }
                 else if (_drawingTextBox || _drawingShape_active || _drawingPolyline_active)
@@ -841,7 +840,7 @@ public partial class MainWindow : Window
         // RichTextBox.Foreground 가 Run 까지 전파되지 않는다.
         // SetResourceReference 로 테마 사전을 동적 바인딩 — 테마 교체 시 자동 갱신.
         fd.SetResourceReference(System.Windows.Documents.FlowDocument.ForegroundProperty, "OnSurface");
-        // Background 는 PaperBorder 가 담당하므로 FlowDocument 는 투명으로 둔다.
+        // Background 는 PaperHost 가 담당하므로 FlowDocument 는 투명으로 둔다.
         fd.Background = Brushes.Transparent;
 
         _suppressTextChanged = true;
@@ -856,7 +855,7 @@ public partial class MainWindow : Window
             _suppressTextChanged = false;
         }
 
-        // 용지 크기·색상을 PaperBorder 에 반영
+        // 용지 크기·색상을 PaperHost 에 반영
         var page = _viewModel?.Document.Sections.FirstOrDefault()?.Page;
         ApplyPageSettings(page);
 
@@ -876,6 +875,8 @@ public partial class MainWindow : Window
         RebuildOverlayImages();     // 이미지 (ImageBlock)
         RebuildOverlayShapes();     // 도형 (ShapeObject)
         RebuildOverlayTables();     // 표 (Table)
+        // 오버레이가 새 페이지로 이동·생성될 수 있으므로 페이지 프레임도 다시 계산.
+        RebuildPageFrames();
     }
 
     /// <summary>
@@ -900,10 +901,9 @@ public partial class MainWindow : Window
             if (ctrl is null) continue;
 
             ctrl.Tag = img;
-            System.Windows.Controls.Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(img.OverlayXMm));
-            System.Windows.Controls.Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(img.OverlayYMm));
+            PlaceOverlay(ctrl, img);
             ctrl.Cursor = System.Windows.Input.Cursors.SizeAll;
-            // 우클릭은 PaperBorder.PreviewMouseRightButtonDown 통합 핸들러가 처리 — 개별 ContextMenu 불필요.
+            // 우클릭은 PaperHost.PreviewMouseRightButtonDown 통합 핸들러가 처리 — 개별 ContextMenu 불필요.
 
             // 좌클릭 → 드래그 시작 또는 더블클릭 시 속성 다이얼로그
             ctrl.MouseLeftButtonDown += OnOverlayImageMouseDown;
@@ -994,8 +994,7 @@ public partial class MainWindow : Window
             double top  = System.Windows.Controls.Canvas.GetTop(fe);
             if (double.IsNaN(left)) left = 0;
             if (double.IsNaN(top))  top  = 0;
-            img.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
-            img.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            CommitOverlayDragPosition(img, left, top);
             _viewModel?.MarkDirty();
         }
         e.Handled = true;
@@ -1022,103 +1021,189 @@ public partial class MainWindow : Window
         _viewModel?.MarkDirty();
     }
 
+    private PolyDonky.App.Services.PageGeometry? _pageGeometry;
+    private int _currentPageCount = 1;
+
     private void ApplyPageSettings(PolyDonky.Core.PageSettings? page)
     {
         if (page is null) return;
 
-        double padL = PolyDonky.App.Services.FlowDocumentBuilder.MmToDip(page.MarginLeftMm);
-        double padT = PolyDonky.App.Services.FlowDocumentBuilder.MmToDip(page.MarginTopMm);
-        double padR = PolyDonky.App.Services.FlowDocumentBuilder.MmToDip(page.MarginRightMm);
-        double padB = PolyDonky.App.Services.FlowDocumentBuilder.MmToDip(page.MarginBottomMm);
+        _pageGeometry = new PolyDonky.App.Services.PageGeometry(page);
 
-        // 용지 너비·높이 (세로·가로 방향 보정).
-        // Height 는 MinHeight 로 지정해 빈 문서도 한 페이지 분량으로 보이고, 본문이 길어지면 늘어난다.
-        PaperBorder.Width     = PolyDonky.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveWidthMm);
-        _pageHeightDip        = PolyDonky.App.Services.FlowDocumentBuilder.MmToDip(page.EffectiveHeightMm);
-        PaperBorder.MinHeight = _pageHeightDip;
+        // 용지 너비 — 모든 페이지에 동일 적용
+        PaperHost.Width = _pageGeometry.PageWidthDip;
+        _pageHeightDip  = _pageGeometry.PageHeightDip;
 
-        // 페이지 구분선을 위해 PaperBorder 크기 변화를 구독 (중복 등록 방지).
-        PaperBorder.SizeChanged -= OnPaperBorderSizeChanged;
-        PaperBorder.SizeChanged += OnPaperBorderSizeChanged;
+        // PaperHost 의 콘텐츠 높이 변화를 구독 (페이지 수 동적 갱신용)
+        PaperHost.SizeChanged -= OnPaperHostSizeChanged;
+        PaperHost.SizeChanged += OnPaperHostSizeChanged;
+        BodyEditor.SizeChanged -= OnBodyEditorSizeChanged;
+        BodyEditor.SizeChanged += OnBodyEditorSizeChanged;
 
-        // 여백을 RichTextBox Padding 으로 반영 — FlowDocument.PagePadding 은 RichTextBox 컨텍스트에서 무시됨
-        BodyEditor.Padding = new Thickness(padL, padT, padR, padB);
+        // 본문 RichTextBox 의 padding — 첫 페이지 상단에만 padT, 이하 좌우/하단은 단일 적용.
+        // (다중 페이지 동안 본문이 페이지 경계를 넘어 흐를 때 "다음 페이지 padT" 만큼의 합성 패딩은
+        //  후속 사이클에서 추가 — 지금은 시각 페이지만 분리하고 본문은 연속 흐름으로 둔다.)
+        BodyEditor.Padding = new Thickness(_pageGeometry.PadLeftDip, _pageGeometry.PadTopDip,
+                                          _pageGeometry.PadRightDip, _pageGeometry.PadBottomDip);
 
-        // 여백 안내선 위치 갱신
-        MarginGuideRect.Margin     = new Thickness(padL, padT, padR, padB);
-        MarginGuideRect.Visibility = page.ShowMarginGuides
-            ? System.Windows.Visibility.Visible
-            : System.Windows.Visibility.Collapsed;
+        // FlowDocument 본문 폭은 종이폭 − 좌여백 − 우여백
+        BodyEditor.Document.PageWidth =
+            PolyDonky.App.Services.FlowDocumentBuilder.ComputeContentWidthDip(page);
 
-        // 용지 배경색 — 지정된 경우 SolidColorBrush, 없으면 테마 Surface 동적 리소스
-        if (!string.IsNullOrEmpty(page.PaperColor))
+        // 페이지 프레임 다시 그리기 + 전체 호스트 크기 갱신
+        RebuildPageFrames();
+    }
+
+    private void OnPaperHostSizeChanged(object sender, SizeChangedEventArgs e) => RebuildPageFrames();
+    private void OnBodyEditorSizeChanged(object sender, SizeChangedEventArgs e) => RebuildPageFrames();
+
+    /// <summary>
+    /// PageBackgroundCanvas 에 페이지 별 흰색 Border (그림자 + 점선 여백 가이드 + "N페이지" 라벨)를 다시 그린다.
+    /// 페이지 수는 본문 콘텐츠 높이 + 오버레이 객체의 최대 AnchorPageIndex 중 큰 값으로 결정된다.
+    /// </summary>
+    private void RebuildPageFrames()
+    {
+        if (_pageGeometry is null) return;
+        var pg = _pageGeometry;
+
+        // 페이지 수 계산 — 본문 콘텐츠 높이 vs 오버레이 페이지 인덱스 max 중 큰 값
+        double bodyContentHeight = BodyEditor.ActualHeight > 0 ? BodyEditor.ActualHeight : pg.PageHeightDip;
+        int maxAnchorIndex = ComputeMaxAnchorPageIndex();
+        int pageCount = pg.ComputePageCount(bodyContentHeight, maxAnchorIndex);
+        _currentPageCount = pageCount;
+
+        // PaperHost 의 전체 높이 = N 페이지 + (N-1) 갭. MinHeight 로 적용해 본문이 더 길어지면 늘어남.
+        double totalHeight = pg.TotalHeightDip(pageCount);
+        if (Math.Abs(PaperHost.MinHeight - totalHeight) > 0.5)
+            PaperHost.MinHeight = totalHeight;
+
+        // PageBackgroundCanvas 클리어 후 페이지마다 다시 그리기.
+        PageBackgroundCanvas.Children.Clear();
+
+        var page = _viewModel?.Document.Sections.FirstOrDefault()?.Page;
+        bool showGuides = page?.ShowMarginGuides ?? true;
+        WpfMedia.Brush pageBg = ResolvePaperBackground(page);
+
+        for (int i = 0; i < pageCount; i++)
+        {
+            double topY = i * pg.PageStrideDip;
+
+            // 페이지 외곽 (흰색 Border + 그림자)
+            var pageBorder = new Border
+            {
+                Width  = pg.PageWidthDip,
+                Height = pg.PageHeightDip,
+                Background  = pageBg,
+                BorderBrush = (WpfMedia.Brush)FindResource("Divider"),
+                BorderThickness = new Thickness(0.5),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius   = 18,
+                    ShadowDepth  = 6,
+                    Opacity      = 0.38,
+                    Direction    = 270,
+                    Color        = WpfMedia.Colors.Black,
+                },
+                IsHitTestVisible = false,
+            };
+            System.Windows.Controls.Canvas.SetLeft(pageBorder, 0);
+            System.Windows.Controls.Canvas.SetTop (pageBorder, topY);
+            PageBackgroundCanvas.Children.Add(pageBorder);
+
+            // 여백 가이드 (점선 사각형) — 본문 영역
+            if (showGuides)
+            {
+                var guide = new System.Windows.Shapes.Rectangle
+                {
+                    Width  = pg.PageWidthDip - pg.PadLeftDip - pg.PadRightDip,
+                    Height = pg.PageHeightDip - pg.PadTopDip - pg.PadBottomDip,
+                    Stroke = new SolidColorBrush(WpfMedia.Color.FromArgb(0x66, 0x00, 0x78, 0xD4)),
+                    StrokeThickness = 0.7,
+                    StrokeDashArray = new System.Windows.Media.DoubleCollection { 4, 3 },
+                    Fill = WpfMedia.Brushes.Transparent,
+                    IsHitTestVisible = false,
+                };
+                System.Windows.Controls.Canvas.SetLeft(guide, pg.PadLeftDip);
+                System.Windows.Controls.Canvas.SetTop (guide, topY + pg.PadTopDip);
+                PageBackgroundCanvas.Children.Add(guide);
+            }
+
+            // 페이지 번호 라벨 (좌상단)
+            var label = new System.Windows.Controls.TextBlock
+            {
+                Text       = $"{i + 1}페이지",
+                FontSize   = 10,
+                Foreground = new SolidColorBrush(WpfMedia.Color.FromArgb(0xA0, 0x50, 0x50, 0xB4)),
+                IsHitTestVisible = false,
+            };
+            System.Windows.Controls.Canvas.SetLeft(label, 6);
+            System.Windows.Controls.Canvas.SetTop (label, topY + 2);
+            PageBackgroundCanvas.Children.Add(label);
+        }
+    }
+
+    // ── 오버레이 좌표 헬퍼 — 페이지-로컬 (AnchorPageIndex, X/Y mm) ↔ Canvas 절대 DIP ──
+
+    /// <summary>오버레이 컨트롤을 (AnchorPageIndex, OverlayXMm/YMm) 가 가리키는 Canvas 절대 위치에 배치.</summary>
+    private void PlaceOverlay(System.Windows.FrameworkElement ctrl, PolyDonky.Core.IOverlayAnchored anchor)
+    {
+        var pg = _pageGeometry;
+        if (pg is null) return;
+        var (xDip, yDip) = pg.ToAbsoluteDip(anchor.AnchorPageIndex, anchor.OverlayXMm, anchor.OverlayYMm);
+        System.Windows.Controls.Canvas.SetLeft(ctrl, xDip);
+        System.Windows.Controls.Canvas.SetTop (ctrl, yDip);
+    }
+
+    /// <summary>드래그 종료 후 Canvas 절대 좌표를 (AnchorPageIndex, OverlayXMm/YMm) 으로 분해해 모델에 반영.</summary>
+    private void CommitOverlayDragPosition(PolyDonky.Core.IOverlayAnchored anchor, double leftDip, double topDip)
+    {
+        var pg = _pageGeometry;
+        if (pg is null) return;
+        var (pageIndex, xMm, yMm) = pg.ToPageLocal(leftDip, topDip);
+        anchor.AnchorPageIndex = pageIndex;
+        anchor.OverlayXMm      = xMm;
+        anchor.OverlayYMm      = yMm;
+    }
+
+    /// <summary>현재 라이브 FlowDocument 의 모든 오버레이를 훑어 최대 AnchorPageIndex 반환.</summary>
+    private int ComputeMaxAnchorPageIndex()
+    {
+        int max = 0;
+        var section = _viewModel?.Document.Sections.FirstOrDefault();
+        if (section is not null)
+        {
+            foreach (var b in section.Blocks)
+            {
+                if (b is PolyDonky.Core.IOverlayAnchored a)
+                {
+                    if (a.AnchorPageIndex > max) max = a.AnchorPageIndex;
+                }
+            }
+        }
+        // 라이브 FlowDocument 의 anchor 단락도 확인 (동기화 직후가 아닐 수 있음)
+        foreach (var b in BodyEditor.Document.Blocks)
+        {
+            if (b.Tag is PolyDonky.Core.IOverlayAnchored a)
+            {
+                if (a.AnchorPageIndex > max) max = a.AnchorPageIndex;
+            }
+        }
+        return max;
+    }
+
+    /// <summary>페이지 배경 브러시 — 사용자 지정 색상 우선, 없으면 테마 Surface 리소스.</summary>
+    private WpfMedia.Brush ResolvePaperBackground(PolyDonky.Core.PageSettings? page)
+    {
+        if (!string.IsNullOrEmpty(page?.PaperColor))
         {
             try
             {
-                // PolyDonky.Core.Color 와 충돌하므로 WpfMedia alias 로 명시.
                 var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(page.PaperColor)!;
-                PaperBorder.Background = new SolidColorBrush(c);
+                return new SolidColorBrush(c);
             }
-            catch
-            {
-                PaperBorder.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "Surface");
-            }
+            catch { /* 파싱 실패 시 테마 색상으로 폴백 */ }
         }
-        else
-        {
-            PaperBorder.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "Surface");
-        }
-
-        // FlowDocument.PageWidth 를 본문 폭(종이 폭 − 좌여백 − 우여백)으로 갱신.
-        // Build() 에서 초기값을 설정하지만, 여백 변경 시에도 즉시 반영되어야
-        // 우측 정렬 객체(WrapRight Floater 등)가 정확한 위치에 그려진다.
-        BodyEditor.Document.PageWidth =
-            PolyDonky.App.Services.FlowDocumentBuilder.ComputeContentWidthDip(page);
-    }
-
-    private void OnPaperBorderSizeChanged(object sender, SizeChangedEventArgs e)
-        => UpdatePageBreakLines();
-
-    private void UpdatePageBreakLines()
-    {
-        PageBreakCanvas.Children.Clear();
-        if (_pageHeightDip <= 0) return;
-
-        double totalHeight = PaperBorder.ActualHeight;
-        if (totalHeight <= _pageHeightDip) return;
-
-        double paperWidth = PaperBorder.ActualWidth;
-
-        // 페이지 경계마다 구분선 그리기. 첫 페이지 하단부터 시작.
-        for (double y = _pageHeightDip; y < totalHeight; y += _pageHeightDip)
-        {
-            // 구분선 (회색 실선)
-            var line = new System.Windows.Shapes.Line
-            {
-                X1 = 0,
-                Y1 = y,
-                X2 = paperWidth,
-                Y2 = y,
-                Stroke = new SolidColorBrush(WpfMedia.Color.FromArgb(160, 100, 100, 200)),
-                StrokeThickness = 1.5,
-                StrokeDashArray = new System.Windows.Media.DoubleCollection { 6, 3 },
-                SnapsToDevicePixels = true,
-            };
-            PageBreakCanvas.Children.Add(line);
-
-            // "--- 2페이지 ---" 레이블
-            int pageNum = (int)Math.Round(y / _pageHeightDip) + 1;
-            var label = new System.Windows.Controls.TextBlock
-            {
-                Text = $"─── {pageNum}페이지 ───",
-                FontSize = 10,
-                Foreground = new SolidColorBrush(WpfMedia.Color.FromArgb(160, 80, 80, 180)),
-                IsHitTestVisible = false,
-            };
-            System.Windows.Controls.Canvas.SetLeft(label, 4);
-            System.Windows.Controls.Canvas.SetTop(label, y + 2);
-            PageBreakCanvas.Children.Add(label);
-        }
+        return (WpfMedia.Brush)FindResource("Surface");
     }
 
     private void OnEditorTextChanged(object sender, TextChangedEventArgs e)
@@ -2227,10 +2312,10 @@ public partial class MainWindow : Window
         {
             // 모드 전환 전 화면 위치 캡처 — overlay 모드(InFrontOfText/BehindText) 로 전환 시
             // 페이지 좌상단(0,0) 으로 점프하지 않고 현재 위치를 그대로 유지하도록 한다.
-            // PaperBorder 기준 좌표 = OverlayImageCanvas/UnderlayImageCanvas 좌표.
+            // PaperHost 기준 좌표 = OverlayImageCanvas/UnderlayImageCanvas 좌표.
             var prevMode = imageBlock.WrapMode;
             Point currentPos;
-            try { currentPos = imgControl.TransformToVisual(PaperBorder).Transform(new Point(0, 0)); }
+            try { currentPos = imgControl.TransformToVisual(PaperHost).Transform(new Point(0, 0)); }
             catch { currentPos = new Point(0, 0); }
 
             var dlg = new ImagePropertiesWindow(imageBlock) { Owner = this };
@@ -2242,10 +2327,10 @@ public partial class MainWindow : Window
                                   or PolyDonky.Core.ImageWrapMode.BehindText)
                     && imageBlock.WrapMode is (PolyDonky.Core.ImageWrapMode.InFrontOfText
                                             or PolyDonky.Core.ImageWrapMode.BehindText);
-                if (toOverlay && imageBlock.OverlayXMm == 0 && imageBlock.OverlayYMm == 0)
+                if (toOverlay && imageBlock.AnchorPageIndex == 0
+                    && imageBlock.OverlayXMm == 0 && imageBlock.OverlayYMm == 0)
                 {
-                    imageBlock.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(currentPos.X);
-                    imageBlock.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(currentPos.Y);
+                    CommitOverlayDragPosition(imageBlock, currentPos.X, currentPos.Y);
                 }
 
                 // WrapMode 변경 시 컨테이너 종류가 달라질 수 있음
@@ -2344,7 +2429,7 @@ public partial class MainWindow : Window
         if (_viewModel is null) return;
         // 뷰포트 너비에서 PaperStackPanel 좌우 여백(32+32) 을 빼고 용지 논리 너비로 나눈다.
         const double hMargin = 64;
-        double paperW = PaperBorder.Width;
+        double paperW = PaperHost.Width;
         double viewW  = EditorScrollViewer.ViewportWidth;
         if (paperW <= 0 || viewW <= 0) return;
         _viewModel.ZoomPercent = (viewW - hMargin) / paperW * 100;
@@ -2355,8 +2440,8 @@ public partial class MainWindow : Window
         if (_viewModel is null) return;
         const double hMargin = 64; // StackPanel 좌우 여백
         const double vMargin = 76; // StackPanel 상(28)+하(48) 여백
-        double paperW = PaperBorder.Width;
-        double paperH = PaperBorder.MinHeight; // 콘텐츠가 길어도 한 페이지 분량 기준
+        double paperW = PaperHost.Width;
+        double paperH = PaperHost.MinHeight; // 콘텐츠가 길어도 한 페이지 분량 기준
         double viewW  = EditorScrollViewer.ViewportWidth;
         double viewH  = EditorScrollViewer.ViewportHeight;
         if (paperW <= 0 || paperH <= 0 || viewW <= 0 || viewH <= 0) return;
@@ -2429,7 +2514,7 @@ public partial class MainWindow : Window
         ClearPolylinePreview();
         Mouse.OverrideCursor = null;
         DrawPreviewRect.Visibility = Visibility.Collapsed;
-        if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
+        if (PaperHost.IsMouseCaptured) PaperHost.ReleaseMouseCapture();
         if (_viewModel is not null) _viewModel.StatusMessage = SR.StatusReady;
     }
 
@@ -2480,9 +2565,9 @@ public partial class MainWindow : Window
         // ── 폴리선/스플라인 클릭 입력 모드 ──────────────────────────────
         if (_drawingPolyline_active)
         {
-            var pos = e.GetPosition(PaperBorder);
-            pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-            pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+            var pos = e.GetPosition(PaperHost);
+            pos.X = Math.Clamp(pos.X, 0, PaperHost.ActualWidth);
+            pos.Y = Math.Clamp(pos.Y, 0, PaperHost.ActualHeight);
 
             if (e.ClickCount >= 2)
             {
@@ -2515,7 +2600,7 @@ public partial class MainWindow : Window
 
         // ── Ctrl+클릭 → 오버레이 개체 멀티-선택 토글 (그리기 모드 아닐 때) ──────────
         // 오버레이(이미지/도형/표/글상자) 컨트롤은 BodyEditor 의 형제(같은 Grid)이므로
-        // BodyEditor.PreviewMouseLeftButtonDown 으로는 잡히지 않는다. PaperBorder 의
+        // BodyEditor.PreviewMouseLeftButtonDown 으로는 잡히지 않는다. PaperHost 의
         // tunneling preview 가 부모이므로 여기서 가로채야 한다.
         // e.Handled = true 로 마킹하면 오버레이 자신의 bubbling MouseLeftButtonDown 핸들러
         // (드래그 시작 등) 가 호출되지 않는다 — `+=` 로 등록된 핸들러 기본 동작.
@@ -2562,7 +2647,7 @@ public partial class MainWindow : Window
             if (!alt && !shift)
             {
                 var ptEditor2 = e.GetPosition(BodyEditor);
-                var ptPaper2  = e.GetPosition(PaperBorder);
+                var ptPaper2  = e.GetPosition(PaperHost);
                 var hitCtrl2  = FindAnyOverlayControlAt(ptEditor2);
 
                 // 용지 여백 영역: BodyEditor Padding 의 바깥쪽
@@ -2578,8 +2663,8 @@ public partial class MainWindow : Window
                 {
                     if (!ctrl) ClearMultiSelect();
 
-                    ptPaper2.X = Math.Clamp(ptPaper2.X, 0, PaperBorder.ActualWidth);
-                    ptPaper2.Y = Math.Clamp(ptPaper2.Y, 0, PaperBorder.ActualHeight);
+                    ptPaper2.X = Math.Clamp(ptPaper2.X, 0, PaperHost.ActualWidth);
+                    ptPaper2.Y = Math.Clamp(ptPaper2.Y, 0, PaperHost.ActualHeight);
 
                     _drawStart = ptPaper2;
                     _marqueeSelecting = true;
@@ -2590,7 +2675,7 @@ public partial class MainWindow : Window
                     DrawPreviewRect.Height = 0;
                     DrawPreviewRect.Visibility = Visibility.Visible;
 
-                    PaperBorder.CaptureMouse();
+                    PaperHost.CaptureMouse();
                     e.Handled = true;
                     return;
                 }
@@ -2599,9 +2684,9 @@ public partial class MainWindow : Window
 
         if (!_drawingTextBox && !_drawingShape_active) return;
 
-        var startPos = e.GetPosition(PaperBorder);
-        startPos.X = Math.Clamp(startPos.X, 0, PaperBorder.ActualWidth);
-        startPos.Y = Math.Clamp(startPos.Y, 0, PaperBorder.ActualHeight);
+        var startPos = e.GetPosition(PaperHost);
+        startPos.X = Math.Clamp(startPos.X, 0, PaperHost.ActualWidth);
+        startPos.Y = Math.Clamp(startPos.Y, 0, PaperHost.ActualHeight);
 
         _drawStart = startPos;
         _drawingInProgress = true;
@@ -2612,7 +2697,7 @@ public partial class MainWindow : Window
         DrawPreviewRect.Height = 0;
         DrawPreviewRect.Visibility = Visibility.Visible;
 
-        PaperBorder.CaptureMouse();
+        PaperHost.CaptureMouse();
         e.Handled = true;
     }
 
@@ -2620,16 +2705,16 @@ public partial class MainWindow : Window
     {
         if (_drawingPolyline_active && _drawingPolyline_points.Count > 0)
         {
-            var pos = e.GetPosition(PaperBorder);
-            pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-            pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+            var pos = e.GetPosition(PaperHost);
+            pos.X = Math.Clamp(pos.X, 0, PaperHost.ActualWidth);
+            pos.Y = Math.Clamp(pos.Y, 0, PaperHost.ActualHeight);
             UpdatePolylinePreview(pos);
             return;
         }
 
-        var pos2 = e.GetPosition(PaperBorder);
-        pos2.X = Math.Clamp(pos2.X, 0, PaperBorder.ActualWidth);
-        pos2.Y = Math.Clamp(pos2.Y, 0, PaperBorder.ActualHeight);
+        var pos2 = e.GetPosition(PaperHost);
+        pos2.X = Math.Clamp(pos2.X, 0, PaperHost.ActualWidth);
+        pos2.Y = Math.Clamp(pos2.Y, 0, PaperHost.ActualHeight);
 
         double x2 = Math.Min(_drawStart.X, pos2.X);
         double y2 = Math.Min(_drawStart.Y, pos2.Y);
@@ -2661,11 +2746,11 @@ public partial class MainWindow : Window
         {
             _marqueeSelecting = false;
             DrawPreviewRect.Visibility = Visibility.Collapsed;
-            if (PaperBorder.IsMouseCaptured) PaperBorder.ReleaseMouseCapture();
+            if (PaperHost.IsMouseCaptured) PaperHost.ReleaseMouseCapture();
 
-            var mPos = e.GetPosition(PaperBorder);
-            mPos.X = Math.Clamp(mPos.X, 0, PaperBorder.ActualWidth);
-            mPos.Y = Math.Clamp(mPos.Y, 0, PaperBorder.ActualHeight);
+            var mPos = e.GetPosition(PaperHost);
+            mPos.X = Math.Clamp(mPos.X, 0, PaperHost.ActualWidth);
+            mPos.Y = Math.Clamp(mPos.Y, 0, PaperHost.ActualHeight);
 
             double mx = Math.Min(_drawStart.X, mPos.X);
             double my = Math.Min(_drawStart.Y, mPos.Y);
@@ -2683,9 +2768,9 @@ public partial class MainWindow : Window
 
         if (!_drawingInProgress) return;
 
-        var pos = e.GetPosition(PaperBorder);
-        pos.X = Math.Clamp(pos.X, 0, PaperBorder.ActualWidth);
-        pos.Y = Math.Clamp(pos.Y, 0, PaperBorder.ActualHeight);
+        var pos = e.GetPosition(PaperHost);
+        pos.X = Math.Clamp(pos.X, 0, PaperHost.ActualWidth);
+        pos.Y = Math.Clamp(pos.Y, 0, PaperHost.ActualHeight);
 
         double x = Math.Min(_drawStart.X, pos.X);
         double y = Math.Min(_drawStart.Y, pos.Y);
@@ -2710,15 +2795,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 드래그된 PaperHost 절대 좌표를 (AnchorPageIndex, OverlayXMm/YMm) 으로 분해.
         var model = new TextBoxObject
         {
-            Shape       = _drawingShape,
-            OverlayXMm  = x / TextBoxOverlay.DipsPerMm,
-            OverlayYMm  = y / TextBoxOverlay.DipsPerMm,
-            WidthMm     = w / TextBoxOverlay.DipsPerMm,
-            HeightMm    = h / TextBoxOverlay.DipsPerMm,
-            Status      = NodeStatus.Modified,
+            Shape    = _drawingShape,
+            WidthMm  = w / TextBoxOverlay.DipsPerMm,
+            HeightMm = h / TextBoxOverlay.DipsPerMm,
+            Status   = NodeStatus.Modified,
         };
+        CommitOverlayDragPosition(model, x, y);
         _viewModel?.AddOverlayBlockToCurrentSection(model);
         var overlay = AddTextBoxOverlay(model);
         SelectOverlay(overlay);
@@ -2788,7 +2873,7 @@ public partial class MainWindow : Window
             if (_drawingPolyline_points.Count > 0)
             {
                 _drawingPolyline_points.RemoveAt(_drawingPolyline_points.Count - 1);
-                var curPos = Mouse.GetPosition(PaperBorder);
+                var curPos = Mouse.GetPosition(PaperHost);
                 if (_drawingPolyline_points.Count > 0) UpdatePolylinePreview(curPos);
                 else                                   ClearPolylinePreview();
             }
@@ -2839,11 +2924,11 @@ public partial class MainWindow : Window
 
     private void OpenContextMenu(ContextMenu menu)
     {
-        menu.PlacementTarget = PaperBorder;
+        menu.PlacementTarget = PaperHost;
         menu.IsOpen = true;
     }
 
-    /// <summary>Canvas 자식 중 PaperBorder/BodyEditor 기준 좌표 pt 아래 첫 번째 요소를 반환.</summary>
+    /// <summary>Canvas 자식 중 PaperHost/BodyEditor 기준 좌표 pt 아래 첫 번째 요소를 반환.</summary>
     private static FrameworkElement? FindCanvasChildAt(Canvas canvas, Point pt)
     {
         foreach (UIElement child in canvas.Children)
@@ -2888,8 +2973,6 @@ public partial class MainWindow : Window
             WrapMode          = PolyDonky.Core.ImageWrapMode.InFrontOfText,
             WidthMm           = wDip / DipsPerMm,
             HeightMm          = hDip / DipsPerMm,
-            OverlayXMm        = minX / DipsPerMm,
-            OverlayYMm        = minY / DipsPerMm,
             StrokeColor       = "#2C3E50",
             StrokeThicknessPt = 1.5,
             FillColor         = kind is PolyDonky.Core.ShapeKind.Polygon
@@ -2898,6 +2981,7 @@ public partial class MainWindow : Window
             FillOpacity       = 0.7,
             Status            = NodeStatus.Modified,
         };
+        CommitOverlayDragPosition(shape, minX, minY);
 
         // 점들을 바운딩박스 기준 상대 좌표(mm) 로 저장
         foreach (var pt in pts)
@@ -2924,8 +3008,6 @@ public partial class MainWindow : Window
             WrapMode          = PolyDonky.Core.ImageWrapMode.InFrontOfText,
             WidthMm           = wDip / DipsPerMm,
             HeightMm          = hDip / DipsPerMm,
-            OverlayXMm        = xDip / DipsPerMm,
-            OverlayYMm        = yDip / DipsPerMm,
             StrokeColor       = "#2C3E50",
             StrokeThicknessPt = 1.5,
             FillColor         = kind is PolyDonky.Core.ShapeKind.Line
@@ -2935,6 +3017,7 @@ public partial class MainWindow : Window
             FillOpacity = 0.7,
             Status      = NodeStatus.Modified,
         };
+        CommitOverlayDragPosition(shape, xDip, yDip);
 
         // Line 계열: 드래그 방향을 바운딩박스 기준 상대 좌표(mm)로 저장.
         // _drawStart 가 bounding-box 어느 모서리인지는 (_drawStart - topLeft) 로 결정된다.
@@ -2990,11 +3073,10 @@ public partial class MainWindow : Window
 
             var ctrl = Services.FlowDocumentBuilder.BuildOverlayShapeControl(shape);
             ctrl.Tag = shape;
-            Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(shape.OverlayXMm));
-            Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(shape.OverlayYMm));
+            PlaceOverlay(ctrl, shape);
             ctrl.Cursor = Cursors.SizeAll;
 
-            // 우클릭은 PaperBorder.PreviewMouseRightButtonDown 통합 핸들러가 처리 — 개별 ContextMenu 불필요.
+            // 우클릭은 PaperHost.PreviewMouseRightButtonDown 통합 핸들러가 처리 — 개별 ContextMenu 불필요.
             ctrl.MouseLeftButtonDown += OnOverlayShapeMouseDown;
 
             var canvas = shape.WrapMode == PolyDonky.Core.ImageWrapMode.BehindText
@@ -3019,8 +3101,7 @@ public partial class MainWindow : Window
             if (ctrl is null) continue;
 
             ctrl.Tag = table;
-            Canvas.SetLeft(ctrl, Services.FlowDocumentBuilder.MmToDip(table.OverlayXMm));
-            Canvas.SetTop(ctrl,  Services.FlowDocumentBuilder.MmToDip(table.OverlayYMm));
+            PlaceOverlay(ctrl, table);
             ctrl.Cursor = Cursors.SizeAll;
             ctrl.MouseLeftButtonDown += OnOverlayTableMouseDown;
 
@@ -3140,8 +3221,7 @@ public partial class MainWindow : Window
             double top  = Canvas.GetTop(fe);
             if (double.IsNaN(left)) left = 0;
             if (double.IsNaN(top))  top  = 0;
-            t.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
-            t.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            CommitOverlayDragPosition(t, left, top);
             _viewModel?.MarkDirty();
         }
         e.Handled = true;
@@ -3237,8 +3317,7 @@ public partial class MainWindow : Window
             double top  = Canvas.GetTop(fe);
             if (double.IsNaN(left)) left = 0;
             if (double.IsNaN(top))  top  = 0;
-            s.OverlayXMm = Services.FlowDocumentBuilder.DipToMm(left);
-            s.OverlayYMm = Services.FlowDocumentBuilder.DipToMm(top);
+            CommitOverlayDragPosition(s, left, top);
             _viewModel?.MarkDirty();
         }
         e.Handled = true;
@@ -3300,8 +3379,7 @@ public partial class MainWindow : Window
     private TextBoxOverlay AddTextBoxOverlay(TextBoxObject model)
     {
         var overlay = new TextBoxOverlay(model);
-        Canvas.SetLeft(overlay, model.OverlayXMm * TextBoxOverlay.DipsPerMm);
-        Canvas.SetTop(overlay,  model.OverlayYMm * TextBoxOverlay.DipsPerMm);
+        PlaceOverlay(overlay, model);
         overlay.Width  = model.WidthMm  * TextBoxOverlay.DipsPerMm;
         overlay.Height = model.HeightMm * TextBoxOverlay.DipsPerMm;
 
@@ -3339,11 +3417,10 @@ public partial class MainWindow : Window
 
         overlay.GeometryChangedCommitted += (_, _) =>
         {
-            // Canvas DIP → mm 동기화. NaN 방어 (SetLeft 직후라 정상이지만 안전).
+            // Canvas 절대 DIP → (페이지 인덱스, 페이지 로컬 mm) 변환.
             double left = Canvas.GetLeft(overlay); if (double.IsNaN(left)) left = 0;
             double top  = Canvas.GetTop(overlay);  if (double.IsNaN(top))  top  = 0;
-            model.OverlayXMm = left / TextBoxOverlay.DipsPerMm;
-            model.OverlayYMm = top  / TextBoxOverlay.DipsPerMm;
+            CommitOverlayDragPosition(model, left, top);
             model.WidthMm    = overlay.ActualWidth  / TextBoxOverlay.DipsPerMm;
             model.HeightMm   = overlay.ActualHeight / TextBoxOverlay.DipsPerMm;
             model.Status     = NodeStatus.Modified;
@@ -3634,7 +3711,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 마퀴 사각형(PaperBorder 좌표) 안에 위치하는 모든 오버레이 개체를 선택하고
+    /// 마퀴 사각형(PaperHost 좌표) 안에 위치하는 모든 오버레이 개체를 선택하고
     /// 본문 텍스트 블록도 해당 범위로 선택한다.
     /// </summary>
     private void ApplyMarqueeSelection(Rect marqueePaper, bool addToExisting)
@@ -3659,7 +3736,7 @@ public partial class MainWindow : Window
             }
         }
 
-        // 본문 텍스트: BodyEditor 좌표 = PaperBorder 좌표 (같은 Grid)
+        // 본문 텍스트: BodyEditor 좌표 = PaperHost 좌표 (같은 Grid)
         // GetPositionFromPoint 로 시작·끝 TextPointer 를 구해 Selection 을 설정한다.
         try
         {

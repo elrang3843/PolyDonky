@@ -51,16 +51,19 @@ public enum TextBoxVAlign { Top = 0, Middle = 1, Bottom = 2 }
 /// 도형·이미지·표와 동일한 <see cref="ImageWrapMode"/> 배치 체계 + <see cref="OverlayXMm"/>/
 /// <see cref="OverlayYMm"/> 좌표 체계를 공유한다 (IWPF 통합 모델).
 /// </summary>
-public sealed class TextBoxObject : Block
+public sealed class TextBoxObject : Block, IOverlayAnchored
 {
     public TextBoxShape Shape { get; set; } = TextBoxShape.Rectangle;
 
     /// <summary>본문과의 배치 관계. 글상자 기본은 InFrontOfText (텍스트 위에 떠있음).</summary>
     public ImageWrapMode WrapMode { get; set; } = ImageWrapMode.InFrontOfText;
 
-    /// <summary>오버레이 X 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 anchoring — 0-based 페이지 인덱스 (0 = 첫 페이지).</summary>
+    public int AnchorPageIndex { get; set; }
+
+    /// <summary>오버레이 X 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayXMm { get; set; }
-    /// <summary>오버레이 Y 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
 
     public double WidthMm { get; set; }

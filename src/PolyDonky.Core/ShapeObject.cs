@@ -60,7 +60,7 @@ public sealed class ShapePoint
 ///   <item>Star : <see cref="SideCount"/> (뾰족 수) + <see cref="InnerRadiusRatio"/> 로 결정.</item>
 /// </list>
 /// </summary>
-public sealed class ShapeObject : Block
+public sealed class ShapeObject : Block, IOverlayAnchored
 {
     // Line = 0 (enum default) 인 도형이 WhenWritingDefault 정책으로 JSON 에서 누락되어
     // 역직렬화 시 Rectangle(C# 기본값) 로 복원되던 버그 → 항상 직렬화하도록 명시.
@@ -79,10 +79,13 @@ public sealed class ShapeObject : Block
     /// <summary>바운딩 박스 높이 (mm). Line 계열은 선 두께를 고려한 최소값.</summary>
     public double HeightMm { get; set; } = 30;
 
-    /// <summary>오버레이 모드(InFrontOfText/BehindText) X 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 anchoring — 0-based 페이지 인덱스 (0 = 첫 페이지).</summary>
+    public int AnchorPageIndex { get; set; }
+
+    /// <summary>오버레이 모드 X 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayXMm { get; set; }
 
-    /// <summary>오버레이 모드(InFrontOfText/BehindText) Y 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 모드 Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
 
     /// <summary>꼭짓점·제어점 목록 (mm, 바운딩 박스 좌상단 기준). Line/Polyline/Spline/Triangle 에 사용.</summary>

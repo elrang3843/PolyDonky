@@ -25,7 +25,7 @@ public enum ImageWrapMode
 /// 바이너리는 <see cref="Data"/> 에 직접 보관되지만, IWPF 패키징 시
 /// <see cref="ResourcePath"/> 가 채워지면 ZIP 의 resources/images/ 로 분리되고 Data 는 비워진다.
 /// </summary>
-public sealed class ImageBlock : Block
+public sealed class ImageBlock : Block, IOverlayAnchored
 {
     /// <summary>예: "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff".</summary>
     public string MediaType { get; set; } = "application/octet-stream";
@@ -63,9 +63,12 @@ public sealed class ImageBlock : Block
     /// <summary>테두리 두께 (pt). 0 이하면 테두리 없음.</summary>
     public double BorderThicknessPt { get; set; }
 
-    /// <summary>오버레이 모드(InFrontOfText/BehindText) X 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 anchoring — 0-based 페이지 인덱스 (0 = 첫 페이지).</summary>
+    public int AnchorPageIndex { get; set; }
+
+    /// <summary>오버레이 모드(InFrontOfText/BehindText) X 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayXMm { get; set; }
 
-    /// <summary>오버레이 모드(InFrontOfText/BehindText) Y 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 모드(InFrontOfText/BehindText) Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
 }

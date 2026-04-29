@@ -24,7 +24,7 @@ public enum CellTextAlign { Left, Center, Right, Justify }
 /// 셀 병합은 <see cref="TableCell.RowSpan"/> / <see cref="TableCell.ColumnSpan"/> 로 표현하고,
 /// 병합으로 사라진 자리에는 cell 을 두지 않는다 (HWPX/DOCX 양쪽과 호환되는 sparse 표현).
 /// </summary>
-public sealed class Table : Block
+public sealed class Table : Block, IOverlayAnchored
 {
     public IList<TableColumn> Columns { get; set; } = new List<TableColumn>();
     public IList<TableRow> Rows { get; set; } = new List<TableRow>();
@@ -36,9 +36,11 @@ public sealed class Table : Block
     public TableHAlign HAlign { get; set; } = TableHAlign.Left;
 
     // ── 오버레이 위치 (InFrontOfText/BehindText/Fixed) ───────────────
-    /// <summary>오버레이 모드 X 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 anchoring — 0-based 페이지 인덱스 (0 = 첫 페이지).</summary>
+    public int AnchorPageIndex { get; set; }
+    /// <summary>오버레이 모드 X 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayXMm { get; set; }
-    /// <summary>오버레이 모드 Y 위치 (mm, 페이지 좌상단 기준).</summary>
+    /// <summary>오버레이 모드 Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
 
     // ── 표 배경색 ────────────────────────────────────────────────────────

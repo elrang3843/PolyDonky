@@ -295,9 +295,12 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- 본문 영역 — 페이지 뷰: 종이가 캔버스 위에 떠 있는 형태.
-             ScrollViewer 가 스크롤을 담당하고 RichTextBox 는 내부 스크롤 없이 콘텐츠 높이로 늘어난다.
-             PaperBorder.Width / Background 는 code-behind 에서 PageSettings 에 맞춰 갱신한다. -->
+        <!-- 본문 영역 — 다중 페이지 뷰: 페이지마다 별도의 종이 모양 Border 가 스택되어
+             10 DIP 갭으로 분리된 형태. 본문 RichTextBox 는 모든 페이지를 가로질러
+             단일 인스턴스로 존재하며, 페이지 경계마다 합성 패딩 단락이 본문 흐름에 들어가
+             다음 페이지 본문이 정확히 그 페이지의 padT 위치에서 시작하도록 한다.
+             PaperHost.Width / 페이지 개수 / 배경색은 code-behind 에서 PageSettings·콘텐츠
+             길이에 맞춰 갱신한다. -->
         <ScrollViewer x:Name="EditorScrollViewer"
                       VerticalScrollBarVisibility="Visible"
                       HorizontalScrollBarVisibility="Visible"
@@ -307,70 +310,54 @@
                 <StackPanel.LayoutTransform>
                     <ScaleTransform ScaleX="{Binding ZoomScale}" ScaleY="{Binding ZoomScale}" />
                 </StackPanel.LayoutTransform>
-                <Border x:Name="PaperBorder"
-                        Background="{DynamicResource Surface}"
-                        BorderBrush="{DynamicResource Divider}"
-                        BorderThickness="0.5"
-                        PreviewMouseLeftButtonDown="OnPaperPreviewMouseLeftButtonDown"
-                        PreviewMouseMove="OnPaperPreviewMouseMove"
-                        PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp"
-                        PreviewMouseRightButtonDown="OnPaperPreviewMouseRightButtonDown">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="18" ShadowDepth="6"
-                                          Opacity="0.38" Direction="270" Color="Black" />
-                    </Border.Effect>
-                    <Grid>
-                        <!-- 그림 오버레이(BehindText) — 본문 텍스트 뒤에 위치. IsHitTestVisible 은 코드에서 토글. -->
-                        <Canvas x:Name="UnderlayImageCanvas" />
-                        <!-- 도형 오버레이(BehindText) — 그림 뒤, 본문 텍스트 뒤. -->
-                        <Canvas x:Name="UnderlayShapeCanvas" />
-                        <!-- 표 오버레이(BehindText) — 텍스트 뒤. -->
-                        <Canvas x:Name="UnderlayTableCanvas" />
-                        <RichTextBox x:Name="BodyEditor"
-                                     AcceptsReturn="True"
-                                     AcceptsTab="True"
-                                     VerticalScrollBarVisibility="Disabled"
-                                     HorizontalScrollBarVisibility="Disabled"
-                                     IsDocumentEnabled="True"
-                                     IsReadOnly="{Binding IsWriteProtected}"
-                                     SpellCheck.IsEnabled="False"
-                                     Padding="0"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     Foreground="{DynamicResource OnSurface}"
-                                     PreviewKeyDown="OnEditorPreviewKeyDown"
-                                     PreviewTextInput="OnEditorPreviewTextInput" />
-                        <!-- 부유 객체 (글상자 등) 오버레이.
-                             Background 미설정 → 빈 영역은 hit-test 통과해 RichTextBox 가 받음.
-                             각 자식(TextBoxOverlay) 만 마우스를 받는다. -->
-                        <Canvas x:Name="FloatingCanvas" />
-                        <!-- 그림 오버레이(InFrontOfText) — 본문 텍스트 위에 위치. -->
-                        <Canvas x:Name="OverlayImageCanvas" />
-                        <!-- 도형 오버레이(InFrontOfText) — 그림 위. -->
-                        <Canvas x:Name="OverlayShapeCanvas" />
-                        <!-- 표 오버레이(InFrontOfText/Fixed) — 도형 위. -->
-                        <Canvas x:Name="OverlayTableCanvas" />
-                        <!-- 드래그 생성 미리보기. 본 객체 위에 그려짐. -->
-                        <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
-                            <Rectangle x:Name="DrawPreviewRect"
-                                       Stroke="#4A90E2" StrokeThickness="1"
-                                       StrokeDashArray="4,3"
-                                       Fill="#224A90E2"
-                                       Visibility="Collapsed" />
-                        </Canvas>
-                        <!-- 여백 안내선 오버레이 — IsHitTestVisible=False 로 편집 방해 없이 표시 -->
-                        <Rectangle x:Name="MarginGuideRect"
-                                   Stroke="#660078D4"
-                                   StrokeThickness="0.7"
+                <!-- PaperHost: 모든 페이지 + 본문 + 오버레이를 담는 단일 좌표 공간.
+                     크기 = pageWidth × (pageHeight × pageCount + gap × (pageCount-1)) -->
+                <Grid x:Name="PaperHost"
+                      PreviewMouseLeftButtonDown="OnPaperPreviewMouseLeftButtonDown"
+                      PreviewMouseMove="OnPaperPreviewMouseMove"
+                      PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp"
+                      PreviewMouseRightButtonDown="OnPaperPreviewMouseRightButtonDown">
+                    <!-- 레이어 0: 페이지 배경 — 페이지 별 흰 Border + 그림자 + 점선 여백 가이드.
+                         code-behind RebuildPageFrames() 가 이 캔버스에 페이지마다 동적으로 추가. -->
+                    <Canvas x:Name="PageBackgroundCanvas" IsHitTestVisible="False" />
+                    <!-- 그림 오버레이(BehindText) — 본문 텍스트 뒤에 위치. -->
+                    <Canvas x:Name="UnderlayImageCanvas" />
+                    <!-- 도형 오버레이(BehindText) -->
+                    <Canvas x:Name="UnderlayShapeCanvas" />
+                    <!-- 표 오버레이(BehindText) -->
+                    <Canvas x:Name="UnderlayTableCanvas" />
+                    <RichTextBox x:Name="BodyEditor"
+                                 AcceptsReturn="True"
+                                 AcceptsTab="True"
+                                 VerticalScrollBarVisibility="Disabled"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 IsDocumentEnabled="True"
+                                 IsReadOnly="{Binding IsWriteProtected}"
+                                 SpellCheck.IsEnabled="False"
+                                 Padding="0"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Foreground="{DynamicResource OnSurface}"
+                                 PreviewKeyDown="OnEditorPreviewKeyDown"
+                                 PreviewTextInput="OnEditorPreviewTextInput" />
+                    <!-- 부유 객체 (글상자 등) 오버레이. -->
+                    <Canvas x:Name="FloatingCanvas" />
+                    <!-- 그림 오버레이(InFrontOfText) -->
+                    <Canvas x:Name="OverlayImageCanvas" />
+                    <!-- 도형 오버레이(InFrontOfText) -->
+                    <Canvas x:Name="OverlayShapeCanvas" />
+                    <!-- 표 오버레이(InFrontOfText/Fixed) -->
+                    <Canvas x:Name="OverlayTableCanvas" />
+                    <!-- 드래그 생성 미리보기. -->
+                    <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
+                        <Rectangle x:Name="DrawPreviewRect"
+                                   Stroke="#4A90E2" StrokeThickness="1"
                                    StrokeDashArray="4,3"
-                                   Fill="Transparent"
-                                   IsHitTestVisible="False"
+                                   Fill="#224A90E2"
                                    Visibility="Collapsed" />
-                        <!-- 페이지 구분선 — 본문이 한 페이지를 넘을 때 경계를 시각적으로 표시.
-                             IsHitTestVisible=False 로 편집 방해 없음. -->
-                        <Canvas x:Name="PageBreakCanvas" IsHitTestVisible="False" />
-                    </Grid>
-                </Border>
+                    </Canvas>
+                    <!-- (페이지별 여백 가이드 / 페이지 구분 라벨은 PageBackgroundCanvas 에서 함께 그림) -->
+                </Grid>
             </StackPanel>
         </ScrollViewer>
 
