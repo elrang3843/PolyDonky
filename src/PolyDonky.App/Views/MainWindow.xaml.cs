@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using PolyDonky.App.Pagination;
 using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
@@ -860,12 +861,29 @@ public partial class MainWindow : Window
             _suppressTextChanged = false;
         }
 
-        // 용지 크기·색상을 PaperHost 에 반영
+        // 용지 크기·색상을 PaperHost 에 반영 (_pageGeometry 설정)
         var page = _viewModel?.Document.Sections.FirstOrDefault()?.Page;
         ApplyPageSettings(page);
 
-        // 모든 오버레이 (글상자·이미지·도형·표) 통합 재구축 — IWPF 통합 모델
+        // 문서 로드 직후에는 _viewModel.Document 가 최신 — PaginatedDocument 를 캐시해 두면
+        // RebuildPageFrames 가 WPF DocumentPaginator 기반의 정확한 페이지 수를 쓸 수 있다.
+        UpdatePaginatedDoc();
+
+        // 모든 오버레이 (글상자·이미지·도형·표) 통합 재구축 — 내부에서 RebuildPageFrames 호출
         RebuildOverlays();
+    }
+
+    /// <summary>
+    /// _viewModel.Document 로부터 PaginatedDocument 를 계산해 캐시한다.
+    /// 문서 로드 직후에만 _viewModel.Document 가 최신 상태이므로 그 시점에 호출한다.
+    /// 편집 중 OnBodyEditorSizeChanged 가 캐시를 null 로 초기화하므로
+    /// RebuildPageFramesCore 가 height 기반 폴백을 사용하게 된다.
+    /// </summary>
+    private void UpdatePaginatedDoc()
+    {
+        var doc = _viewModel?.Document;
+        if (doc is null || _pageGeometry is null) return;
+        _currentPaginatedDoc = FlowDocumentPaginationAdapter.Paginate(doc);
     }
 
     /// <summary>
@@ -1027,8 +1045,9 @@ public partial class MainWindow : Window
     }
 
     private PolyDonky.App.Services.PageGeometry? _pageGeometry;
-    private int  _currentPageCount = 1;
-    private bool _suppressPageFrameRebuild;  // RebuildPageFrames 안에서 MinHeight 변경이 재귀로 돌아오는 것을 차단
+    private int                _currentPageCount    = 1;
+    private PaginatedDocument? _currentPaginatedDoc;           // 문서 로드 직후에만 최신; 편집 중엔 null → 폴백 사용
+    private bool               _suppressPageFrameRebuild;      // RebuildPageFrames 안에서 MinHeight 변경이 재귀로 돌아오는 것을 차단
 
     private void ApplyPageSettings(PolyDonky.Core.PageSettings? page)
     {
@@ -1073,6 +1092,9 @@ public partial class MainWindow : Window
     private void OnBodyEditorSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_suppressPageFrameRebuild) return;
+        // 본문 크기가 바뀌었다 = 편집으로 내용이 달라졌다 → 로드 시점 캐시는 무효.
+        // RebuildPageFramesCore 는 height 기반 폴백을 쓴다.
+        _currentPaginatedDoc = null;
         // 합성 패딩 재계산 중에는 본문 크기가 임시로 출렁이므로 페이지 프레임 재구축을 미룸 —
         // 페이지네이션 끝나면 PageBreakPadder.RunNow() 를 호출한 쪽이 RebuildPageFrames 도 따로 부른다.
         if (_paginationInProgress) return;
@@ -1081,7 +1103,8 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// PageBackgroundCanvas 에 페이지 별 흰색 Border (그림자 + 점선 여백 가이드 + "N페이지" 라벨)를 다시 그린다.
-    /// 페이지 수는 본문 콘텐츠 높이 + 오버레이 객체의 최대 AnchorPageIndex 중 큰 값으로 결정된다.
+    /// 페이지 수: 문서 로드 직후엔 <see cref="_currentPaginatedDoc"/> (WPF DocumentPaginator 기반),
+    /// 편집 중엔 BodyEditor.ActualHeight 기반 폴백.
     /// </summary>
     private void RebuildPageFrames()
     {
@@ -1103,10 +1126,13 @@ public partial class MainWindow : Window
     {
         var pg = _pageGeometry!;
 
-        // 페이지 수 계산 — 본문 콘텐츠 높이 vs 오버레이 페이지 인덱스 max 중 큰 값
+        // 페이지 수 계산.
+        // 1순위: 문서 로드 직후 WPF DocumentPaginator 로 산출한 정확한 값 (_currentPaginatedDoc).
+        // 2순위: 편집 중 — BodyEditor.ActualHeight ÷ bodyH 근사값 + 오버레이 anchor max.
         double bodyContentHeight = BodyEditor.ActualHeight > 0 ? BodyEditor.ActualHeight : pg.PageHeightDip;
         int maxAnchorIndex = ComputeMaxAnchorPageIndex();
-        int pageCount = pg.ComputePageCount(bodyContentHeight, maxAnchorIndex);
+        int pageCount = _currentPaginatedDoc?.PageCount
+            ?? pg.ComputePageCount(bodyContentHeight, maxAnchorIndex);
         _currentPageCount = pageCount;
 
         // PaperHost 의 전체 높이 = N 페이지 + (N-1) 갭.
