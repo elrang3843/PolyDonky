@@ -191,6 +191,9 @@ public partial class PrintPreviewWindow : Window
                 rtb.Focusable   = false;
                 rtb.Background  = Brushes.Transparent;
                 rtb.BorderThickness = new Thickness(0);
+                // Disabled: 스크롤 자체를 차단 (Hidden 은 스크롤바만 숨길 뿐 스크롤은 허용)
+                rtb.VerticalScrollBarVisibility   = ScrollBarVisibility.Disabled;
+                rtb.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
             });
 
             // 4. 페이지 배경 프레임
