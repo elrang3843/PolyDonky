@@ -480,7 +480,12 @@ public partial class PrintPreviewWindow : Window
             }
             else
             {
-                var container = new ContainerVisual();
+                var container = new ContainerVisual
+                {
+                    // 페이지 바깥으로 흘러내린 오버레이가 다음 페이지 영역까지 그려지지 않도록 클립.
+                    Clip = new System.Windows.Media.RectangleGeometry(
+                        new Rect(0, 0, _pageSize.Width, _pageSize.Height)),
+                };
 
                 foreach (var ov in pageOverlays)
                     if (ov.Behind) AddElementAt(container, ov);

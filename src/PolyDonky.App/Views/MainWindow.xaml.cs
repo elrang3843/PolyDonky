@@ -1116,10 +1116,13 @@ public partial class MainWindow : Window
 
         // PageBackgroundCanvas 클리어 후 페이지마다 다시 그리기.
         PageBackgroundCanvas.Children.Clear();
+        // 갭 마스크도 초기화 — 모든 오버레이 위에 깔려서 페이지 사이 갭에 떠있는 도형이 보이지 않게 가린다.
+        GapMaskCanvas.Children.Clear();
 
         var page = _viewModel?.Document.Sections.FirstOrDefault()?.Page;
         bool showGuides = page?.ShowMarginGuides ?? true;
         WpfMedia.Brush pageBg = ResolvePaperBackground(page);
+        WpfMedia.Brush gapBg  = (WpfMedia.Brush)FindResource("EditorCanvasBg");
 
         for (int i = 0; i < pageCount; i++)
         {
@@ -1176,6 +1179,21 @@ public partial class MainWindow : Window
             System.Windows.Controls.Canvas.SetLeft(label, 6);
             System.Windows.Controls.Canvas.SetTop (label, topY + 2);
             PageBackgroundCanvas.Children.Add(label);
+
+            // 다음 페이지 사이의 갭 마스크 — 마지막 페이지 다음에는 갭이 없으므로 i < pageCount-1 일 때만.
+            if (i < pageCount - 1)
+            {
+                var mask = new System.Windows.Shapes.Rectangle
+                {
+                    Width  = pg.PageWidthDip,
+                    Height = PolyDonky.App.Services.PageGeometry.InterPageGapDip,
+                    Fill   = gapBg,
+                    IsHitTestVisible = false,
+                };
+                System.Windows.Controls.Canvas.SetLeft(mask, 0);
+                System.Windows.Controls.Canvas.SetTop (mask, topY + pg.PageHeightDip);
+                GapMaskCanvas.Children.Add(mask);
+            }
         }
     }
 
