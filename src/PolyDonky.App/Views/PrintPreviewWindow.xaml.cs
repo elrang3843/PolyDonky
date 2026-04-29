@@ -260,7 +260,8 @@ public partial class PrintPreviewWindow : Window
         var clone = new PolyDonkyument();
         foreach (var sec in src.Sections)
         {
-            var newSec = new Section
+            // System.Windows.Documents.Section 과 모호 — 완전 한정명 필요.
+            var newSec = new PolyDonky.Core.Section
             {
                 Id     = sec.Id,
                 Page   = page,
