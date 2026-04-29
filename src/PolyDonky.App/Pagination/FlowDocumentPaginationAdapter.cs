@@ -58,6 +58,12 @@ public static class FlowDocumentPaginationAdapter
         int pageCount = ComputePageCountSync(fd, geo);
 
         // 3. 오프스크린 RichTextBox 에서 본문 블록 Y 좌표 측정 → 페이지 배정
+        // DocumentPaginator 용으로 설정한 PageWidth(전체 용지 폭)를 본문 폭으로 리셋한다.
+        // PageWidth = 전체 폭으로 두면 오프스크린 RTB 의 줄바꿈이 실제 페이지 RTB 보다 적게
+        // 일어나 Y 좌표가 낮게 측정되고, 결과적으로 모든 블록이 page 0 에 배정돼 버린다.
+        double measureW = Math.Max(1.0, geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip);
+        fd.PageWidth   = measureW;
+        fd.PagePadding = new Thickness(0);
         var bodyAssignments = MapBodyBlocksToPages(fd, geo, pageCount);
 
         // 4. 오버레이 블록(글상자·이미지·도형·오버레이 표) 수집 — AnchorPageIndex 기준
