@@ -492,13 +492,14 @@ public partial class MainWindow : Window
 
         // 복수 블록 또는 표·이미지·도형 — 앵커 뒤에 새 Block 으로 삽입
         var doc = BodyEditor.Document;
-        System.Windows.Documents.Block? anchor = null;
-        foreach (var b in doc.Blocks)
-        {
-            if (PolyDonky.App.Services.PageBreakPadder.IsPagePadding(b)) continue;
-            if (b.ContentStart.CompareTo(caret) <= 0 && caret.CompareTo(b.ContentEnd) <= 0)
-            { anchor = b; break; }
-        }
+
+        // 캐럿이 TableCell 안에 있으면 parent chain 으로 상위 Table 을 직접 찾는다.
+        // ContentRange 비교 기반 앵커 탐색만 쓰면 WPF Table InsertAfter 가
+        // 셀 내부에 삽입되는 문제가 발생한다.
+        System.Windows.Documents.Block? anchor = FindTopLevelAnchorForCaret(doc, caret);
+
+        // anchor 바로 뒤 형제를 기준으로 InsertBefore 를 쓴다 — InsertAfter(Table,...) 보다 안정적.
+        System.Windows.Documents.Block? insertBefore = anchor?.NextBlock;
 
         bool hasOverlay = false;
         foreach (var coreBlock in blocks)
@@ -513,8 +514,12 @@ public partial class MainWindow : Window
 
             var wpfBlock = BuildWpfBlockFromCore(coreBlock);
             if (wpfBlock is null) continue;
-            if (anchor is null) doc.Blocks.Add(wpfBlock);
-            else { doc.Blocks.InsertAfter(anchor, wpfBlock); anchor = wpfBlock; }
+            if (insertBefore != null)
+                doc.Blocks.InsertBefore(insertBefore, wpfBlock);
+            else
+                doc.Blocks.Add(wpfBlock);
+            // 다음 블록은 방금 삽입한 블록의 NextBlock 앞에 삽입 — 순서 유지
+            insertBefore = wpfBlock.NextBlock;
 
             if (coreBlock is PolyDonky.Core.Table { WrapMode: not PolyDonky.Core.TableWrapMode.Block }
                 || coreBlock is PolyDonky.Core.ImageBlock { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText }
@@ -525,6 +530,33 @@ public partial class MainWindow : Window
         if (hasOverlay) { RebuildOverlayImages(); RebuildOverlayShapes(); RebuildOverlayTables(); }
         _viewModel?.MarkDirty();
         return true;
+    }
+
+    /// <summary>
+    /// FlowDocument 의 최상위 Block 중 caret 을 포함하는 것을 반환한다.
+    /// caret 이 TableCell 안에 있으면 parent chain 으로 Table 을 직접 찾아 반환 —
+    /// ContentRange 비교만 사용하면 WPF Table 의 InsertAfter 가 셀 내부에 삽입되는 문제가 발생한다.
+    private static System.Windows.Documents.Block? FindTopLevelAnchorForCaret(
+        System.Windows.Documents.FlowDocument doc,
+        System.Windows.Documents.TextPointer  caret)
+    {
+        // 1. parent chain 에서 doc.Blocks 에 포함된 최상위 Block 을 찾는다
+        var el = caret.Parent as System.Windows.FrameworkContentElement;
+        while (el != null)
+        {
+            if (el is System.Windows.Documents.Block b && doc.Blocks.Contains(b))
+                return b;
+            el = el.Parent as System.Windows.FrameworkContentElement;
+        }
+
+        // 2. 폴백: ContentRange 비교 (부유 객체·일반 단락 등 parent chain 이 단순한 경우)
+        foreach (var b in doc.Blocks)
+        {
+            if (PolyDonky.App.Services.PageBreakPadder.IsPagePadding(b)) continue;
+            if (b.ContentStart.CompareTo(caret) <= 0 && caret.CompareTo(b.ContentEnd) <= 0)
+                return b;
+        }
+        return null;
     }
 
     /// <summary>
