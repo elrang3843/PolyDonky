@@ -902,6 +902,9 @@ public partial class MainWindow : Window
         rtb.PreviewMouseLeftButtonDown += OnEditorPreviewMouseDownTrackDrag;
         rtb.PreviewMouseMove           += OnEditorPreviewMouseMoveBlockDrag;
         rtb.PreviewMouseLeftButtonUp   += OnEditorPreviewMouseUpEmbedded;
+        // RTB 내부 ScrollViewer 가 휠 이벤트를 소비해 본문만 내부 스크롤되는 것을 막고
+        // 외부 EditorScrollViewer 로 전달 — 본문·오버레이가 함께 스크롤되도록 한다.
+        rtb.PreviewMouseWheel          += OnPageRtbPreviewMouseWheel;
 
         rtb.ContextMenu             = new System.Windows.Controls.ContextMenu();
         rtb.ContextMenuOpening      += OnEmbeddedObjectContextMenuOpening;
@@ -917,6 +920,24 @@ public partial class MainWindow : Window
 
         DataObject.AddPastingHandler(rtb, OnBodyEditorPasting);
         CommandManager.AddPreviewExecutedHandler(rtb, OnBodyEditorPreviewExecuted);
+    }
+
+    /// <summary>
+    /// 페이지 RTB 의 마우스 휠 이벤트를 외부 EditorScrollViewer 로 전달한다.
+    /// 기본 동작: RTB 내부 ScrollViewer 가 휠을 소비해 본문만 내부 스크롤 → 오버레이와 어긋남.
+    /// 처리: e.Handled = true 로 RTB 의 처리를 차단하고, 동일 Delta 의 새 MouseWheelEventArgs 를
+    /// EditorScrollViewer 로 RaiseEvent 해서 페이지·오버레이가 함께 스크롤되도록 한다.
+    /// </summary>
+    private void OnPageRtbPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (EditorScrollViewer is null) return;
+        e.Handled = true;
+        var newArgs = new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+        {
+            RoutedEvent = UIElement.MouseWheelEvent,
+            Source      = sender,
+        };
+        EditorScrollViewer.RaiseEvent(newArgs);
     }
 
     /// <summary>
@@ -969,7 +990,9 @@ public partial class MainWindow : Window
     /// 라이브 FlowDocument 를 Parse → Paginate 해서 _currentPaginatedDoc 캐시를 최신화한다.
     /// Background 우선순위로 디스패치해 UI 응답성 보장.
     /// 동시에 여러 번 큐잉되지 않도록 _liveRefreshQueued 플래그로 합치기.
-    /// 주의: 커서 위치 보존을 위해 RTB 는 재구성하지 않는다.
+    /// 페이지 수가 동일하면 RTB 는 재구성하지 않아 커서 위치를 유지한다.
+    /// 페이지 수가 바뀌면(오버플로우/언더플로우) RTB 를 재구성해 본문을 페이지 경계에 맞게 재분배한다 —
+    /// 이 경우 커서는 마지막 RTB 끝으로 이동한다(가장 최근에 입력한 위치 근사).
     /// </summary>
     private void ScheduleLivePaginationRefresh()
     {
@@ -983,9 +1006,20 @@ public partial class MainWindow : Window
             try
             {
                 // 모든 페이지 RTB 를 파싱해 결합된 PolyDonkyument 를 만들고 재페이지네이트.
-                // 주의: RTB 는 재구성하지 않는다 — 편집 중 커서 위치를 보존하기 위해.
                 var freshDoc = ParseAllPageEditors();
                 _currentPaginatedDoc = FlowDocumentPaginationAdapter.Paginate(freshDoc);
+
+                // 페이지 수가 달라졌으면(텍스트 오버플로우/언더플로우) RTB 를 재구성해
+                // 본문을 페이지별로 다시 분배 — 안 그러면 page 1 RTB 에 모든 텍스트가
+                // 남고(스크롤 숨김으로 클립), page 2 RTB 가 없어 입력 불가.
+                int newPageCount = _currentPaginatedDoc.PageCount;
+                int oldPageCount = PageEditorHost.PageCount;
+                if (newPageCount != oldPageCount)
+                {
+                    SetupPageEditors();
+                    RestoreCaretToLastEditor();
+                }
+
                 RebuildPageFrames();
             }
             catch
@@ -993,6 +1027,20 @@ public partial class MainWindow : Window
                 // 실패 시 캐시 유지.
             }
         });
+    }
+
+    /// <summary>
+    /// SetupPageEditors 후 마지막 페이지 RTB 끝에 커서를 두고 포커스를 준다.
+    /// 페이지 분리 직후 호출되며, 사용자가 가장 최근에 입력하던 위치(오버플로우 영역)에 가까운 자리.
+    /// </summary>
+    private void RestoreCaretToLastEditor()
+    {
+        var rtbs = PageEditorHost.PageEditors;
+        if (rtbs.Count == 0) return;
+        var last = rtbs[rtbs.Count - 1];
+        last.CaretPosition = last.Document.ContentEnd;
+        last.Focus();
+        Keyboard.Focus(last);
     }
 
     /// <summary>
