@@ -118,7 +118,15 @@ public static class FlowDocumentPaginationAdapter
     {
         var result = new List<(int, Block, Rect)>();
 
-        // 오프스크린 RichTextBox 에서 Measure/Arrange → TextPointer.GetCharacterRect 활성화
+        // 연속 스크롤 공간에서 "페이지당 본문 높이" = pageHeight - padTop - padBottom
+        double bodyH = geo.PageHeightDip - geo.PadTopDip - geo.PadBottomDip;
+        if (bodyH <= 0) bodyH = geo.PageHeightDip;
+        double bodyW = geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip;
+        if (bodyW <= 0) bodyW = geo.PageWidthDip;
+
+        // 오프스크린 RichTextBox 에서 Measure/Arrange → TextPointer.GetCharacterRect 활성화.
+        // 측정 폭은 반드시 bodyW (본문 영역 폭) — PageWidthDip(전체 폭) 로 측정하면 줄바꿈이
+        // 적게 일어나 Y 좌표가 실제 페이지네이터 / 온스크린 RTB 와 달라진다.
         var rtb = new RichTextBox
         {
             Document          = fd,
@@ -126,27 +134,44 @@ public static class FlowDocumentPaginationAdapter
             BorderThickness   = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Top,
         };
-        rtb.Measure(new Size(geo.PageWidthDip, double.PositiveInfinity));
+        rtb.Measure(new Size(bodyW, double.PositiveInfinity));
         rtb.Arrange(new Rect(rtb.DesiredSize));
-
-        // 연속 스크롤 공간에서 "페이지당 본문 높이" = pageHeight - padTop - padBottom
-        double bodyH = geo.PageHeightDip - geo.PadTopDip - geo.PadBottomDip;
-        if (bodyH <= 0) bodyH = geo.PageHeightDip;
-        double bodyW = geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip;
-        if (bodyW <= 0) bodyW = geo.PageWidthDip;
 
         foreach (var wpfBlock in FlattenBlocks(fd.Blocks))
         {
             if (wpfBlock.Tag is not Block coreBlock) continue;
             if (IsOverlayMode(coreBlock)) continue;
 
-            double y       = TryGetTopY(wpfBlock);
-            int    pageIdx = double.IsNaN(y)
-                ? 0
-                : Math.Clamp((int)(y / bodyH), 0, pageCount - 1);
+            double topY    = TryGetTopY(wpfBlock);
+            double bottomY = TryGetBottomY(wpfBlock);
+            int    pageIdx;
+
+            if (double.IsNaN(topY))
+            {
+                pageIdx = 0;
+            }
+            else
+            {
+                int topPage = Math.Clamp((int)(topY / bodyH), 0, pageCount - 1);
+
+                // 블록이 페이지 경계를 넘고(bottomY > 다음 페이지 시작),
+                // 한 페이지에 들어갈 만큼 작으면 다음 페이지로 이동한다.
+                // DocumentPaginator 는 줄 단위로 나누지만 여기서는 블록 단위 이동으로 근사 —
+                // 빈 페이지보다 블록이 올바른 페이지에 놓이는 쪽이 시각적으로 훨씬 낫다.
+                if (!double.IsNaN(bottomY)
+                    && bottomY > (topPage + 1) * bodyH
+                    && (bottomY - topY) < bodyH
+                    && topPage + 1 < pageCount)
+                {
+                    pageIdx = topPage + 1;
+                }
+                else
+                {
+                    pageIdx = topPage;
+                }
+            }
 
             var bodyLocalRect = TryGetBodyLocalRect(wpfBlock, pageIdx, bodyH, bodyW);
-
             result.Add((pageIdx, coreBlock, bodyLocalRect));
         }
 
@@ -181,6 +206,21 @@ public static class FlowDocumentPaginationAdapter
             var r = block.ContentStart.GetCharacterRect(WpfDocs.LogicalDirection.Forward);
             if (r == Rect.Empty || double.IsInfinity(r.Y) || double.IsNaN(r.Y)) return double.NaN;
             return r.Y;
+        }
+        catch
+        {
+            return double.NaN;
+        }
+    }
+
+    private static double TryGetBottomY(WpfDocs.Block block)
+    {
+        try
+        {
+            var r = block.ContentEnd.GetCharacterRect(WpfDocs.LogicalDirection.Backward);
+            if (r == Rect.Empty || double.IsNaN(r.Bottom) || double.IsInfinity(r.Bottom))
+                return double.NaN;
+            return r.Bottom;
         }
         catch
         {
