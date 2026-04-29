@@ -1369,7 +1369,11 @@ public partial class MainWindow : Window
     private void OnPreviewClick(object sender, System.Windows.RoutedEventArgs e)
     {
         if (_viewModel is null) return;
-        var snapshot = _viewModel.GetPreviewDocument();
+        // per-page 모드: 각 RTB 에서 현재 본문을 파싱해 최신 스냅샷을 만든다.
+        // _viewModel.GetPreviewDocument() 는 로드 시점 FlowDocument 를 쓰므로 편집 내용이 반영되지 않는다.
+        var snapshot = PageEditorHost.PageCount > 0
+            ? ParseAllPageEditors()
+            : _viewModel.GetPreviewDocument();
         var wnd = new PrintPreviewWindow(snapshot) { Owner = this };
         wnd.Show();
     }
@@ -2750,7 +2754,7 @@ public partial class MainWindow : Window
             (Keyboard.Modifiers & ModifierKeys.Control) != 0 &&
             (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
         {
-            var ptForHit = e.GetPosition(BodyEditor);
+            var ptForHit = e.GetPosition(PageEditorHost);
             var hitOverlay = FindAnyOverlayControlAt(ptForHit);
             if (hitOverlay != null)
             {
@@ -2767,7 +2771,7 @@ public partial class MainWindow : Window
             (Keyboard.Modifiers & ModifierKeys.Control) == 0 &&
             _multiSelectedControls.Count > 0)
         {
-            var ptForHit = e.GetPosition(BodyEditor);
+            var ptForHit = e.GetPosition(PageEditorHost);
             var hitOverlay = FindAnyOverlayControlAt(ptForHit);
             // 멀티-선택된 개체 위 클릭: 유지(드래그 등 일반 동작 양보)
             // 멀티-선택 외 영역 클릭: 멀티-선택 해제
@@ -2788,16 +2792,20 @@ public partial class MainWindow : Window
 
             if (!alt && !shift)
             {
-                var ptEditor2 = e.GetPosition(BodyEditor);
-                var ptPaper2  = e.GetPosition(PaperHost);
-                var hitCtrl2  = FindAnyOverlayControlAt(ptEditor2);
+                // per-page 모드: PageEditorHost 기준 절대 좌표 사용 — 오버레이 Canvas 와 동일 좌표계.
+                var ptDoc    = e.GetPosition(PageEditorHost);
+                var ptPaper2 = e.GetPosition(PaperHost);
+                var hitCtrl2 = FindAnyOverlayControlAt(ptDoc);
 
-                // 용지 여백 영역: BodyEditor Padding 의 바깥쪽
-                bool inMargin = BodyEditor.ActualWidth > 0 && BodyEditor.ActualHeight > 0
-                    && (ptEditor2.X < BodyEditor.Padding.Left
-                    ||  ptEditor2.X > BodyEditor.ActualWidth  - BodyEditor.Padding.Right
-                    ||  ptEditor2.Y < BodyEditor.Padding.Top
-                    ||  ptEditor2.Y > BodyEditor.ActualHeight - BodyEditor.Padding.Bottom);
+                // 용지 여백 영역: 페이지 Padding 의 바깥쪽.
+                // Y 는 페이지 로컬 좌표로 변환해 모든 페이지에 동일하게 적용.
+                double stride2    = _pageGeometry?.PageStrideDip ?? 1.0;
+                double pageLocalY = stride2 > 0 ? ptDoc.Y % stride2 : ptDoc.Y;
+                bool inMargin = _pageGeometry != null
+                    && (ptDoc.X < _pageGeometry.PadLeftDip
+                    ||  ptDoc.X > _pageGeometry.PageWidthDip - _pageGeometry.PadRightDip
+                    ||  pageLocalY < _pageGeometry.PadTopDip
+                    ||  pageLocalY > _pageGeometry.PageHeightDip - _pageGeometry.PadBottomDip);
 
                 bool startMarquee = hitCtrl2 == null && (inMargin || ctrl);
 
@@ -2967,7 +2975,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var pt = e.GetPosition(BodyEditor);
+        var pt = e.GetPosition(PageEditorHost); // 오버레이 Canvas 와 동일 좌표계
 
         // ② 오버레이 도형 (InFrontOfText 우선, BehindText 차선)
         var hitShape = (FindCanvasChildAt(OverlayShapeCanvas, pt)
