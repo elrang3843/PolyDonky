@@ -11,6 +11,7 @@ using PolyDonky.App.Pagination;
 using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
+using WpfDocs = System.Windows.Documents;
 using WpfMedia = System.Windows.Media;
 using WpfShapes = System.Windows.Shapes;
 
@@ -2763,9 +2764,9 @@ public partial class MainWindow : Window
         var target = pages[targetIdx];
         target.Focus();
         var anchor = atTop
-            ? target.Document.ContentStart.GetInsertionPosition(LogicalDirection.Forward)
+            ? target.Document.ContentStart.GetInsertionPosition(WpfDocs.LogicalDirection.Forward)
               ?? target.Document.ContentStart
-            : target.Document.ContentEnd.GetInsertionPosition(LogicalDirection.Backward)
+            : target.Document.ContentEnd.GetInsertionPosition(WpfDocs.LogicalDirection.Backward)
               ?? target.Document.ContentEnd;
         target.CaretPosition = anchor;
         e.Handled = true;
