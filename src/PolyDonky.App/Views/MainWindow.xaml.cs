@@ -3361,6 +3361,14 @@ public partial class MainWindow : Window
 
         _viewModel?.AddShapeToCurrentSection(shape);
         RebuildOverlayShapes();
+
+        // 도형만 있고 일반 단락이 없으면 커서가 갈 곳이 없어 텍스트 입력 불가.
+        // 항상 정상 Paragraph가 하나 이상 있도록 보장.
+        var hasNormalParagraph = doc.Blocks.OfType<System.Windows.Documents.Paragraph>().Any();
+        if (!hasNormalParagraph)
+        {
+            doc.Blocks.Add(new System.Windows.Documents.Paragraph());
+        }
     }
 
     // ── 도형 오버레이 재구축 ──────────────────────────────────────────────
