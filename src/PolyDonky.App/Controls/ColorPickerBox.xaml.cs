@@ -36,6 +36,30 @@ public partial class ColorPickerBox : UserControl
         set => SetValue(AllowEmptyProperty, value);
     }
 
+    // 색상이 없을 때 스와치에 표시할 체커 패턴 (WPF Trigger 순환 제약 우회)
+    private static readonly DrawingBrush s_checkerBrush = BuildCheckerBrush();
+
+    private static DrawingBrush BuildCheckerBrush()
+    {
+        var geo = new GeometryGroup();
+        geo.Children.Add(new RectangleGeometry(new Rect(0, 0, 4, 4)));
+        geo.Children.Add(new RectangleGeometry(new Rect(4, 4, 4, 4)));
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(Brushes.White, null,
+            new RectangleGeometry(new Rect(0, 0, 8, 8))));
+        group.Children.Add(new GeometryDrawing(
+            new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)), null, geo));
+        var brush = new DrawingBrush
+        {
+            Drawing      = group,
+            TileMode     = TileMode.Tile,
+            Viewport     = new Rect(0, 0, 8, 8),
+            ViewportUnits = BrushMappingMode.Absolute,
+        };
+        brush.Freeze();
+        return brush;
+    }
+
     private bool _syncing;
 
     public ColorPickerBox()
@@ -97,7 +121,7 @@ public partial class ColorPickerBox : UserControl
     {
         Swatch.Background = TryParseColor(ColorTextBox.Text, out var c)
             ? new SolidColorBrush(c)
-            : null;
+            : s_checkerBrush;
     }
 
     // ── 정적 유틸 (다른 창에서도 사용 가능) ─────────────────────────────

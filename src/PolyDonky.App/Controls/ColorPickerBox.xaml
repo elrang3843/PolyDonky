@@ -19,41 +19,7 @@
                 BorderBrush="{DynamicResource OnSurfaceMuted}"
                 BorderThickness="1"
                 Margin="0,0,4,0"
-                VerticalAlignment="Center">
-            <!-- 투명(없음) 상태를 나타내는 대각선 패턴 -->
-            <Border.Style>
-                <Style TargetType="Border">
-                    <Style.Triggers>
-                        <Trigger Property="Background" Value="{x:Null}">
-                            <Setter Property="Background">
-                                <Setter.Value>
-                                    <DrawingBrush TileMode="Tile" Viewport="0,0,8,8"
-                                                  ViewportUnits="Absolute">
-                                        <DrawingBrush.Drawing>
-                                            <DrawingGroup>
-                                                <GeometryDrawing Brush="White">
-                                                    <GeometryDrawing.Geometry>
-                                                        <RectangleGeometry Rect="0,0,8,8" />
-                                                    </GeometryDrawing.Geometry>
-                                                </GeometryDrawing>
-                                                <GeometryDrawing Brush="#CCCCCC">
-                                                    <GeometryDrawing.Geometry>
-                                                        <GeometryGroup>
-                                                            <RectangleGeometry Rect="0,0,4,4" />
-                                                            <RectangleGeometry Rect="4,4,4,4" />
-                                                        </GeometryGroup>
-                                                    </GeometryDrawing.Geometry>
-                                                </GeometryDrawing>
-                                            </DrawingGroup>
-                                        </DrawingBrush.Drawing>
-                                    </DrawingBrush>
-                                </Setter.Value>
-                            </Setter>
-                        </Trigger>
-                    </Style.Triggers>
-                </Style>
-            </Border.Style>
-        </Border>
+                VerticalAlignment="Center" />
 
         <!-- 직접 입력 TextBox -->
         <TextBox x:Name="ColorTextBox"
