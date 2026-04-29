@@ -2691,10 +2691,85 @@ public partial class MainWindow : Window
 
     private void OnEditorPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (_viewModel?.IsWriteProtected != true) return;
-        if (!IsEditingIntent(e)) return;
+        if (sender is not RichTextBox rtb) return;
+
+        // 쓰기 보호 모드 — 편집 의도 키를 잠금 해제 트리거로 사용
+        if (_viewModel?.IsWriteProtected == true && IsEditingIntent(e))
+        {
+            e.Handled = true;
+            _viewModel.TryUnlockForEditing();
+            return;
+        }
+
+        // per-page RTB 모델에서 페이지 경계를 넘는 캐럿 이동을 직접 처리.
+        TryHandlePageBoundaryNavigation(rtb, e);
+    }
+
+    /// <summary>
+    /// per-page 편집기에서 RTB 간 캐럿/포커스 이동.
+    /// PgUp/PgDn: 항상 인접 페이지로 이동.
+    /// 위/아래 화살표: 현재 RTB 의 첫/마지막 줄에서만 인접 페이지로 이동.
+    /// Ctrl+Home/End: 첫/마지막 페이지로 이동.
+    /// </summary>
+    private bool TryHandlePageBoundaryNavigation(RichTextBox rtb, KeyEventArgs e)
+    {
+        var pages = PageEditorHost.PageEditors;
+        int idx = -1;
+        for (int i = 0; i < pages.Count; i++)
+        {
+            if (ReferenceEquals(pages[i], rtb)) { idx = i; break; }
+        }
+        if (idx < 0) return false;
+
+        var caret = rtb.CaretPosition;
+        if (caret is null) return false;
+
+        var mods    = Keyboard.Modifiers;
+        bool shift  = (mods & ModifierKeys.Shift)   == ModifierKeys.Shift;
+        bool ctrl   = (mods & ModifierKeys.Control) == ModifierKeys.Control;
+
+        // Shift+이동키는 selection 확장 — 페이지 경계 점프는 일단 미지원(향후 보강 가능).
+        if (shift) return false;
+
+        switch (e.Key)
+        {
+            case Key.PageDown:
+                return MoveCaretToPage(idx + 1, atTop: true, e);
+
+            case Key.PageUp:
+                return MoveCaretToPage(idx - 1, atTop: false, e);
+
+            case Key.Down when caret.GetLineStartPosition(1) is null:
+                return MoveCaretToPage(idx + 1, atTop: true, e);
+
+            case Key.Up when caret.GetLineStartPosition(-1) is null:
+                return MoveCaretToPage(idx - 1, atTop: false, e);
+
+            case Key.Home when ctrl:
+                return MoveCaretToPage(0, atTop: true, e);
+
+            case Key.End when ctrl:
+                return MoveCaretToPage(pages.Count - 1, atTop: false, e);
+        }
+        return false;
+    }
+
+    /// <summary>지정 인덱스 페이지 RTB 로 포커스 이동, 캐럿을 시작/끝에 배치.</summary>
+    private bool MoveCaretToPage(int targetIdx, bool atTop, KeyEventArgs e)
+    {
+        var pages = PageEditorHost.PageEditors;
+        if (targetIdx < 0 || targetIdx >= pages.Count) return false;
+
+        var target = pages[targetIdx];
+        target.Focus();
+        var anchor = atTop
+            ? target.Document.ContentStart.GetInsertionPosition(LogicalDirection.Forward)
+              ?? target.Document.ContentStart
+            : target.Document.ContentEnd.GetInsertionPosition(LogicalDirection.Backward)
+              ?? target.Document.ContentEnd;
+        target.CaretPosition = anchor;
         e.Handled = true;
-        _viewModel.TryUnlockForEditing();
+        return true;
     }
 
     /// <summary>
