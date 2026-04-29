@@ -1022,7 +1022,8 @@ public partial class MainWindow : Window
     }
 
     private PolyDonky.App.Services.PageGeometry? _pageGeometry;
-    private int _currentPageCount = 1;
+    private int  _currentPageCount = 1;
+    private bool _suppressPageFrameRebuild;  // RebuildPageFrames 안에서 MinHeight 변경이 재귀로 돌아오는 것을 차단
 
     private void ApplyPageSettings(PolyDonky.Core.PageSettings? page)
     {
@@ -1034,9 +1035,9 @@ public partial class MainWindow : Window
         PaperHost.Width = _pageGeometry.PageWidthDip;
         _pageHeightDip  = _pageGeometry.PageHeightDip;
 
-        // PaperHost 의 콘텐츠 높이 변화를 구독 (페이지 수 동적 갱신용)
-        PaperHost.SizeChanged -= OnPaperHostSizeChanged;
-        PaperHost.SizeChanged += OnPaperHostSizeChanged;
+        // 본문 RichTextBox 가 자신의 콘텐츠 길이에 맞춰 ActualHeight 가 늘어날 때마다
+        // 페이지 수를 다시 계산해야 한다. PaperHost.SizeChanged 는 RebuildPageFrames 안의
+        // MinHeight 변경이 다시 SizeChanged 를 일으켜 무한 재귀가 되므로 사용 금지.
         BodyEditor.SizeChanged -= OnBodyEditorSizeChanged;
         BodyEditor.SizeChanged += OnBodyEditorSizeChanged;
 
@@ -1054,8 +1055,12 @@ public partial class MainWindow : Window
         RebuildPageFrames();
     }
 
-    private void OnPaperHostSizeChanged(object sender, SizeChangedEventArgs e) => RebuildPageFrames();
-    private void OnBodyEditorSizeChanged(object sender, SizeChangedEventArgs e) => RebuildPageFrames();
+    private void OnBodyEditorSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_suppressPageFrameRebuild) return;
+        // 본문 높이만 바뀌면 페이지 수 갱신 필요 — 재진입 가드 안에서만 실행.
+        RebuildPageFrames();
+    }
 
     /// <summary>
     /// PageBackgroundCanvas 에 페이지 별 흰색 Border (그림자 + 점선 여백 가이드 + "N페이지" 라벨)를 다시 그린다.
@@ -1064,7 +1069,22 @@ public partial class MainWindow : Window
     private void RebuildPageFrames()
     {
         if (_pageGeometry is null) return;
-        var pg = _pageGeometry;
+        if (_suppressPageFrameRebuild) return;
+
+        _suppressPageFrameRebuild = true;
+        try
+        {
+            RebuildPageFramesCore();
+        }
+        finally
+        {
+            _suppressPageFrameRebuild = false;
+        }
+    }
+
+    private void RebuildPageFramesCore()
+    {
+        var pg = _pageGeometry!;
 
         // 페이지 수 계산 — 본문 콘텐츠 높이 vs 오버레이 페이지 인덱스 max 중 큰 값
         double bodyContentHeight = BodyEditor.ActualHeight > 0 ? BodyEditor.ActualHeight : pg.PageHeightDip;
@@ -1072,7 +1092,7 @@ public partial class MainWindow : Window
         int pageCount = pg.ComputePageCount(bodyContentHeight, maxAnchorIndex);
         _currentPageCount = pageCount;
 
-        // PaperHost 의 전체 높이 = N 페이지 + (N-1) 갭. MinHeight 로 적용해 본문이 더 길어지면 늘어남.
+        // PaperHost 의 전체 높이 = N 페이지 + (N-1) 갭.
         double totalHeight = pg.TotalHeightDip(pageCount);
         if (Math.Abs(PaperHost.MinHeight - totalHeight) > 0.5)
             PaperHost.MinHeight = totalHeight;
