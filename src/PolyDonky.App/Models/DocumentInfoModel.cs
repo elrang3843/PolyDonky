@@ -15,7 +15,9 @@ public sealed partial class DocumentInfoModel : ObservableObject
     public string DataSize  { get; init; } = "";
 
     // ── 문서 속성 ────────────────────────────────────────────
-    public string DocTitle  { get; init; } = "";
+    [ObservableProperty]
+    private string _docTitle = "";
+
     public string Created   { get; init; } = "";
     public string Modified  { get; init; } = "";
 

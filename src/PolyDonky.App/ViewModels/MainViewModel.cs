@@ -446,6 +446,15 @@ public partial class MainViewModel : ObservableObject
         var dirty = false;
         var meta = _document.Metadata;
 
+        // ── 제목 ──
+        var oldTitle = meta.Title;
+        var newTitle = string.IsNullOrWhiteSpace(info.DocTitle) ? null : info.DocTitle.Trim();
+        if (!string.Equals(oldTitle, newTitle, StringComparison.Ordinal))
+        {
+            meta.Title = newTitle;
+            dirty = true;
+        }
+
         // ── 작성자 ──
         var oldAuthor = meta.Author;
         var newAuthor = string.IsNullOrWhiteSpace(info.Author) ? null : info.Author.Trim();
