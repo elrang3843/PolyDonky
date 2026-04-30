@@ -2918,8 +2918,114 @@ public partial class MainWindow : Window
 
             case Key.End when ctrl:
                 return MoveCaretToPage(pages.Count - 1, atTop: false, e);
+
+            case Key.Delete when !ctrl:
+                return TryDeleteAcrossPageBoundary(idx, rtb, e);
+
+            case Key.Back when !ctrl:
+                return TryBackspaceAcrossPageBoundary(idx, rtb, e);
         }
         return false;
+    }
+
+    /// <summary>
+    /// Del 키: 현재 RTB 의 마지막 삽입 위치에서 다음 페이지 RTB 의 첫 블록을 끌어올린다.
+    /// 빈 공간 하단에서 Del 을 눌러도 다음 페이지 내용이 올라오도록 처리.
+    /// </summary>
+    private bool TryDeleteAcrossPageBoundary(int pageIdx, RichTextBox rtb, KeyEventArgs e)
+    {
+        var pages = PageEditorHost.PageEditors;
+        if (pageIdx + 1 >= pages.Count) return false;
+
+        // 현재 RTB 에 아직 삭제할 내용이 남아 있으면 RTB 의 기본 Delete 동작에 양보.
+        var nextInsert = rtb.CaretPosition
+            .GetNextInsertionPosition(WpfDocs.LogicalDirection.Forward);
+        if (nextInsert is not null) return false;
+
+        var nextRtb   = pages[pageIdx + 1];
+        var nextDoc   = nextRtb.Document;
+        var firstBlock = nextDoc.Blocks.FirstBlock;
+        if (firstBlock is null) return false;
+
+        var curDoc    = rtb.Document;
+        var lastBlock = curDoc.Blocks.LastBlock;
+
+        if (lastBlock is WpfDocs.Paragraph lastPara && firstBlock is WpfDocs.Paragraph firstPara)
+        {
+            // 단락 병합: 다음 페이지 첫 단락의 인라인을 현재 페이지 마지막 단락으로 이동
+            var inlines = firstPara.Inlines.ToList();
+            firstPara.Inlines.Clear();
+            nextDoc.Blocks.Remove(firstPara);
+            foreach (var il in inlines)
+                lastPara.Inlines.Add(il);
+        }
+        else
+        {
+            // 단락 종류가 다르거나 블록 단위 이동 (표·목록 등)
+            nextDoc.Blocks.Remove(firstBlock);
+            curDoc.Blocks.Add(firstBlock);
+        }
+
+        // 다음 페이지 RTB 가 비면 빈 단락 하나 유지 (RichTextBox 최소 요건)
+        if (nextDoc.Blocks.Count == 0)
+            nextDoc.Blocks.Add(new WpfDocs.Paragraph());
+
+        e.Handled = true;
+        ScheduleLivePaginationRefresh();
+        return true;
+    }
+
+    /// <summary>
+    /// Backspace 키: 현재 RTB 의 첫 삽입 위치에서 이전 페이지 RTB 의 마지막 블록에 병합한다.
+    /// 페이지 상단에서 Backspace 를 눌러도 이전 페이지 내용과 연결되도록 처리.
+    /// </summary>
+    private bool TryBackspaceAcrossPageBoundary(int pageIdx, RichTextBox rtb, KeyEventArgs e)
+    {
+        var pages = PageEditorHost.PageEditors;
+        if (pageIdx <= 0) return false;
+
+        // 현재 RTB 에 아직 삭제할 내용이 남아 있으면 RTB 의 기본 Backspace 동작에 양보.
+        var prevInsert = rtb.CaretPosition
+            .GetNextInsertionPosition(WpfDocs.LogicalDirection.Backward);
+        if (prevInsert is not null) return false;
+
+        var prevRtb    = pages[pageIdx - 1];
+        var prevDoc    = prevRtb.Document;
+        var lastBlock  = prevDoc.Blocks.LastBlock;
+        if (lastBlock is null) return false;
+
+        var curDoc     = rtb.Document;
+        var firstBlock = curDoc.Blocks.FirstBlock;
+
+        if (lastBlock is WpfDocs.Paragraph lastPara && firstBlock is WpfDocs.Paragraph firstPara)
+        {
+            // 단락 병합: 현재 페이지 첫 단락의 인라인을 이전 페이지 마지막 단락으로 이동
+            var inlines = firstPara.Inlines.ToList();
+            firstPara.Inlines.Clear();
+            curDoc.Blocks.Remove(firstPara);
+            foreach (var il in inlines)
+                lastPara.Inlines.Add(il);
+        }
+        else
+        {
+            curDoc.Blocks.Remove(firstBlock);
+            prevDoc.Blocks.Add(firstBlock);
+        }
+
+        // 현재 페이지 RTB 가 비면 빈 단락 하나 유지
+        if (curDoc.Blocks.Count == 0)
+            curDoc.Blocks.Add(new WpfDocs.Paragraph());
+
+        // 이전 페이지 RTB 로 포커스 이동, 캐럿을 끝에 배치
+        var anchor = prevRtb.Document.ContentEnd
+            .GetInsertionPosition(WpfDocs.LogicalDirection.Backward)
+            ?? prevRtb.Document.ContentEnd;
+        prevRtb.CaretPosition = anchor;
+        prevRtb.Focus();
+
+        e.Handled = true;
+        ScheduleLivePaginationRefresh();
+        return true;
     }
 
     /// <summary>지정 인덱스 페이지 RTB 로 포커스 이동, 캐럿을 시작/끝에 배치.</summary>
