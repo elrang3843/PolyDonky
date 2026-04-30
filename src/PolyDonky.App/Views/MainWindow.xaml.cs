@@ -955,12 +955,12 @@ public partial class MainWindow : Window
                 if (TryPasteSelectedObject()) e.Handled = true;
                 break;
 
-            case Key.L when (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt:
+            case Key.L when (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control:
                 OnFormatChar(this, new RoutedEventArgs());
                 e.Handled = true;
                 break;
 
-            case Key.T when (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt:
+            case Key.T when (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control:
                 OnFormatPara(this, new RoutedEventArgs());
                 e.Handled = true;
                 break;
@@ -2068,14 +2068,14 @@ public partial class MainWindow : Window
         menu.Items.Add(new System.Windows.Controls.Separator());
         var miFormatChar = new System.Windows.Controls.MenuItem
         {
-            Header = "글자 서식(_L)...", InputGestureText = "Alt+L"
+            Header = "글자 서식(_L)...", InputGestureText = "Ctrl+L"
         };
         miFormatChar.Click += OnFormatChar;
         menu.Items.Add(miFormatChar);
 
         var miFormatPara = new System.Windows.Controls.MenuItem
         {
-            Header = "문단 서식(_T)...", InputGestureText = "Alt+T"
+            Header = "문단 서식(_T)...", InputGestureText = "Ctrl+T"
         };
         miFormatPara.Click += OnFormatPara;
         menu.Items.Add(miFormatPara);

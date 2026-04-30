@@ -110,9 +110,9 @@
 
             <MenuItem Header="{Binding MenuFormat, Source={x:Static svc:LocalizedStrings.Instance}}">
                 <MenuItem Header="{Binding MenuFormatChar, Source={x:Static svc:LocalizedStrings.Instance}}"
-                          Click="OnFormatChar" InputGestureText="Alt+L" />
+                          Click="OnFormatChar" InputGestureText="Ctrl+L" />
                 <MenuItem Header="{Binding MenuFormatPara, Source={x:Static svc:LocalizedStrings.Instance}}"
-                          Click="OnFormatPara" InputGestureText="Alt+T" />
+                          Click="OnFormatPara" InputGestureText="Ctrl+T" />
                 <MenuItem Header="{Binding MenuFormatPage, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnFormatPage" />
                 <Separator />
