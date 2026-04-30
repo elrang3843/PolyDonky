@@ -120,6 +120,20 @@
                                    Margin="0,4,0,4" Padding="6,3">
                             <ComboBoxItem Tag="ko-KR">한국어 (Korean)</ComboBoxItem>
                             <ComboBoxItem Tag="en-US">English (United States)</ComboBoxItem>
+                            <ComboBoxItem Tag="en-GB">English (United Kingdom)</ComboBoxItem>
+                            <ComboBoxItem Tag="zh-CN">中文 (Simplified Chinese)</ComboBoxItem>
+                            <ComboBoxItem Tag="zh-TW">繁體中文 (Traditional Chinese)</ComboBoxItem>
+                            <ComboBoxItem Tag="ja-JP">日本語 (Japanese)</ComboBoxItem>
+                            <ComboBoxItem Tag="fr-FR">Français (French)</ComboBoxItem>
+                            <ComboBoxItem Tag="de-DE">Deutsch (German)</ComboBoxItem>
+                            <ComboBoxItem Tag="es-ES">Español (Spanish)</ComboBoxItem>
+                            <ComboBoxItem Tag="it-IT">Italiano (Italian)</ComboBoxItem>
+                            <ComboBoxItem Tag="pt-BR">Português (Portuguese - Brazil)</ComboBoxItem>
+                            <ComboBoxItem Tag="ru-RU">Русский (Russian)</ComboBoxItem>
+                            <ComboBoxItem Tag="th-TH">ไทย (Thai)</ComboBoxItem>
+                            <ComboBoxItem Tag="vi-VN">Tiếng Việt (Vietnamese)</ComboBoxItem>
+                            <ComboBoxItem Tag="ar-SA">العربية (Arabic)</ComboBoxItem>
+                            <ComboBoxItem Tag="hi-IN">हिन्दी (Hindi)</ComboBoxItem>
                         </ComboBox>
 
                         <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}"
