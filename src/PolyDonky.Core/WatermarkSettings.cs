@@ -23,4 +23,7 @@ public sealed class WatermarkSettings
 
     /// <summary>불투명도 0.0 (완전 투명) ~ 1.0 (불투명).</summary>
     public double Opacity { get; set; } = 0.3;
+
+    /// <summary>인쇄 시 워터마크를 함께 출력할지 여부. false 면 화면에만 표시.</summary>
+    public bool PrintWithWatermark { get; set; } = true;
 }

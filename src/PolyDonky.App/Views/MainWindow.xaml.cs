@@ -1722,6 +1722,12 @@ public partial class MainWindow : Window
     private void OnPreviewClick(object sender, System.Windows.RoutedEventArgs e)
     {
         if (_viewModel is null) return;
+        if (!_viewModel.Document.IsPrintable)
+        {
+            System.Windows.MessageBox.Show(SR.DocInfoNotPrintable, SR.MenuFilePreviewPrint,
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         // per-page 모드: 각 RTB 에서 현재 본문을 파싱해 최신 스냅샷을 만든다.
         // _viewModel.GetPreviewDocument() 는 로드 시점 FlowDocument 를 쓰므로 편집 내용이 반영되지 않는다.
         var snapshot = PageEditorHost.PageCount > 0

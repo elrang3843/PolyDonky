@@ -77,4 +77,12 @@ public sealed partial class DocumentInfoModel : ObservableObject
 
     [ObservableProperty]
     private double _watermarkOpacity = 0.3;
+
+    /// <summary>인쇄 시 워터마크를 함께 출력할지 여부.</summary>
+    [ObservableProperty]
+    private bool _printWithWatermark = true;
+
+    /// <summary>문서 인쇄 가능 여부.</summary>
+    [ObservableProperty]
+    private bool _isPrintable = true;
 }

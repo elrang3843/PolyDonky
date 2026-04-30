@@ -291,6 +291,17 @@
                                    FontFamily="Consolas, D2Coding" />
                     </Grid>
 
+                    <Separator Margin="0,14,0,12" />
+
+                    <CheckBox Content="{Binding DocInfoWmPrintWith, Source={x:Static svc:LocalizedStrings.Instance}}"
+                              IsChecked="{Binding PrintWithWatermark}"
+                              IsEnabled="{Binding WatermarkEnabled}"
+                              Margin="0,4,0,4" />
+
+                    <CheckBox Content="{Binding DocInfoIsPrintable, Source={x:Static svc:LocalizedStrings.Instance}}"
+                              IsChecked="{Binding IsPrintable}"
+                              Margin="0,4,0,4" />
+
                     <TextBlock Text="{Binding DocInfoWmHint, Source={x:Static svc:LocalizedStrings.Instance}}"
                                Foreground="{DynamicResource OnSurfaceMuted}"
                                TextWrapping="Wrap" Margin="0,18,0,0" FontSize="11" />

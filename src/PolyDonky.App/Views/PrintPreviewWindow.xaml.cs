@@ -260,9 +260,12 @@ public partial class PrintPreviewWindow : Window
                 PreviewOverlayTableCanvas,  PreviewUnderlayTableCanvas,
                 PreviewFloatingCanvas);
 
-            // 5.5. 워터마크 렌더링
+            // 5.5. 워터마크 렌더링 — 인쇄 시 워터마크 출력 옵션이 켜져 있을 때만
+            var wmForPreview = (docForBuild.Watermark?.PrintWithWatermark ?? false)
+                ? docForBuild.Watermark
+                : null;
             PageViewBuilder.BuildWatermarkLayer(
-                PreviewWatermarkCanvas, docForBuild.Watermark, geo, _pageCount);
+                PreviewWatermarkCanvas, wmForPreview, geo, _pageCount);
 
             // 6. 오버레이 캔버스 클립 — 본문 텍스트가 per-page RTB 에서 페이지마다 잘려 보이는 것과
             // 동일하게, 모든 부유 객체(글상자·도형·이미지·표) 도 페이지 경계 밖(특히 페이지 간 갭) 에서
@@ -508,6 +511,8 @@ public partial class PrintPreviewWindow : Window
             });
         }
         clone.OutlineStyles = src.OutlineStyles;
+        clone.Watermark     = src.Watermark;
+        clone.IsPrintable   = src.IsPrintable;
         return clone;
     }
 

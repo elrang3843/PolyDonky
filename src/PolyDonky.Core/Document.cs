@@ -13,6 +13,9 @@ public sealed class PolyDonkyument
     /// <summary>워터마크 설정 (선택). null 이면 워터마크 없음.</summary>
     public WatermarkSettings? Watermark { get; set; }
 
+    /// <summary>문서 인쇄 가능 여부. false 면 인쇄/미리보기 차단.</summary>
+    public bool IsPrintable { get; set; } = true;
+
     /// <summary>개요 수준별 서식 세트 (선택). null 이면 내장 기본값 사용.</summary>
     public OutlineStyleSet? OutlineStyles { get; set; }
 

@@ -425,6 +425,8 @@ public partial class MainViewModel : ObservableObject
             WatermarkFontSize = wm.FontSize,
             WatermarkRotation = wm.Rotation,
             WatermarkOpacity  = wm.Opacity,
+            PrintWithWatermark = wm.PrintWithWatermark,
+            IsPrintable       = _document.IsPrintable,
         };
 
         var dlg = new DocumentInfoWindow(info) { Owner = Application.Current.MainWindow };
@@ -525,11 +527,19 @@ public partial class MainViewModel : ObservableObject
                 FontSize = Math.Max(1, info.WatermarkFontSize),
                 Rotation = info.WatermarkRotation,
                 Opacity  = Math.Clamp(info.WatermarkOpacity, 0.0, 1.0),
+                PrintWithWatermark = info.PrintWithWatermark,
             }
             : null;
         if (!WatermarkEquals(_document.Watermark, newWm))
         {
             _document.Watermark = newWm;
+            dirty = true;
+        }
+
+        // ── 인쇄 가능 여부 ──
+        if (_document.IsPrintable != info.IsPrintable)
+        {
+            _document.IsPrintable = info.IsPrintable;
             dirty = true;
         }
 
@@ -545,7 +555,8 @@ public partial class MainViewModel : ObservableObject
             && a.Color == b.Color
             && a.FontSize == b.FontSize
             && a.Rotation.Equals(b.Rotation)
-            && a.Opacity.Equals(b.Opacity);
+            && a.Opacity.Equals(b.Opacity)
+            && a.PrintWithWatermark == b.PrintWithWatermark;
     }
 
     private static (int paragraphs, int tables, int images) CountBlocks(IEnumerable<Section> sections)
