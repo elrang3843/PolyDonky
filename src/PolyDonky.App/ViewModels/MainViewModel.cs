@@ -820,7 +820,7 @@ public partial class MainViewModel : ObservableObject
     private string? ExtractFirstLineTitle(PolyDonkyument doc)
     {
         var firstSection = doc.Sections.FirstOrDefault();
-        if (firstSection?.Blocks.Count == 0) return null;
+        if (firstSection is null || firstSection.Blocks.Count == 0) return null;
 
         var firstBlock = firstSection.Blocks.FirstOrDefault();
         string? text = firstBlock switch
