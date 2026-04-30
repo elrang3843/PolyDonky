@@ -128,6 +128,7 @@ namespace PolyDonky.App.Properties
         internal static string DocInfoDataSize   => Get(nameof(DocInfoDataSize));
         internal static string DocInfoDocTitle   => Get(nameof(DocInfoDocTitle));
         internal static string DocInfoAuthor     => Get(nameof(DocInfoAuthor));
+        internal static string DocInfoEditor     => Get(nameof(DocInfoEditor));
         internal static string DocInfoLanguage   => Get(nameof(DocInfoLanguage));
         internal static string DocInfoCreated    => Get(nameof(DocInfoCreated));
         internal static string DocInfoModified   => Get(nameof(DocInfoModified));
