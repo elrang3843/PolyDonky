@@ -200,10 +200,28 @@ public partial class CharFormatWindow : Window
     }
 
     private void OnFgSwatchClick(object sender, MouseButtonEventArgs e)
-        => TxtFgColor.Focus();
+        => PickColor(TxtFgColor);
 
     private void OnBgSwatchClick(object sender, MouseButtonEventArgs e)
-        => TxtBgColor.Focus();
+        => PickColor(TxtBgColor);
+
+    private void OnFgPickerClick(object sender, RoutedEventArgs e)
+        => PickColor(TxtFgColor);
+
+    private void OnBgPickerClick(object sender, RoutedEventArgs e)
+        => PickColor(TxtBgColor);
+
+    private void PickColor(TextBox target)
+    {
+        using var dlg = new System.Windows.Forms.ColorDialog { FullOpen = true, AnyColor = true };
+        if (TryParseColor(target.Text, out var current))
+            dlg.Color = System.Drawing.Color.FromArgb(current.A, current.R, current.G, current.B);
+        if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            var p = dlg.Color;
+            target.Text = $"#{p.R:X2}{p.G:X2}{p.B:X2}";
+        }
+    }
 
     private void OnFgColorChanged(object sender, TextChangedEventArgs e)
     {

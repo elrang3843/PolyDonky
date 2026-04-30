@@ -136,15 +136,17 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="24" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="16" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0"
                            Text="{Binding FormatCharFgColor, Source={x:Static svc:LocalizedStrings.Instance}}"
                            VerticalAlignment="Center" Margin="0,0,6,0" />
-                <!-- 글자색 스워치 — 클릭 시 TextBox 포커스 -->
+                <!-- 글자색 스워치 — 클릭 시 색상 픽커 열기 -->
                 <Border Grid.Column="1" x:Name="FgSwatch"
                         Width="22" Height="18"
                         BorderThickness="1" BorderBrush="{DynamicResource Divider}"
@@ -157,23 +159,31 @@
                          BorderBrush="{DynamicResource Divider}"
                          VerticalAlignment="Center" Padding="4,3"
                          TextChanged="OnFgColorChanged" />
-                <TextBlock Grid.Column="3" />
-                <TextBlock Grid.Column="4"
+                <Button Grid.Column="3" Content="..."
+                        Padding="6,2" Margin="4,0,0,0"
+                        VerticalAlignment="Center"
+                        Click="OnFgPickerClick" />
+                <TextBlock Grid.Column="4" />
+                <TextBlock Grid.Column="5"
                            Text="{Binding FormatCharBgColor, Source={x:Static svc:LocalizedStrings.Instance}}"
                            VerticalAlignment="Center" Margin="0,0,6,0" />
-                <!-- 배경색 스워치 -->
-                <Border Grid.Column="5" x:Name="BgSwatch"
+                <!-- 배경색 스워치 — 클릭 시 색상 픽커 열기 -->
+                <Border Grid.Column="6" x:Name="BgSwatch"
                         Width="22" Height="18"
                         BorderThickness="1" BorderBrush="{DynamicResource Divider}"
                         VerticalAlignment="Center" Margin="0,0,4,0"
                         Cursor="Hand" MouseLeftButtonUp="OnBgSwatchClick" />
-                <TextBox Grid.Column="6" x:Name="TxtBgColor"
+                <TextBox Grid.Column="7" x:Name="TxtBgColor"
                          Background="{DynamicResource SurfaceAlt}"
                          Foreground="{DynamicResource OnSurface}"
                          CaretBrush="{DynamicResource OnSurface}"
                          BorderBrush="{DynamicResource Divider}"
                          VerticalAlignment="Center" Padding="4,3"
                          TextChanged="OnBgColorChanged" />
+                <Button Grid.Column="8" Content="..."
+                        Padding="6,2" Margin="4,0,0,0"
+                        VerticalAlignment="Center"
+                        Click="OnBgPickerClick" />
             </Grid>
         </GroupBox>
 
