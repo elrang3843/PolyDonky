@@ -66,6 +66,16 @@ public static class FlowDocumentPaginationAdapter
         fd.PagePadding = new Thickness(0);
         var bodyAssignments = MapBodyBlocksToPages(fd, geo, pageCount);
 
+        // 본문 블록의 실제 배치 결과로 pageCount 보정.
+        // DocumentPaginator(풀 페이지+여백) 와 오프스크린 RTB(bodyH) 측정이 미세하게 어긋나
+        // 본문 블록이 DocumentPaginator 산출 pageCount 를 넘는 페이지로 떨어질 수 있다.
+        // 이 경우 페이지 수를 늘려서 마지막 페이지에 강제 배정·클립되는 것을 막는다.
+        if (bodyAssignments.Count > 0)
+        {
+            int maxBodyPage = bodyAssignments.Max(b => b.pageIdx) + 1;
+            pageCount = Math.Max(pageCount, maxBodyPage);
+        }
+
         // 4. 오버레이 블록(글상자·이미지·도형·오버레이 표) 수집 — AnchorPageIndex 기준
         var overlayAssignments = CollectOverlayBlocks(document);
 
@@ -158,7 +168,12 @@ public static class FlowDocumentPaginationAdapter
             }
             else
             {
-                int topPage = Math.Clamp((int)(topY / bodyH), 0, pageCount - 1);
+                // 자연 페이지 = topY 가 떨어지는 본문 페이지(여백 제외 bodyH 기준).
+                // 상한 클램프를 두지 않는다 — DocumentPaginator(여백 포함 풀 페이지로 측정) 와
+                // 오프스크린 RTB(여백 제외 bodyH 로 측정) 의 누적 Y 가 미세하게 다를 때
+                // pageCount-1 로 클램프하면 마지막 페이지에 넘치는 블록이 강제 배정되어 클립된다.
+                // 호출자(Paginate) 가 bodyAssignments 의 max pageIdx 로 pageCount 를 보정한다.
+                int topPage = Math.Max(0, (int)(topY / bodyH));
 
                 // 블록이 페이지 경계를 넘고(bottomY > 다음 페이지 시작),
                 // 한 페이지에 들어갈 만큼 작으면 다음 페이지로 이동한다.
@@ -166,8 +181,7 @@ public static class FlowDocumentPaginationAdapter
                 // 빈 페이지보다 블록이 올바른 페이지에 놓이는 쪽이 시각적으로 훨씬 낫다.
                 if (!double.IsNaN(bottomY)
                     && bottomY > (topPage + 1) * bodyH
-                    && (bottomY - topY) < bodyH
-                    && topPage + 1 < pageCount)
+                    && (bottomY - topY) < bodyH)
                 {
                     pageIdx = topPage + 1;
                 }
