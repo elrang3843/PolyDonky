@@ -1110,12 +1110,18 @@ public partial class MainWindow : Window
                     section.Blocks.Add(b);
         }
 
-        // 오버레이 블록 (_viewModel.Document 가 stable source)
+        // 오버레이 블록 (_viewModel.Document 가 stable source) — 글상자는 RTB 에 앵커가 없고,
+        // 오버레이 모드 표/그림/도형의 앵커 단락은 PerPageDocumentSplitter 가 BodyBlocks 에서 제외하므로
+        // 둘 다 RTB 파싱으로 복원되지 않는다. 따라서 모델에서 직접 인계.
+        // 주의: Table/ImageBlock/ShapeObject 는 모두 IOverlayAnchored 를 구현하므로 단순히
+        // `b is IOverlayAnchored` 로 거르면 block-mode 표 등 본문 블록까지 포함되어 RTB 파싱본과
+        // 중복되고 ("표가 한 개 더 맨 끝에 붙는" 증상) 페이지 끝에 추가 배정된다.
+        // IsOverlayMode 로 진짜 오버레이만 추린다.
         if (original?.Sections.FirstOrDefault() is { } origOverlay)
         {
             foreach (var b in origOverlay.Blocks)
             {
-                if (b is PolyDonky.Core.IOverlayAnchored || b is PolyDonky.Core.TextBoxObject)
+                if (Pagination.FlowDocumentPaginationAdapter.IsOverlayMode(b))
                     section.Blocks.Add(b);
             }
         }
@@ -1451,8 +1457,9 @@ public partial class MainWindow : Window
         if (Math.Abs(PaperHost.MinHeight - totalHeight) > 0.5)
             PaperHost.MinHeight = totalHeight;
 
-        // 오버레이 캔버스를 페이지 경계에서 클립 — 도형이 페이지 간 갭으로 넘어가지 않도록.
-        // 미리보기/인쇄와 동일한 시각 결과를 보장한다.
+        // 오버레이 캔버스를 페이지 경계에서 클립 — 본문 텍스트가 per-page RTB 에서 페이지마다
+        // 잘려 보이는 것과 동일하게, 모든 부유 객체(글상자·도형·이미지·표) 도 페이지 경계 밖
+        // (특히 페이지 간 갭) 에서 잘려 보이도록 한다. 미리보기/인쇄와 동일한 시각 결과를 보장한다.
         var overlayClip = PageViewBuilder.BuildPageClipGeometry(pg, pageCount);
         OverlayShapeCanvas.Clip  = overlayClip;
         UnderlayShapeCanvas.Clip = overlayClip;
@@ -1460,6 +1467,7 @@ public partial class MainWindow : Window
         UnderlayImageCanvas.Clip = overlayClip;
         OverlayTableCanvas.Clip  = overlayClip;
         UnderlayTableCanvas.Clip = overlayClip;
+        FloatingCanvas.Clip      = overlayClip;
 
         // PageBackgroundCanvas 클리어 후 페이지마다 다시 그리기.
         PageBackgroundCanvas.Children.Clear();

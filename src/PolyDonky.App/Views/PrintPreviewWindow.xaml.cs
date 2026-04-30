@@ -210,7 +210,9 @@ public partial class PrintPreviewWindow : Window
                 PreviewOverlayTableCanvas,  PreviewUnderlayTableCanvas,
                 PreviewFloatingCanvas);
 
-            // 6. 오버레이 캔버스 클립 — 도형이 페이지 경계 밖으로 나오지 않도록
+            // 6. 오버레이 캔버스 클립 — 본문 텍스트가 per-page RTB 에서 페이지마다 잘려 보이는 것과
+            // 동일하게, 모든 부유 객체(글상자·도형·이미지·표) 도 페이지 경계 밖(특히 페이지 간 갭) 에서
+            // 잘려 보이도록 한다. 편집창과 동일한 시각 결과를 보장한다.
             var clip = PageViewBuilder.BuildPageClipGeometry(geo, _pageCount);
             PreviewOverlayShapeCanvas.Clip  = clip;
             PreviewUnderlayShapeCanvas.Clip = clip;
@@ -218,6 +220,7 @@ public partial class PrintPreviewWindow : Window
             PreviewUnderlayImageCanvas.Clip = clip;
             PreviewOverlayTableCanvas.Clip  = clip;
             PreviewUnderlayTableCanvas.Clip = clip;
+            PreviewFloatingCanvas.Clip      = clip;
 
             // 7. PaperHost 크기 설정
             PreviewPaperHost.Width     = geo.PageWidthDip;
