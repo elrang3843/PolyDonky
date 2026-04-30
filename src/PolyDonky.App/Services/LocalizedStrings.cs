@@ -26,8 +26,9 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string MenuFileOpen    => SR.MenuFileOpen;
     public string MenuFileSave    => SR.MenuFileSave;
     public string MenuFileSaveAs  => SR.MenuFileSaveAs;
-    public string MenuFilePreview => SR.MenuFilePreview;
-    public string MenuFilePrint   => SR.MenuFilePrint;
+    public string MenuFilePreview      => SR.MenuFilePreview;
+    public string MenuFilePrint        => SR.MenuFilePrint;
+    public string MenuFilePreviewPrint => SR.MenuFilePreviewPrint;
     public string MenuFileClose   => SR.MenuFileClose;
     public string MenuFileExit    => SR.MenuFileExit;
 

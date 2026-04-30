@@ -21,7 +21,6 @@ public partial class PrintPreviewWindow : Window
     private PageSettings _printPage;
     private bool _monochrome;
     private int  _copies = 1;
-    private readonly bool _autoStartPrint;
 
     private PageGeometry? _geo;
     private int           _pageCount;
@@ -55,13 +54,12 @@ public partial class PrintPreviewWindow : Window
 
     // ── 생성자 ────────────────────────────────────────────────────────────
 
-    public PrintPreviewWindow(PolyDonkyument doc, bool autoStartPrint = false)
+    public PrintPreviewWindow(PolyDonkyument doc)
     {
         InitializeComponent();
 
-        _doc            = doc;
-        _autoStartPrint = autoStartPrint;
-        _printPage      = ClonePage(doc.Sections.FirstOrDefault()?.Page ?? new PageSettings());
+        _doc       = doc;
+        _printPage = ClonePage(doc.Sections.FirstOrDefault()?.Page ?? new PageSettings());
 
         _rebuildTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         _rebuildTimer.Tick += (_, _) => { _rebuildTimer.Stop(); RebuildPreview(); };
@@ -74,15 +72,6 @@ public partial class PrintPreviewWindow : Window
     {
         InitSettingsPanel();
         BuildPreview();
-
-        if (_autoStartPrint)
-        {
-            // 미리보기 빌드(VisualBrush 가 캡처할 PreviewPaperHost) 가 완료된 뒤 인쇄 다이얼로그 호출.
-            // ApplyFitPage 와 같은 Loaded 우선순위로 디스패치해 레이아웃·페이지 프레임이 자리잡은 시점에 실행.
-            Dispatcher.BeginInvoke(
-                new Action(() => OnPrintClick(this, new RoutedEventArgs())),
-                DispatcherPriority.Background);
-        }
     }
 
     // ── 설정 패널 초기화 ─────────────────────────────────────────────────

@@ -32,6 +32,7 @@ namespace PolyDonky.App.Properties
         internal static string MenuFileSaveAs        => Get(nameof(MenuFileSaveAs));
         internal static string MenuFilePreview       => Get(nameof(MenuFilePreview));
         internal static string MenuFilePrint         => Get(nameof(MenuFilePrint));
+        internal static string MenuFilePreviewPrint  => Get(nameof(MenuFilePreviewPrint));
         internal static string MenuFileClose         => Get(nameof(MenuFileClose));
         internal static string MenuFileExit          => Get(nameof(MenuFileExit));
 

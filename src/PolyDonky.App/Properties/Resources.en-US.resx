@@ -40,6 +40,7 @@
   <data name="MenuFileSaveAs" xml:space="preserve"><value>Save _As...</value></data>
   <data name="MenuFilePreview" xml:space="preserve"><value>_Preview</value></data>
   <data name="MenuFilePrint" xml:space="preserve"><value>_Print...</value></data>
+  <data name="MenuFilePreviewPrint" xml:space="preserve"><value>Preview / _Print...</value></data>
   <data name="MenuFileClose" xml:space="preserve"><value>_Close</value></data>
   <data name="MenuFileExit" xml:space="preserve"><value>E_xit</value></data>
 

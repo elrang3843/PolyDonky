@@ -40,6 +40,7 @@
   <data name="MenuFileSaveAs" xml:space="preserve"><value>다른 이름으로 저장(_A)...</value></data>
   <data name="MenuFilePreview" xml:space="preserve"><value>미리보기(_V)</value></data>
   <data name="MenuFilePrint" xml:space="preserve"><value>인쇄(_P)...</value></data>
+  <data name="MenuFilePreviewPrint" xml:space="preserve"><value>미리보기/인쇄(_P)...</value></data>
   <data name="MenuFileClose" xml:space="preserve"><value>닫기(_C)</value></data>
   <data name="MenuFileExit" xml:space="preserve"><value>종료(_X)</value></data>
 
