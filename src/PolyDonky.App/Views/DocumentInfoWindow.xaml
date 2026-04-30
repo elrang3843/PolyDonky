@@ -115,25 +115,35 @@
                         <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}"
                                    Text="{Binding DocInfoLanguage, Source={x:Static svc:LocalizedStrings.Instance}}" />
                         <ComboBox  Grid.Row="3" Grid.Column="1"
-                                   SelectedValuePath="Tag"
-                                   SelectedValue="{Binding Language, UpdateSourceTrigger=PropertyChanged}"
+                                   IsEditable="True"
+                                   TextSearch.TextPath="Tag"
+                                   Text="{Binding Language, UpdateSourceTrigger=LostFocus}"
                                    Margin="0,4,0,4" Padding="6,3">
-                            <ComboBoxItem Tag="ko-KR">한국어 (Korean)</ComboBoxItem>
-                            <ComboBoxItem Tag="en-US">English (United States)</ComboBoxItem>
-                            <ComboBoxItem Tag="en-GB">English (United Kingdom)</ComboBoxItem>
-                            <ComboBoxItem Tag="zh-CN">中文 (Simplified Chinese)</ComboBoxItem>
-                            <ComboBoxItem Tag="zh-TW">繁體中文 (Traditional Chinese)</ComboBoxItem>
-                            <ComboBoxItem Tag="ja-JP">日本語 (Japanese)</ComboBoxItem>
-                            <ComboBoxItem Tag="fr-FR">Français (French)</ComboBoxItem>
-                            <ComboBoxItem Tag="de-DE">Deutsch (German)</ComboBoxItem>
-                            <ComboBoxItem Tag="es-ES">Español (Spanish)</ComboBoxItem>
-                            <ComboBoxItem Tag="it-IT">Italiano (Italian)</ComboBoxItem>
-                            <ComboBoxItem Tag="pt-BR">Português (Portuguese - Brazil)</ComboBoxItem>
-                            <ComboBoxItem Tag="ru-RU">Русский (Russian)</ComboBoxItem>
-                            <ComboBoxItem Tag="th-TH">ไทย (Thai)</ComboBoxItem>
-                            <ComboBoxItem Tag="vi-VN">Tiếng Việt (Vietnamese)</ComboBoxItem>
-                            <ComboBoxItem Tag="ar-SA">العربية (Arabic)</ComboBoxItem>
-                            <ComboBoxItem Tag="hi-IN">हिन्दी (Hindi)</ComboBoxItem>
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Tag}" Width="60"
+                                                   FontFamily="Consolas, D2Coding" />
+                                        <TextBlock Text="{Binding Content}" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                            <ComboBoxItem Tag="ko-KR" Content="한국어 (Korean)" />
+                            <ComboBoxItem Tag="en-US" Content="English (United States)" />
+                            <ComboBoxItem Tag="en-GB" Content="English (United Kingdom)" />
+                            <ComboBoxItem Tag="zh-CN" Content="中文 (Simplified Chinese)" />
+                            <ComboBoxItem Tag="zh-TW" Content="繁體中文 (Traditional Chinese)" />
+                            <ComboBoxItem Tag="ja-JP" Content="日本語 (Japanese)" />
+                            <ComboBoxItem Tag="fr-FR" Content="Français (French)" />
+                            <ComboBoxItem Tag="de-DE" Content="Deutsch (German)" />
+                            <ComboBoxItem Tag="es-ES" Content="Español (Spanish)" />
+                            <ComboBoxItem Tag="it-IT" Content="Italiano (Italian)" />
+                            <ComboBoxItem Tag="pt-BR" Content="Português (Portuguese - Brazil)" />
+                            <ComboBoxItem Tag="ru-RU" Content="Русский (Russian)" />
+                            <ComboBoxItem Tag="th-TH" Content="ไทย (Thai)" />
+                            <ComboBoxItem Tag="vi-VN" Content="Tiếng Việt (Vietnamese)" />
+                            <ComboBoxItem Tag="ar-SA" Content="العربية (Arabic)" />
+                            <ComboBoxItem Tag="hi-IN" Content="हिन्दी (Hindi)" />
                         </ComboBox>
 
                         <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}"
