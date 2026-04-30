@@ -486,7 +486,8 @@ public partial class MainWindow : Window
         // 단일 단락 콘텐츠 → 캐럿 위치에 인라인 삽입 (새 단락 블록 생성 않음)
         if (blocks.Count == 1 && blocks[0] is PolyDonky.Core.Paragraph singlePara)
         {
-            InsertParagraphInline(singlePara, caret);
+            var newCaret = InsertParagraphInline(singlePara, caret);
+            if (newCaret != null) try { BodyEditor.CaretPosition = newCaret; } catch { }
             _viewModel?.MarkDirty();
             return true;
         }
@@ -516,6 +517,16 @@ public partial class MainWindow : Window
         bool hasOverlay = false;
         foreach (var coreBlock in blocks)
         {
+            // 글상자(TextBoxObject) — FlowDocument 앵커 없이 FloatingCanvas 에 직접 배치됨.
+            // 모델에 먼저 등록하고, 캔버스 배치는 아래 RebuildFloatingObjects() 가 일괄 수행.
+            if (coreBlock is PolyDonky.Core.TextBoxObject tbo)
+            {
+                tbo.OverlayXMm += 5; tbo.OverlayYMm += 5;
+                _viewModel?.AddOverlayBlockToCurrentSection(tbo);
+                hasOverlay = true;
+                continue;
+            }
+
             // 오버레이 블록은 원본 위치에 겹쳐 붙여넣기되지 않도록 5mm 오프셋 적용
             if (coreBlock is PolyDonky.Core.ShapeObject sh &&
                 sh.WrapMode is PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText)
@@ -541,15 +552,27 @@ public partial class MainWindow : Window
                 doc.Blocks.Add(wpfBlock);
             }
 
+            // 오버레이 도형은 RTB 앵커 외에 모델에도 등록해야 저장/재구축 후 유지됨
+            if (coreBlock is PolyDonky.Core.ShapeObject shpOvl &&
+                shpOvl.WrapMode is PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText)
+                _viewModel?.AddShapeToCurrentSection(shpOvl);
+
             if (coreBlock is PolyDonky.Core.Table { WrapMode: not PolyDonky.Core.TableWrapMode.Block }
                 || coreBlock is PolyDonky.Core.ImageBlock { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText }
                 || coreBlock is PolyDonky.Core.ShapeObject { WrapMode: PolyDonky.Core.ImageWrapMode.InFrontOfText or PolyDonky.Core.ImageWrapMode.BehindText })
                 hasOverlay = true;
         }
 
+        // 커서를 마지막 삽입 블록 끝으로 이동 (비-오버레이 블록 붙여넣기)
+        if (!hasOverlay && anchor != null)
+        {
+            try { BodyEditor.CaretPosition = anchor.ContentEnd; } catch { }
+        }
+
         if (hasOverlay)
         {
             RebuildOverlayImages(); RebuildOverlayShapes(); RebuildOverlayTables();
+            RebuildFloatingObjects();
             // 오버레이 재구축 후 포커스가 캔버스에 묶일 수 있으므로 본문 RTB 로 복원
             BodyEditor.Focus();
         }
@@ -628,7 +651,9 @@ public partial class MainWindow : Window
     /// Core.Paragraph 의 Inline 들을 캐럿 위치 단락에 인라인으로 삽입한다.
     /// 캐럿이 Run 중간에 있으면 그 Run 을 분리하고 사이에 삽입한다.
     /// </summary>
-    private void InsertParagraphInline(PolyDonky.Core.Paragraph corePara,
+    /// <returns>삽입된 마지막 인라인의 ContentEnd (커서 복원용). 삽입 실패 시 null.</returns>
+    private System.Windows.Documents.TextPointer? InsertParagraphInline(
+        PolyDonky.Core.Paragraph corePara,
         System.Windows.Documents.TextPointer caretPos)
     {
         var tempPara = Services.FlowDocumentBuilder.BuildParagraph(corePara);
@@ -642,8 +667,10 @@ public partial class MainWindow : Window
         {
             string plain = string.Concat(corePara.Runs.Select(r => r.Text));
             if (!string.IsNullOrEmpty(plain)) insertPos.InsertTextInRun(plain);
-            return;
+            return null;
         }
+
+        if (inlines.Count == 0) return null;
 
         System.Windows.Documents.Run? splitRun = null;
         int splitOffset = 0;
@@ -664,6 +691,7 @@ public partial class MainWindow : Window
             break;
         }
 
+        System.Windows.Documents.Inline lastPasted;
         if (splitRun != null)
         {
             var before = CloneWpfRun(splitRun, splitRun.Text[..splitOffset]);
@@ -672,11 +700,13 @@ public partial class MainWindow : Window
             foreach (var il in inlines) targetPara.Inlines.InsertBefore(splitRun, il);
             targetPara.Inlines.InsertBefore(splitRun, after);
             targetPara.Inlines.Remove(splitRun);
+            lastPasted = inlines[inlines.Count - 1];
         }
         else if (insertAfter != null)
         {
             foreach (var il in Enumerable.Reverse(inlines))
                 targetPara.Inlines.InsertAfter(insertAfter, il);
+            lastPasted = inlines[inlines.Count - 1];
         }
         else
         {
@@ -685,7 +715,10 @@ public partial class MainWindow : Window
                 foreach (var il in Enumerable.Reverse(inlines)) targetPara.Inlines.InsertBefore(first, il);
             else
                 foreach (var il in inlines) targetPara.Inlines.Add(il);
+            lastPasted = inlines[inlines.Count - 1];
         }
+
+        try { return lastPasted.ContentEnd; } catch { return null; }
     }
 
     private static System.Windows.Documents.Run CloneWpfRun(System.Windows.Documents.Run src, string text)
@@ -1165,7 +1198,8 @@ public partial class MainWindow : Window
         int n = 0;
         foreach (var b in blocks)
         {
-            if (b.Tag is PolyDonky.Core.Block) n++;
+            if (b.Tag is PolyDonky.Core.Block coreBlock
+                && !Pagination.FlowDocumentPaginationAdapter.IsOverlayMode(coreBlock)) n++;
             if (b is System.Windows.Documents.List list)
                 foreach (var li in list.ListItems)
                     n += CountFlatTaggedBlocks(li.Blocks);
