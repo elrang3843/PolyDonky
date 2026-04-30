@@ -32,6 +32,7 @@ namespace PolyDonky.App.Properties
         internal static string MenuFileSaveAs        => Get(nameof(MenuFileSaveAs));
         internal static string MenuFilePreview       => Get(nameof(MenuFilePreview));
         internal static string MenuFilePrint         => Get(nameof(MenuFilePrint));
+        internal static string MenuFilePreviewPrint  => Get(nameof(MenuFilePreviewPrint));
         internal static string MenuFileClose         => Get(nameof(MenuFileClose));
         internal static string MenuFileExit          => Get(nameof(MenuFileExit));
 
@@ -48,14 +49,11 @@ namespace PolyDonky.App.Properties
         internal static string MenuInsert            => Get(nameof(MenuInsert));
         internal static string MenuInsertTextBox     => Get(nameof(MenuInsertTextBox));
         internal static string MenuInsertTable       => Get(nameof(MenuInsertTable));
-        internal static string MenuInsertGraph       => Get(nameof(MenuInsertGraph));
         internal static string MenuInsertSpecialChar => Get(nameof(MenuInsertSpecialChar));
         internal static string MenuInsertEquation    => Get(nameof(MenuInsertEquation));
         internal static string MenuInsertEmoji       => Get(nameof(MenuInsertEmoji));
         internal static string MenuInsertShape       => Get(nameof(MenuInsertShape));
         internal static string MenuInsertImage       => Get(nameof(MenuInsertImage));
-        internal static string MenuInsertSign        => Get(nameof(MenuInsertSign));
-
         // ── 메뉴: 서식 ─────────────────────────────────────────────
         internal static string MenuFormat            => Get(nameof(MenuFormat));
         internal static string MenuFormatChar        => Get(nameof(MenuFormatChar));
@@ -66,12 +64,10 @@ namespace PolyDonky.App.Properties
         internal static string MenuTools             => Get(nameof(MenuTools));
         internal static string MenuToolsSettings     => Get(nameof(MenuToolsSettings));
         internal static string MenuToolsDict         => Get(nameof(MenuToolsDict));
-        internal static string MenuToolsSpell        => Get(nameof(MenuToolsSpell));
-        internal static string MenuToolsSignMaker    => Get(nameof(MenuToolsSignMaker));
-
         // ── 메뉴: 도움말 ────────────────────────────────────────────
         internal static string MenuHelp              => Get(nameof(MenuHelp));
         internal static string MenuHelpManual        => Get(nameof(MenuHelpManual));
+        internal static string MenuHelpFormat        => Get(nameof(MenuHelpFormat));
         internal static string MenuHelpLicense       => Get(nameof(MenuHelpLicense));
         internal static string MenuHelpAbout         => Get(nameof(MenuHelpAbout));
 
@@ -98,6 +94,8 @@ namespace PolyDonky.App.Properties
         internal static string StatusOverwrite       => Get(nameof(StatusOverwrite));
         internal static string StatusDocClosed       => Get(nameof(StatusDocClosed));
         internal static string StatusDrawTextBox     => Get(nameof(StatusDrawTextBox));
+        internal static string StatusDrawShape       => Get(nameof(StatusDrawShape));
+        internal static string StatusDrawPolyline   => Get(nameof(StatusDrawPolyline));
 
         // ── 다이얼로그 공통 ─────────────────────────────────────────
         internal static string DlgOK                    => Get(nameof(DlgOK));
@@ -322,5 +320,9 @@ namespace PolyDonky.App.Properties
         internal static string ToolbarZoomOut              => Get(nameof(ToolbarZoomOut));
         internal static string ToolbarFitWidth             => Get(nameof(ToolbarFitWidth));
         internal static string ToolbarFitPage              => Get(nameof(ToolbarFitPage));
+        internal static string DictWindowTitle             => Get(nameof(DictWindowTitle));
+        internal static string DictWindowSearchHint        => Get(nameof(DictWindowSearchHint));
+        internal static string DictWindowSearch            => Get(nameof(DictWindowSearch));
+        internal static string DictWindowErrNoRuntime      => Get(nameof(DictWindowErrNoRuntime));
     }
 }

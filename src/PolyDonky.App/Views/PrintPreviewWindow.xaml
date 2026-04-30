@@ -1,0 +1,294 @@
+<Window x:Class="PolyDonky.App.Views.PrintPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="clr-namespace:PolyDonky.App.Services"
+        xmlns:views="clr-namespace:PolyDonky.App.Views"
+        Title="{Binding MenuFilePreview, Source={x:Static svc:LocalizedStrings.Instance}}"
+        Width="1120" Height="720"
+        MinWidth="720" MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Icon="pack://application:,,,/Assets/PolyDonky.ico"
+        FontFamily="{DynamicResource UiFont}"
+        Background="{DynamicResource Surface}"
+        Foreground="{DynamicResource OnSurface}"
+        Closed="OnWindowClosed">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 상단 툴바 -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource SurfaceVariant}"
+                BorderBrush="{DynamicResource Outline}"
+                BorderThickness="0,0,0,1"
+                Padding="8,6">
+            <DockPanel>
+                <Button x:Name="PrintBtn"
+                        DockPanel.Dock="Left"
+                        Content="{Binding MenuFilePrint, Source={x:Static svc:LocalizedStrings.Instance}}"
+                        Width="80" Height="28"
+                        Margin="0,0,8,0"
+                        Click="OnPrintClick" />
+
+                <Button DockPanel.Dock="Right"
+                        Content="{Binding MenuFileClose, Source={x:Static svc:LocalizedStrings.Instance}}"
+                        Width="64" Height="28"
+                        IsCancel="True"
+                        Click="OnCloseClick" />
+
+                <!-- 줌 컨트롤 -->
+                <Button DockPanel.Dock="Left"
+                        Content="−"
+                        Width="32" Height="28"
+                        FontSize="14" FontWeight="SemiBold"
+                        Margin="8,0,0,0"
+                        ToolTip="축소"
+                        Click="OnZoomOutClick" />
+                <Button DockPanel.Dock="Left"
+                        Content="+"
+                        Width="32" Height="28"
+                        FontSize="14" FontWeight="SemiBold"
+                        Margin="2,0,0,0"
+                        ToolTip="확대"
+                        Click="OnZoomInClick" />
+                <TextBlock x:Name="ZoomText"
+                           DockPanel.Dock="Left"
+                           Text="100%"
+                           VerticalAlignment="Center"
+                           Width="56"
+                           TextAlignment="Center"
+                           Margin="6,0,0,0"
+                           Foreground="{DynamicResource OnSurface}"
+                           FontSize="12" />
+                <Button DockPanel.Dock="Left"
+                        Content="쪽 맞춤"
+                        Width="68" Height="28"
+                        Margin="6,0,0,0"
+                        ToolTip="페이지 전체가 보이게"
+                        Click="OnFitPageClick" />
+                <Button DockPanel.Dock="Left"
+                        Content="폭 맞춤"
+                        Width="68" Height="28"
+                        Margin="2,0,12,0"
+                        ToolTip="가로 폭에 맞춤"
+                        Click="OnFitWidthClick" />
+
+                <!-- 페이지 정보 레이블 -->
+                <TextBlock x:Name="PageInfoText"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
+                           FontSize="12" />
+            </DockPanel>
+        </Border>
+
+        <!-- 콘텐츠 영역: 설정 패널 + 뷰어 -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" MinWidth="160" MaxWidth="320"/>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ── 좌측 인쇄 설정 패널 ── -->
+            <Border Grid.Column="0"
+                    Background="{DynamicResource Surface}"
+                    BorderBrush="{DynamicResource Outline}"
+                    BorderThickness="0,0,1,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="12,14,12,14">
+
+                        <!-- 용지 섹션 -->
+                        <TextBlock Text="용지"
+                                   FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{DynamicResource OnSurface}"
+                                   Margin="0,0,0,8"/>
+
+                        <TextBlock Text="크기"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <ComboBox x:Name="PaperSizeCombo"
+                                  Height="26" FontSize="12"
+                                  Margin="0,0,0,10"
+                                  SelectionChanged="OnPaperSizeChanged">
+                            <ComboBoxItem Tag="Default" Content="문서 기본값"  IsSelected="True"/>
+                            <ComboBoxItem Tag="A4"      Content="A4  (210 × 297 mm)"/>
+                            <ComboBoxItem Tag="A3"      Content="A3  (297 × 420 mm)"/>
+                            <ComboBoxItem Tag="A5"      Content="A5  (148 × 210 mm)"/>
+                            <ComboBoxItem Tag="B5_JIS"  Content="B5  (182 × 257 mm)"/>
+                            <ComboBoxItem Tag="B4_JIS"  Content="B4  (257 × 364 mm)"/>
+                            <ComboBoxItem Tag="Letter"  Content="Letter  (215.9 × 279.4 mm)"/>
+                            <ComboBoxItem Tag="Legal"   Content="Legal  (215.9 × 355.6 mm)"/>
+                        </ComboBox>
+
+                        <TextBlock Text="방향"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <RadioButton x:Name="PortraitRadio"
+                                         Content="세로" FontSize="12"
+                                         IsChecked="True"
+                                         GroupName="Orientation"
+                                         Margin="0,0,16,0"
+                                         Checked="OnOrientationChanged"/>
+                            <RadioButton x:Name="LandscapeRadio"
+                                         Content="가로" FontSize="12"
+                                         GroupName="Orientation"
+                                         Checked="OnOrientationChanged"/>
+                        </StackPanel>
+
+                        <TextBlock Text="여백"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <ComboBox x:Name="MarginPresetCombo"
+                                  Height="26" FontSize="12"
+                                  Margin="0,0,0,0"
+                                  SelectionChanged="OnMarginPresetChanged">
+                            <ComboBoxItem Tag="Default" Content="문서 기본값"  IsSelected="True"/>
+                            <ComboBoxItem Tag="Normal"  Content="보통  (25 mm)"/>
+                            <ComboBoxItem Tag="Narrow"  Content="좁게  (12.7 mm)"/>
+                            <ComboBoxItem Tag="Wide"    Content="넓게  (38.1 mm)"/>
+                            <ComboBoxItem Tag="None"    Content="여백 없음"/>
+                        </ComboBox>
+
+                        <Separator Margin="0,14,0,14"
+                                   Background="{DynamicResource Outline}"/>
+
+                        <!-- 인쇄 섹션 -->
+                        <TextBlock Text="인쇄"
+                                   FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{DynamicResource OnSurface}"
+                                   Margin="0,0,0,8"/>
+
+                        <TextBlock Text="프린터"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <ComboBox x:Name="PrinterCombo"
+                                  Height="26" FontSize="12"
+                                  Margin="0,0,0,10"/>
+
+                        <TextBlock Text="색상"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <RadioButton x:Name="ColorRadio"
+                                         Content="컬러" FontSize="12"
+                                         IsChecked="True"
+                                         GroupName="ColorMode"
+                                         Margin="0,0,16,0"
+                                         Checked="OnColorModeChanged"/>
+                            <RadioButton x:Name="MonoRadio"
+                                         Content="흑백" FontSize="12"
+                                         GroupName="ColorMode"
+                                         Checked="OnColorModeChanged"/>
+                        </StackPanel>
+
+                        <TextBlock Text="매수"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   Margin="0,0,0,3"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="26"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="CopiesBox"
+                                     Grid.Column="0"
+                                     Height="26" FontSize="12"
+                                     Text="1"
+                                     TextAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     PreviewTextInput="OnCopiesPreviewInput"/>
+                            <Grid Grid.Column="1" Margin="2,0,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Button Grid.Row="0"
+                                        Content="▲" FontSize="7" Padding="0"
+                                        Click="OnCopiesUp"/>
+                                <Button Grid.Row="1"
+                                        Content="▼" FontSize="7" Padding="0"
+                                        Click="OnCopiesDown"/>
+                            </Grid>
+                        </Grid>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- GridSplitter -->
+            <GridSplitter Grid.Column="1"
+                          Width="4"
+                          HorizontalAlignment="Stretch"
+                          Background="{DynamicResource Outline}"
+                          Cursor="SizeWE"/>
+
+            <!-- 미리보기 영역 — 편집창과 동일한 레이어 구조, 읽기 전용 -->
+            <ScrollViewer x:Name="PreviewScroll"
+                          Grid.Column="2"
+                          Background="#FF404040"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="PreviewPaperStack"
+                            HorizontalAlignment="Center"
+                            Margin="32,28,32,48">
+                    <StackPanel.LayoutTransform>
+                        <ScaleTransform x:Name="PreviewScale" ScaleX="1" ScaleY="1"/>
+                    </StackPanel.LayoutTransform>
+
+                    <!-- PaperHost: 편집창과 동일한 레이어 구조 -->
+                    <Grid x:Name="PreviewPaperHost">
+                        <!-- 레이어 0: 페이지 배경 (흰 Border + 그림자 + 여백 가이드) -->
+                        <Canvas x:Name="PreviewPageBgCanvas" IsHitTestVisible="False"/>
+                        <!-- 그림/도형/표 언더레이 -->
+                        <Canvas x:Name="PreviewUnderlayImageCanvas" IsHitTestVisible="False"/>
+                        <Canvas x:Name="PreviewUnderlayShapeCanvas" IsHitTestVisible="False"/>
+                        <Canvas x:Name="PreviewUnderlayTableCanvas" IsHitTestVisible="False"/>
+                        <!-- 워터마크 -->
+                        <Canvas x:Name="PreviewWatermarkCanvas" IsHitTestVisible="False"/>
+                        <!-- 페이지별 본문 RTB (읽기 전용) -->
+                        <views:PerPageEditorHost x:Name="PreviewPageHost"
+                                                 VerticalAlignment="Top"
+                                                 IsHitTestVisible="False"/>
+                        <!-- 글상자 -->
+                        <Canvas x:Name="PreviewFloatingCanvas" IsHitTestVisible="False"/>
+                        <!-- 그림/도형/표 오버레이 -->
+                        <Canvas x:Name="PreviewOverlayImageCanvas" IsHitTestVisible="False"/>
+                        <Canvas x:Name="PreviewOverlayShapeCanvas" IsHitTestVisible="False"/>
+                        <Canvas x:Name="PreviewOverlayTableCanvas" IsHitTestVisible="False"/>
+                        <!-- 흑백 모드 그레이스케일 오버레이 (빌드 완료 후 코드에서 채움) -->
+                        <Image x:Name="GrayscaleOverlay"
+                               IsHitTestVisible="False"
+                               Visibility="Collapsed"
+                               HorizontalAlignment="Left"
+                               VerticalAlignment="Top"
+                               Stretch="None" />
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- 생성 중 오버레이 -->
+            <Border x:Name="LoadingOverlay"
+                    Grid.Column="2"
+                    Background="{DynamicResource Surface}"
+                    Visibility="Visible">
+                <TextBlock x:Name="LoadingText"
+                           Text="미리보기 생성 중..."
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource OnSurfaceMuted}"
+                           FontSize="14" />
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

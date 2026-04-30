@@ -26,8 +26,9 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string MenuFileOpen    => SR.MenuFileOpen;
     public string MenuFileSave    => SR.MenuFileSave;
     public string MenuFileSaveAs  => SR.MenuFileSaveAs;
-    public string MenuFilePreview => SR.MenuFilePreview;
-    public string MenuFilePrint   => SR.MenuFilePrint;
+    public string MenuFilePreview      => SR.MenuFilePreview;
+    public string MenuFilePrint        => SR.MenuFilePrint;
+    public string MenuFilePreviewPrint => SR.MenuFilePreviewPrint;
     public string MenuFileClose   => SR.MenuFileClose;
     public string MenuFileExit    => SR.MenuFileExit;
 
@@ -44,14 +45,11 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string MenuInsert          => SR.MenuInsert;
     public string MenuInsertTextBox   => SR.MenuInsertTextBox;
     public string MenuInsertTable     => SR.MenuInsertTable;
-    public string MenuInsertGraph     => SR.MenuInsertGraph;
     public string MenuInsertSpecialChar => SR.MenuInsertSpecialChar;
     public string MenuInsertEquation  => SR.MenuInsertEquation;
     public string MenuInsertEmoji     => SR.MenuInsertEmoji;
     public string MenuInsertShape     => SR.MenuInsertShape;
     public string MenuInsertImage     => SR.MenuInsertImage;
-    public string MenuInsertSign      => SR.MenuInsertSign;
-
     // ── 메뉴: 서식 ──────────────────────────────────────────────
     public string MenuFormat     => SR.MenuFormat;
     public string MenuFormatChar => SR.MenuFormatChar;
@@ -62,12 +60,10 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string MenuTools          => SR.MenuTools;
     public string MenuToolsSettings  => SR.MenuToolsSettings;
     public string MenuToolsDict      => SR.MenuToolsDict;
-    public string MenuToolsSpell     => SR.MenuToolsSpell;
-    public string MenuToolsSignMaker => SR.MenuToolsSignMaker;
-
     // ── 메뉴: 도움말 ────────────────────────────────────────────
     public string MenuHelp        => SR.MenuHelp;
     public string MenuHelpManual  => SR.MenuHelpManual;
+    public string MenuHelpFormat  => SR.MenuHelpFormat;
     public string MenuHelpLicense => SR.MenuHelpLicense;
     public string MenuHelpAbout   => SR.MenuHelpAbout;
 
@@ -91,6 +87,7 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string DocInfoDataSize   => SR.DocInfoDataSize;
     public string DocInfoDocTitle   => SR.DocInfoDocTitle;
     public string DocInfoAuthor     => SR.DocInfoAuthor;
+    public string DocInfoEditor     => SR.DocInfoEditor;
     public string DocInfoLanguage   => SR.DocInfoLanguage;
     public string DocInfoCreated    => SR.DocInfoCreated;
     public string DocInfoModified   => SR.DocInfoModified;
@@ -256,4 +253,10 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string ToolbarZoomOut     => SR.ToolbarZoomOut;
     public string ToolbarFitWidth    => SR.ToolbarFitWidth;
     public string ToolbarFitPage     => SR.ToolbarFitPage;
+
+    // ── 사전 창 ─────────────────────────────────────────────────
+    public string DictWindowTitle        => SR.DictWindowTitle;
+    public string DictWindowSearchHint   => SR.DictWindowSearchHint;
+    public string DictWindowSearch       => SR.DictWindowSearch;
+    public string DictWindowErrNoRuntime => SR.DictWindowErrNoRuntime;
 }

@@ -115,6 +115,9 @@ public sealed class IwpfReader : IDocumentReader
             // resources/images/* — ImageBlock.ResourcePath 가 있는 블록의 Data 를 다시 채운다.
             RehydrateImageResources(document, archive, manifest);
 
+            // 옛 빌드의 연속 Y 좌표를 페이지-로컬 좌표로 자동 마이그레이션 (멱등).
+            OverlayAnchorMigration.MigrateContinuousAnchors(document);
+
             return document;
         }
         finally
@@ -188,6 +191,9 @@ public sealed class IwpfReader : IDocumentReader
                         foreach (var row in table.Rows)
                             foreach (var cell in row.Cells)
                                 Walk(cell.Blocks);
+                        break;
+                    case TextBoxObject textbox:
+                        Walk(textbox.Content);
                         break;
                 }
             }

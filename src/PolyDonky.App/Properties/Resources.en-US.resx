@@ -40,6 +40,7 @@
   <data name="MenuFileSaveAs" xml:space="preserve"><value>Save _As...</value></data>
   <data name="MenuFilePreview" xml:space="preserve"><value>_Preview</value></data>
   <data name="MenuFilePrint" xml:space="preserve"><value>_Print...</value></data>
+  <data name="MenuFilePreviewPrint" xml:space="preserve"><value>Preview / _Print...</value></data>
   <data name="MenuFileClose" xml:space="preserve"><value>_Close</value></data>
   <data name="MenuFileExit" xml:space="preserve"><value>E_xit</value></data>
 
@@ -56,13 +57,11 @@
   <data name="MenuInsert" xml:space="preserve"><value>_Insert</value></data>
   <data name="MenuInsertTextBox" xml:space="preserve"><value>_Text Box</value></data>
   <data name="MenuInsertTable" xml:space="preserve"><value>Ta_ble</value></data>
-  <data name="MenuInsertGraph" xml:space="preserve"><value>_Graph</value></data>
   <data name="MenuInsertSpecialChar" xml:space="preserve"><value>_Special Character</value></data>
   <data name="MenuInsertEquation" xml:space="preserve"><value>_Equation</value></data>
   <data name="MenuInsertEmoji" xml:space="preserve"><value>E_moji</value></data>
   <data name="MenuInsertShape" xml:space="preserve"><value>S_hape</value></data>
   <data name="MenuInsertImage" xml:space="preserve"><value>_Image</value></data>
-  <data name="MenuInsertSign" xml:space="preserve"><value>Sig_n</value></data>
 
   <!-- Menu: Format -->
   <data name="MenuFormat" xml:space="preserve"><value>F_ormat</value></data>
@@ -74,14 +73,13 @@
   <data name="MenuTools" xml:space="preserve"><value>_Tools</value></data>
   <data name="MenuToolsSettings" xml:space="preserve"><value>_Settings...</value></data>
   <data name="MenuToolsDict" xml:space="preserve"><value>_Dictionary</value></data>
-  <data name="MenuToolsSpell" xml:space="preserve"><value>_Spell Check</value></data>
-  <data name="MenuToolsSignMaker" xml:space="preserve"><value>Sign _Maker...</value></data>
 
   <!-- Menu: Help -->
   <data name="MenuHelp" xml:space="preserve"><value>_Help</value></data>
   <data name="MenuHelpManual" xml:space="preserve"><value>_Manual</value></data>
+  <data name="MenuHelpFormat" xml:space="preserve"><value>IWPF _Format</value></data>
   <data name="MenuHelpLicense" xml:space="preserve"><value>_License &amp; References</value></data>
-  <data name="MenuHelpAbout" xml:space="preserve"><value>_About PolyDoc</value></data>
+  <data name="MenuHelpAbout" xml:space="preserve"><value>_About PolyDonky</value></data>
 
   <!-- Find/Replace Dialog -->
   <data name="FindReplaceTitle" xml:space="preserve"><value>Find / Replace</value></data>
@@ -106,6 +104,8 @@
   <data name="StatusOverwrite" xml:space="preserve"><value>OVR</value></data>
   <data name="StatusDocClosed" xml:space="preserve"><value>Document closed.</value></data>
   <data name="StatusDrawTextBox" xml:space="preserve"><value>Drag a region for the text box. (Esc to cancel)</value></data>
+  <data name="StatusDrawShape" xml:space="preserve"><value>Drag a region for the shape. (Esc to cancel)</value></data>
+  <data name="StatusDrawPolyline" xml:space="preserve"><value>Click to add a point, double-click to finish. (Esc to cancel)</value></data>
 
   <!-- Common dialogs -->
   <data name="DlgOK" xml:space="preserve"><value>OK</value></data>
@@ -123,7 +123,7 @@ Formats natively supported: IWPF, DOCX, HWPX, Markdown, TXT.</value></data>
 
 Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="DlgSaveConverterTitle" xml:space="preserve"><value>External Converter Required</value></data>
-  <data name="DlgSaveFail" xml:space="preserve"><value>PolyDoc cannot save in this format directly.</value></data>
+  <data name="DlgSaveFail" xml:space="preserve"><value>PolyDonky cannot save in this format directly.</value></data>
   <data name="DlgSaveFailTitle" xml:space="preserve"><value>Save Failed</value></data>
   <data name="DlgOpenError" xml:space="preserve"><value>An error occurred while opening the document.</value></data>
   <data name="DlgSaveError" xml:space="preserve"><value>An error occurred while saving the document.</value></data>
@@ -142,6 +142,7 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="DocInfoDataSize"    xml:space="preserve"><value>Data Size</value></data>
   <data name="DocInfoDocTitle"    xml:space="preserve"><value>Title</value></data>
   <data name="DocInfoAuthor"      xml:space="preserve"><value>Author</value></data>
+  <data name="DocInfoEditor"      xml:space="preserve"><value>Editor</value></data>
   <data name="DocInfoLanguage"    xml:space="preserve"><value>Language</value></data>
   <data name="DocInfoCreated"     xml:space="preserve"><value>Created</value></data>
   <data name="DocInfoModified"    xml:space="preserve"><value>Modified</value></data>
@@ -210,8 +211,8 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <!-- Common -->
   <data name="DlgConfirm"          xml:space="preserve"><value>OK</value></data>
 
-  <data name="AboutTitle" xml:space="preserve"><value>About PolyDoc</value></data>
-  <data name="AboutProduct" xml:space="preserve"><value>PolyDoc</value></data>
+  <data name="AboutTitle" xml:space="preserve"><value>About PolyDonky</value></data>
+  <data name="AboutProduct" xml:space="preserve"><value>PolyDonky</value></data>
   <data name="AboutCompany" xml:space="preserve"><value>HANDTECH</value></data>
   <data name="AboutAuthor" xml:space="preserve"><value>Noh JinMoon</value></data>
   <data name="AboutLicense" xml:space="preserve"><value>Mozilla Public License 2.0</value></data>
@@ -339,4 +340,8 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="ToolbarZoomOut"              xml:space="preserve"><value>Zoom Out (5%)</value></data>
   <data name="ToolbarFitWidth"             xml:space="preserve"><value>Fit to Width</value></data>
   <data name="ToolbarFitPage"              xml:space="preserve"><value>Fit to Page</value></data>
+  <data name="DictWindowTitle"             xml:space="preserve"><value>Dictionary</value></data>
+  <data name="DictWindowSearchHint"        xml:space="preserve"><value>Enter a word</value></data>
+  <data name="DictWindowSearch"            xml:space="preserve"><value>Search</value></data>
+  <data name="DictWindowErrNoRuntime"      xml:space="preserve"><value>Could not load WebView2 runtime. Make sure Microsoft Edge is installed.</value></data>
 </root>

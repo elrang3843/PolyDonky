@@ -5,10 +5,12 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:PolyDonky.App.ViewModels"
         xmlns:svc="clr-namespace:PolyDonky.App.Services"
+        xmlns:views="clr-namespace:PolyDonky.App.Views"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}"
         Width="1200" Height="800"
         MinWidth="640" MinHeight="480"
+        Icon="pack://application:,,,/Assets/PolyDonky.ico"
         FontFamily="{DynamicResource UiFont}"
         Background="{DynamicResource Surface}"
         Foreground="{DynamicResource OnSurface}"
@@ -44,8 +46,7 @@
                 <MenuItem Header="{Binding MenuFileSave, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding SaveCommand}" InputGestureText="Ctrl+S" />
                 <MenuItem Header="{Binding MenuFileSaveAs, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding SaveAsCommand}" InputGestureText="Ctrl+Shift+S" />
                 <Separator />
-                <MenuItem Header="{Binding MenuFilePreview, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuFilePrint, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" InputGestureText="Ctrl+P" />
+                <MenuItem Header="{Binding MenuFilePreviewPrint, Source={x:Static svc:LocalizedStrings.Instance}}" Click="OnPreviewClick" InputGestureText="Ctrl+P" />
                 <Separator />
                 <MenuItem Header="{Binding MenuFileClose, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding CloseCommand}" />
                 <MenuItem Header="{Binding MenuFileExit, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding ExitCommand}" InputGestureText="Alt+F4" />
@@ -54,15 +55,12 @@
             <MenuItem Header="{Binding MenuEdit, Source={x:Static svc:LocalizedStrings.Instance}}">
                 <MenuItem Header="{Binding MenuEditCopy, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Command="ApplicationCommands.Copy"
-                          CommandTarget="{Binding ElementName=BodyEditor}"
                           InputGestureText="Ctrl+C" />
                 <MenuItem Header="{Binding MenuEditCut, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Command="ApplicationCommands.Cut"
-                          CommandTarget="{Binding ElementName=BodyEditor}"
                           InputGestureText="Ctrl+X" />
                 <MenuItem Header="{Binding MenuEditPaste, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Command="ApplicationCommands.Paste"
-                          CommandTarget="{Binding ElementName=BodyEditor}"
                           InputGestureText="Ctrl+V" />
                 <MenuItem Header="{Binding MenuEditDelete, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnEditDelete"
@@ -80,24 +78,40 @@
                     <MenuItem Header="구름풍선(_C)" Command="{Binding InsertTextBoxCommand}" CommandParameter="Cloud" />
                     <MenuItem Header="가시풍선(_K)" Command="{Binding InsertTextBoxCommand}" CommandParameter="Spiky" />
                     <MenuItem Header="번개상자(_L)" Command="{Binding InsertTextBoxCommand}" CommandParameter="Lightning" />
+                    <MenuItem Header="타원(_E)"     Command="{Binding InsertTextBoxCommand}" CommandParameter="Ellipse" />
+                    <MenuItem Header="파이(_I)"     Command="{Binding InsertTextBoxCommand}" CommandParameter="Pie" />
                 </MenuItem>
-                <MenuItem Header="{Binding MenuInsertTable, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuInsertGraph, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuInsertSpecialChar, Source={x:Static svc:LocalizedStrings.Instance}}"
+                <MenuItem Header="{Binding MenuInsertTable, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertTable" />
+<MenuItem Header="{Binding MenuInsertSpecialChar, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertSpecialChar" />
                 <MenuItem Header="{Binding MenuInsertEquation, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertEquation" />
-                <MenuItem Header="{Binding MenuInsertEmoji, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuInsertShape, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuInsertImage, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuInsertSign, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuInsertEmoji, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertEmoji" />
+                <MenuItem Header="{Binding MenuInsertShape, Source={x:Static svc:LocalizedStrings.Instance}}">
+                    <MenuItem Header="직선(_L)"     Command="{Binding InsertShapeCommand}" CommandParameter="Line" />
+                    <MenuItem Header="폴리곤선(_P)" Command="{Binding InsertShapeCommand}" CommandParameter="Polyline" />
+                    <MenuItem Header="폴리곤면(_Y)" Command="{Binding InsertShapeCommand}" CommandParameter="Polygon" />
+                    <MenuItem Header="스플라인선(_S)" Command="{Binding InsertShapeCommand}" CommandParameter="Spline" />
+                    <MenuItem Header="스플라인면(_N)" Command="{Binding InsertShapeCommand}" CommandParameter="ClosedSpline" />
+                    <Separator />
+                    <MenuItem Header="사각형(_R)"   Command="{Binding InsertShapeCommand}" CommandParameter="Rectangle" />
+                    <MenuItem Header="둥근사각형(_O)" Command="{Binding InsertShapeCommand}" CommandParameter="RoundedRect" />
+                    <MenuItem Header="타원(_E)"     Command="{Binding InsertShapeCommand}" CommandParameter="Ellipse" />
+                    <MenuItem Header="삼각형(_T)"   Command="{Binding InsertShapeCommand}" CommandParameter="Triangle" />
+                    <MenuItem Header="정다각형(_G)" Command="{Binding InsertShapeCommand}" CommandParameter="RegularPolygon" />
+                    <MenuItem Header="별모양(_A)"   Command="{Binding InsertShapeCommand}" CommandParameter="Star" />
+                </MenuItem>
+                <MenuItem Header="{Binding MenuInsertImage, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertImage" />
             </MenuItem>
 
             <MenuItem Header="{Binding MenuFormat, Source={x:Static svc:LocalizedStrings.Instance}}">
                 <MenuItem Header="{Binding MenuFormatChar, Source={x:Static svc:LocalizedStrings.Instance}}"
-                          Click="OnFormatChar" />
+                          Click="OnFormatChar" InputGestureText="Ctrl+L" />
                 <MenuItem Header="{Binding MenuFormatPara, Source={x:Static svc:LocalizedStrings.Instance}}"
-                          Click="OnFormatPara" />
+                          Click="OnFormatPara" InputGestureText="Ctrl+T" />
                 <MenuItem Header="{Binding MenuFormatPage, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnFormatPage" />
                 <Separator />
@@ -107,13 +121,12 @@
 
             <MenuItem Header="{Binding MenuTools, Source={x:Static svc:LocalizedStrings.Instance}}">
                 <MenuItem Header="{Binding MenuToolsSettings, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding SettingsCommand}" />
-                <MenuItem Header="{Binding MenuToolsDict, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuToolsSpell, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
-                <MenuItem Header="{Binding MenuToolsSignMaker, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuToolsDict, Source={x:Static svc:LocalizedStrings.Instance}}" Click="OnDictMenuClick" />
             </MenuItem>
 
             <MenuItem Header="{Binding MenuHelp, Source={x:Static svc:LocalizedStrings.Instance}}">
-                <MenuItem Header="{Binding MenuHelpManual, Source={x:Static svc:LocalizedStrings.Instance}}" IsEnabled="False" />
+                <MenuItem Header="{Binding MenuHelpManual, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding UserGuideCommand}" />
+                <MenuItem Header="{Binding MenuHelpFormat, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding IwpfFormatInfoCommand}" />
                 <MenuItem Header="{Binding MenuHelpLicense, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding LicenseInfoCommand}" />
                 <Separator />
                 <MenuItem Header="{Binding MenuHelpAbout, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding AboutCommand}" />
@@ -149,12 +162,8 @@
                         <Image Source="{StaticResource Icon_FileSaveAs}" Width="20" Height="20" />
                     </Button>
                     <Separator />
-                    <Button IsEnabled="False"
-                            ToolTip="{Binding MenuFilePreview, Source={x:Static svc:LocalizedStrings.Instance}}">
-                        <Image Source="{StaticResource Icon_FilePreview}" Width="20" Height="20" />
-                    </Button>
-                    <Button IsEnabled="False"
-                            ToolTip="{Binding MenuFilePrint, Source={x:Static svc:LocalizedStrings.Instance}}">
+                    <Button ToolTip="{Binding MenuFilePreviewPrint, Source={x:Static svc:LocalizedStrings.Instance}}"
+                            Click="OnPreviewClick">
                         <Image Source="{StaticResource Icon_FilePrint}" Width="20" Height="20" />
                     </Button>
                     <Separator />
@@ -280,9 +289,12 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- 본문 영역 — 페이지 뷰: 종이가 캔버스 위에 떠 있는 형태.
-             ScrollViewer 가 스크롤을 담당하고 RichTextBox 는 내부 스크롤 없이 콘텐츠 높이로 늘어난다.
-             PaperBorder.Width / Background 는 code-behind 에서 PageSettings 에 맞춰 갱신한다. -->
+        <!-- 본문 영역 — 다중 페이지 뷰: 페이지마다 별도의 종이 모양 Border 가 스택되어
+             10 DIP 갭으로 분리된 형태. 본문 RichTextBox 는 모든 페이지를 가로질러
+             단일 인스턴스로 존재하며, 페이지 경계마다 합성 패딩 단락이 본문 흐름에 들어가
+             다음 페이지 본문이 정확히 그 페이지의 padT 위치에서 시작하도록 한다.
+             PaperHost.Width / 페이지 개수 / 배경색은 code-behind 에서 PageSettings·콘텐츠
+             길이에 맞춰 갱신한다. -->
         <ScrollViewer x:Name="EditorScrollViewer"
                       VerticalScrollBarVisibility="Visible"
                       HorizontalScrollBarVisibility="Visible"
@@ -292,54 +304,46 @@
                 <StackPanel.LayoutTransform>
                     <ScaleTransform ScaleX="{Binding ZoomScale}" ScaleY="{Binding ZoomScale}" />
                 </StackPanel.LayoutTransform>
-                <Border x:Name="PaperBorder"
-                        Background="{DynamicResource Surface}"
-                        BorderBrush="{DynamicResource Divider}"
-                        BorderThickness="0.5"
-                        PreviewMouseLeftButtonDown="OnPaperPreviewMouseLeftButtonDown"
-                        PreviewMouseMove="OnPaperPreviewMouseMove"
-                        PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="18" ShadowDepth="6"
-                                          Opacity="0.38" Direction="270" Color="Black" />
-                    </Border.Effect>
-                    <Grid>
-                        <RichTextBox x:Name="BodyEditor"
-                                     AcceptsReturn="True"
-                                     AcceptsTab="True"
-                                     VerticalScrollBarVisibility="Disabled"
-                                     HorizontalScrollBarVisibility="Disabled"
-                                     IsDocumentEnabled="True"
-                                     IsReadOnly="{Binding IsWriteProtected}"
-                                     SpellCheck.IsEnabled="False"
-                                     Padding="0"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     Foreground="{DynamicResource OnSurface}"
-                                     PreviewKeyDown="OnEditorPreviewKeyDown"
-                                     PreviewTextInput="OnEditorPreviewTextInput" />
-                        <!-- 부유 객체 (글상자 등) 오버레이.
-                             Background 미설정 → 빈 영역은 hit-test 통과해 RichTextBox 가 받음.
-                             각 자식(TextBoxOverlay) 만 마우스를 받는다. -->
-                        <Canvas x:Name="FloatingCanvas" />
-                        <!-- 드래그 생성 미리보기. 본 객체 위에 그려짐. -->
-                        <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
-                            <Rectangle x:Name="DrawPreviewRect"
-                                       Stroke="#4A90E2" StrokeThickness="1"
-                                       StrokeDashArray="4,3"
-                                       Fill="#224A90E2"
-                                       Visibility="Collapsed" />
-                        </Canvas>
-                        <!-- 여백 안내선 오버레이 — IsHitTestVisible=False 로 편집 방해 없이 표시 -->
-                        <Rectangle x:Name="MarginGuideRect"
-                                   Stroke="#660078D4"
-                                   StrokeThickness="0.7"
+                <!-- PaperHost: 모든 페이지 + 본문 + 오버레이를 담는 단일 좌표 공간.
+                     크기 = pageWidth × (pageHeight × pageCount + gap × (pageCount-1)) -->
+                <Grid x:Name="PaperHost"
+                      PreviewMouseLeftButtonDown="OnPaperPreviewMouseLeftButtonDown"
+                      PreviewMouseMove="OnPaperPreviewMouseMove"
+                      PreviewMouseLeftButtonUp="OnPaperPreviewMouseLeftButtonUp"
+                      PreviewMouseRightButtonDown="OnPaperPreviewMouseRightButtonDown">
+                    <!-- 레이어 0: 페이지 배경 — 페이지 별 흰 Border + 그림자 + 점선 여백 가이드.
+                         code-behind RebuildPageFrames() 가 이 캔버스에 페이지마다 동적으로 추가. -->
+                    <Canvas x:Name="PageBackgroundCanvas" IsHitTestVisible="False" />
+                    <!-- 그림 오버레이(BehindText) — 본문 텍스트 뒤에 위치. -->
+                    <Canvas x:Name="UnderlayImageCanvas" />
+                    <!-- 도형 오버레이(BehindText) -->
+                    <Canvas x:Name="UnderlayShapeCanvas" />
+                    <!-- 표 오버레이(BehindText) -->
+                    <Canvas x:Name="UnderlayTableCanvas" />
+                    <!-- 워터마크 오버레이. -->
+                    <Canvas x:Name="WatermarkCanvas" IsHitTestVisible="False" />
+                    <!-- PerPageEditorHost: 페이지별 RichTextBox 를 수직으로 배치하는 Canvas.
+                         SetupPages() 가 PerPageDocumentSplitter 슬라이스로 초기화한다. -->
+                    <views:PerPageEditorHost x:Name="PageEditorHost"
+                                             VerticalAlignment="Top" />
+                    <!-- 부유 객체 (글상자 등) 오버레이. -->
+                    <Canvas x:Name="FloatingCanvas" />
+                    <!-- 그림 오버레이(InFrontOfText) -->
+                    <Canvas x:Name="OverlayImageCanvas" />
+                    <!-- 도형 오버레이(InFrontOfText) -->
+                    <Canvas x:Name="OverlayShapeCanvas" />
+                    <!-- 표 오버레이(InFrontOfText/Fixed) -->
+                    <Canvas x:Name="OverlayTableCanvas" />
+                    <!-- 드래그 생성 미리보기. -->
+                    <Canvas x:Name="DrawPreviewCanvas" IsHitTestVisible="False">
+                        <Rectangle x:Name="DrawPreviewRect"
+                                   Stroke="#4A90E2" StrokeThickness="1"
                                    StrokeDashArray="4,3"
-                                   Fill="Transparent"
-                                   IsHitTestVisible="False"
+                                   Fill="#224A90E2"
                                    Visibility="Collapsed" />
-                    </Grid>
-                </Border>
+                    </Canvas>
+                    <!-- (페이지별 여백 가이드 / 페이지 구분 라벨은 PageBackgroundCanvas 에서 함께 그림) -->
+                </Grid>
             </StackPanel>
         </ScrollViewer>
 

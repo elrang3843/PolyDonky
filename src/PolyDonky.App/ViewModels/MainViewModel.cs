@@ -28,6 +28,12 @@ public partial class MainViewModel : ObservableObject
     public PolyDonkyument Document => _document;
 
     /// <summary>
+    /// 저장 직전에 호출해 현재 에디터 상태를 반영한 PolyDonkyument 를 얻는다.
+    /// per-page RTB 모드에서 MainWindow 가 등록한다. null 이면 FlowDocument 파싱으로 폴백.
+    /// </summary>
+    public Func<PolyDonkyument?>? LiveDocumentProvider { get; set; }
+
+    /// <summary>
     /// 열기 보호(Read/Both)에 사용할 비밀번호. null/빈 문자열이면 평문 저장.
     /// 메모리 외 어디에도 저장되지 않는다 (ViewModel 인스턴스 생명 주기 내에서만 유효).
     /// </summary>
@@ -349,6 +355,28 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void UserGuide()
+    {
+        var window = new UserGuideWindow
+        {
+            Owner       = Application.Current.MainWindow,
+            SelectedTab = UserGuideWindow.Tab.UserGuide,
+        };
+        window.ShowDialog();
+    }
+
+    [RelayCommand]
+    private void IwpfFormatInfo()
+    {
+        var window = new UserGuideWindow
+        {
+            Owner       = Application.Current.MainWindow,
+            SelectedTab = UserGuideWindow.Tab.IwpfFormat,
+        };
+        window.ShowDialog();
+    }
+
+    [RelayCommand]
     private void DocInfo()
     {
         var text = _document.ToPlainText();
@@ -377,7 +405,9 @@ public partial class MainViewModel : ObservableObject
             Format         = format,
             DataSize       = DocumentMeasurement.FormatBytes(bytes),
             DocTitle       = string.IsNullOrWhiteSpace(meta.Title) ? none : meta.Title,
+            HasBeenSaved   = !string.IsNullOrEmpty(CurrentFilePath),
             Author         = meta.Author ?? string.Empty,
+            Editor         = meta.Editor ?? string.Empty,
             Language       = meta.Language,
             Created        = meta.Created.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
             Modified       = meta.Modified.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
@@ -413,10 +443,30 @@ public partial class MainViewModel : ObservableObject
         var meta = _document.Metadata;
 
         // ── 작성자 ──
+        var oldAuthor = meta.Author;
         var newAuthor = string.IsNullOrWhiteSpace(info.Author) ? null : info.Author.Trim();
-        if (!string.Equals(meta.Author, newAuthor, StringComparison.Ordinal))
+        if (!string.Equals(oldAuthor, newAuthor, StringComparison.Ordinal))
         {
             meta.Author = newAuthor;
+            // 작성자가 처음 지정되면 생성일도 함께 업데이트
+            if (string.IsNullOrEmpty(oldAuthor) && newAuthor is not null)
+                meta.Created = DateTimeOffset.UtcNow;
+            dirty = true;
+        }
+
+        // ── 수정자 ──
+        var newEditor = string.IsNullOrWhiteSpace(info.Editor) ? null : info.Editor.Trim();
+        if (!string.Equals(meta.Editor, newEditor, StringComparison.Ordinal))
+        {
+            meta.Editor = newEditor;
+            meta.Modified = DateTimeOffset.UtcNow;
+            dirty = true;
+        }
+
+        // ── 언어 ──
+        if (!string.Equals(meta.Language, info.Language, StringComparison.Ordinal))
+        {
+            meta.Language = info.Language;
             dirty = true;
         }
 
@@ -547,16 +597,74 @@ public partial class MainViewModel : ObservableObject
 
     public event EventHandler? OutlineStyleRequested;
 
-    /// <summary>개요 서식 적용. OutlineStyleWindow 가 OK 시 호출해 문서에 반영하고 FlowDocument 재빌드.</summary>
-    public void ApplyOutlineStyles(PolyDonky.Core.OutlineStyleSet styleSet)
+    /// <summary>
+    /// 개요 서식 적용. live FlowDocument 를 먼저 _document 에 동기화해
+    /// 저장 이후 편집한 이미지·글상자를 보존한 뒤 재빌드한다.
+    /// </summary>
+    public void ApplyOutlineStyles(PolyDonky.Core.OutlineStyleSet styleSet, Wpf.FlowDocument liveDoc)
     {
+        _document = FlowDocumentParser.Parse(liveDoc, _document);
         _document.OutlineStyles = styleSet;
         RebuildFlowDocument();
     }
 
+    /// <summary>미리보기·인쇄용 — 현재 live FlowDocument 를 Core 로 동기화한 스냅샷을 반환.</summary>
+    public PolyDonkyument GetPreviewDocument()
+        => FlowDocumentParser.Parse(FlowDocument, _document);
+
+    // ── 도형 (Insert > Shape) ────────────────────────────────────────────
+    // 메뉴 클릭 → ViewModel 이 이벤트 발생 → View 가 드래그 생성 모드 진입.
+    // 모델 갱신은 View 가 AddShapeToCurrentSection 으로 위임.
+
+    [RelayCommand]
+    private void InsertShape(object? kindParam)
+    {
+        var kind = kindParam switch
+        {
+            "Line"           => PolyDonky.Core.ShapeKind.Line,
+            "Polyline"       => PolyDonky.Core.ShapeKind.Polyline,
+            "Polygon"        => PolyDonky.Core.ShapeKind.Polygon,
+            "Spline"         => PolyDonky.Core.ShapeKind.Spline,
+            "ClosedSpline"   => PolyDonky.Core.ShapeKind.ClosedSpline,
+            "RoundedRect"    => PolyDonky.Core.ShapeKind.RoundedRect,
+            "Ellipse"        => PolyDonky.Core.ShapeKind.Ellipse,
+            "Triangle"       => PolyDonky.Core.ShapeKind.Triangle,
+            "RegularPolygon" => PolyDonky.Core.ShapeKind.RegularPolygon,
+            "Star"           => PolyDonky.Core.ShapeKind.Star,
+            _                => PolyDonky.Core.ShapeKind.Rectangle,
+        };
+        InsertShapeRequested?.Invoke(this, kind);
+    }
+
+    public event EventHandler<PolyDonky.Core.ShapeKind>? InsertShapeRequested;
+
+    /// <summary>드래그 생성 완료 후 View 가 호출 — 첫 섹션의 Blocks 에 추가하고 Dirty 표시.</summary>
+    public void AddShapeToCurrentSection(PolyDonky.Core.ShapeObject shape)
+    {
+        var section = _document.Sections.FirstOrDefault();
+        if (section is null) return;
+        section.Blocks.Add(shape);
+        MarkDirty();
+        RefreshMemoryUsage();
+    }
+
+    /// <summary>도형 삭제 시 View 가 호출.</summary>
+    public void RemoveShape(PolyDonky.Core.ShapeObject shape)
+    {
+        foreach (var section in _document.Sections)
+        {
+            if (section.Blocks.Remove(shape))
+            {
+                MarkDirty();
+                RefreshMemoryUsage();
+                return;
+            }
+        }
+    }
+
     // ── 글상자 (Insert > TextBox) ────────────────────────────────────────
     // 메뉴 클릭 → ViewModel 이 이벤트 발생 → View 가 드래그 생성 모드 진입.
-    // 모델 갱신은 View 가 AddFloatingObjectToCurrentSection 으로 위임.
+    // 글상자도 다른 부유 개체와 동일하게 Section.Blocks 에 추가됨 (IWPF 통합 모델).
 
     [RelayCommand]
     private void InsertTextBox(object? shapeParam)
@@ -567,6 +675,8 @@ public partial class MainViewModel : ObservableObject
             "Cloud"     => PolyDonky.Core.TextBoxShape.Cloud,
             "Spiky"     => PolyDonky.Core.TextBoxShape.Spiky,
             "Lightning" => PolyDonky.Core.TextBoxShape.Lightning,
+            "Ellipse"   => PolyDonky.Core.TextBoxShape.Ellipse,
+            "Pie"       => PolyDonky.Core.TextBoxShape.Pie,
             _           => PolyDonky.Core.TextBoxShape.Rectangle,
         };
         InsertTextBoxRequested?.Invoke(this, shape);
@@ -574,22 +684,22 @@ public partial class MainViewModel : ObservableObject
 
     public event EventHandler<PolyDonky.Core.TextBoxShape>? InsertTextBoxRequested;
 
-    /// <summary>드래그 생성 완료 후 View 가 호출 — 첫 섹션의 FloatingObjects 에 추가하고 Dirty 표시.</summary>
-    public void AddFloatingObjectToCurrentSection(PolyDonky.Core.FloatingObject obj)
+    /// <summary>드래그 생성 완료 후 View 가 호출 — 첫 섹션의 Blocks 에 글상자/도형/이미지/표를 추가.</summary>
+    public void AddOverlayBlockToCurrentSection(PolyDonky.Core.Block block)
     {
         var section = _document.Sections.FirstOrDefault();
         if (section is null) return;
-        section.FloatingObjects.Add(obj);
+        section.Blocks.Add(block);
         MarkDirty();
         RefreshMemoryUsage();
     }
 
     /// <summary>오버레이 삭제 시 View 가 호출.</summary>
-    public void RemoveFloatingObject(PolyDonky.Core.FloatingObject obj)
+    public void RemoveOverlayBlock(PolyDonky.Core.Block block)
     {
         foreach (var section in _document.Sections)
         {
-            if (section.FloatingObjects.Remove(obj))
+            if (section.Blocks.Remove(block))
             {
                 MarkDirty();
                 RefreshMemoryUsage();
@@ -599,10 +709,13 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>드래그/리사이즈/본문 편집 변경 시 View 가 호출.</summary>
-    public void NotifyFloatingObjectChanged() => MarkDirty();
+    public void NotifyOverlayChanged() => MarkDirty();
 
-    /// <summary>PageSettings 변경 후 FlowDocument 를 재빌드해 화면에 반영한다.</summary>
-    public void RebuildFlowDocument()
+    /// <summary>
+    /// _document 로부터 FlowDocument 를 재빌드한다. 호출 전 반드시 _document 가 최신 상태여야 한다.
+    /// 편집 중 그림·글상자를 잃지 않으려면 먼저 live FlowDocument 를 Parse 해 _document 를 동기화할 것.
+    /// </summary>
+    private void RebuildFlowDocument()
     {
         _suppressDirty = true;
         FlowDocument = FlowDocumentBuilder.Build(_document);
@@ -647,7 +760,8 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var rebuilt = FlowDocumentParser.Parse(FlowDocument, _document);
+            var rebuilt = LiveDocumentProvider?.Invoke()
+                       ?? FlowDocumentParser.Parse(FlowDocument, _document);
 
             // 자동 일자 갱신: 첫 저장이면 Created+Modified 둘 다, 아니면 Modified 만.
             if (isFirstSave)

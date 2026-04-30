@@ -17,6 +17,9 @@
     <!-- LaTeX 수식 렌더러 -->
     <PackageVersion Include="WpfMath" Version="0.11.0" />
 
+    <!-- 임베드 웹 브라우저 (사전 뷰어) -->
+    <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
+
     <!-- Test stack (xUnit only; FluentAssertions v8 is non-OSS, avoided) -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
