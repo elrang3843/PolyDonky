@@ -115,13 +115,79 @@ HWPX export 시 원형에 가깝게 직렬화, DOCX export 시 시각 대체(이
 - 매크로/스크립트(VBA 등)는 **격리 저장**, 실행 정책은 별도.
 - 전자서명은 수정 시 효력 깨짐 — **보존 증적**으로만 별도 관리.
 
+## 솔루션 구조
+
+`PolyDonky.sln` — .NET 10 (`global.json`이 SDK `10.0.107` 핀, 라이브러리는 `net10.0`,
+WPF 앱은 `net10.0-windows`). 중앙 패키지 관리(`Directory.Packages.props`),
+`TreatWarningsAsErrors=true`, `Nullable=enable` (`Directory.Build.props`).
+
+```
+src/
+  PolyDonky.Core/             공통 문서 모델 — Document/Section/Paragraph/Run/Block/Table/
+                              FloatingObject/StyleSheet/Provenance, IDocumentCodec, JSON 직렬화
+  PolyDonky.Iwpf/             IWPF ZIP 패키지 reader/writer, manifest, 암호화, write-lock
+  PolyDonky.Codecs.Text/      TXT codec
+  PolyDonky.Codecs.Markdown/  MD codec (Markdig)
+  PolyDonky.Codecs.Docx/      DOCX codec (DocumentFormat.OpenXml) — 1급 시민, 메인 앱 직접 처리
+  PolyDonky.Codecs.Hwpx/      HWPX codec (자체 구현, KS X 6101) — 1급 시민
+  PolyDonky.App/              WPF 데스크톱 앱 (AssemblyName=PolyDonky)
+                              MVVM (CommunityToolkit.Mvvm), Views/ViewModels/Services/Themes
+                              FlowDocument 기반 에디터 — FlowDocumentBuilder/Parser/Search,
+                              PageViewBuilder, PerPageEditorHost
+                              i18n: Properties/Resources.resx + Resources.en-US.resx
+tests/                        프로젝트별 xUnit 테스트 (.Tests 짝)
+tools/PolyDonky.SmokeTest/    콘솔 스모크 — 모든 codec + IWPF round-trip 통합 검증
+```
+
+CLI 변환 모듈 분리 원칙(아키텍처 §3)은 **HWP/DOC/HTML 한정**으로 적용한다.
+1단계 1급 시민인 **HWPX/DOCX는 메인 앱에 직접 링크**되어 있고
+(`PolyDonky.App.csproj` 가 두 codec 을 ProjectReference), 2단계 추가 대상인
+HWP/DOC/HTML 이 별도 CLI 컨버터로 분리될 포맷이다.
+
+## 빌드·테스트 명령
+
+`PolyDonky.App` 은 `net10.0-windows`(WPF) 라 비-Windows 환경에서는 빌드되지 않는다.
+라이브러리·코덱·테스트는 크로스 플랫폼 빌드 가능.
+
+```powershell
+# 전체 복원 / 빌드 / 테스트
+dotnet restore PolyDonky.sln
+dotnet build   PolyDonky.sln -c Debug
+dotnet test    PolyDonky.sln -c Debug
+
+# 단일 프로젝트
+dotnet build src/PolyDonky.Iwpf/PolyDonky.Iwpf.csproj
+dotnet test  tests/PolyDonky.Iwpf.Tests/PolyDonky.Iwpf.Tests.csproj
+
+# 단일 테스트 (xUnit FQN 또는 DisplayName 필터)
+dotnet test tests/PolyDonky.Iwpf.Tests --filter "FullyQualifiedName~IwpfWriterTests.RoundTrip"
+dotnet test tests/PolyDonky.Iwpf.Tests --filter "DisplayName~round-trip"
+
+# 앱 실행 (Windows 전용)
+dotnet run --project src/PolyDonky.App
+
+# 모든 codec + IWPF 통합 스모크 (콘솔)
+dotnet run --project tools/PolyDonky.SmokeTest
+```
+
+CI 워크플로: `.github/workflows/dotnet.yml`(라이브러리/테스트),
+`.github/workflows/dotnet-desktop.yml`(WPF 앱). 분석기 경고는 빌드 오류로 승격되므로
+무시하지 말고 수정한다.
+
 ## 작업 시 유의사항
 
-- 코드는 아직 없다(문서만 있는 초기 상태). 새 작업은 솔루션 구조부터 합의 후 진행.
 - 문서/UI 문자열은 i18n 가능하게 분리(한국어 기본, 영어 병행).
+  `PolyDonky.App/Properties/Resources.resx` 와 `Resources.en-US.resx` 를 짝으로 갱신.
+  사용자 노출 문자열 하드코딩 금지.
 - 파일 I/O 단위 테스트는 위 "테스트 코퍼스" 카테고리를 기준으로 설계.
 - 새 외부 포맷 지원 추가 시: ① 공통 모델 매핑 ② fidelity capsule 정의 ③ provenance 기록
   ④ 라운드트립 테스트 추가 — 네 단계를 한 세트로 진행.
+- 새 codec 은 `PolyDonky.Core.IDocumentCodec` 을 구현하고
+  `tools/PolyDonky.SmokeTest` 에 round-trip 케이스를 추가한다.
+- 에디터는 WPF `FlowDocument` 기반이다. 모델 ↔ FlowDocument 변환은
+  `Services/FlowDocumentBuilder` · `FlowDocumentParser` 가 담당하므로,
+  `PolyDonky.Core` 에 새 블록/런 타입을 추가하면 두 곳을 모두 갱신해야 하고
+  검색 경로(`FlowDocumentSearch`) 도 함께 본다.
 
 ## 변경 이력 관리
 

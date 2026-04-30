@@ -44,6 +44,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Internal
+- **Internal** — `CLAUDE.md` 에 솔루션 구조(7개 `src/` 프로젝트와 책임), `dotnet` 빌드/테스트/단일-테스트 필터/스모크 실행 명령, FlowDocument 기반 에디터 파이프라인(`FlowDocumentBuilder`/`Parser`/`Search`, `PageViewBuilder`, `PerPageEditorHost`) 갱신 규칙, i18n resx 짝 갱신·새 codec 의 `IDocumentCodec` + SmokeTest round-trip 추가 규칙을 추가. 더 이상 사실이 아닌 "코드는 아직 없다" 안내 제거. CLI 분리 원칙(§3) 이 HWP/DOC/HTML 한정이며 HWPX/DOCX 는 메인 앱에 직접 링크된다는 점 명시.
+
 ### Fixed
 - **Fixed** — **오버레이 도형(ShapeObject) 저장→재열기 후 사라짐 / 페이지 이동 후 새 도형 그리면 이전 도형 사라짐 / 도형 그린 직후 커서가 마지막 페이지 끝으로 점프**: 세 증상이 동일한 근본 원인에서 비롯됨. ① `RebuildOverlayShapes` 가 `BodyEditor.Document.Blocks`(활성 페이지 RTB) 에서 도형 앵커를 찾아 캔버스를 재구성했는데 — `PerPageDocumentSplitter` 는 `BodyBlocks` 만 RTB 에 넣고 오버레이는 제외하므로 — 문서를 새로 로드하면 어떤 RTB 에도 앵커가 없어 도형이 안 보였고, 활성 RTB 가 바뀌면 다른 페이지에서 그린 도형 앵커를 못 찾아 사라졌음. ② `InsertShapeBlock` 이 활성 RTB 에 앵커 단락을 삽입해 `TextChanged → ScheduleLivePaginationRefresh → SetupPageEditors → RestoreCaretToLastEditor` 경로로 커서가 마지막 페이지 끝으로 점프했고, ③ `ParseAllPageEditors` 가 RTB 의 앵커도 본문 블록으로 파싱해 모델의 도형과 합쳐 중복 저장. 수정: `RebuildOverlayShapes` 를 `_viewModel.Document.Sections.FirstOrDefault().Blocks` 를 직접 순회하도록 변경(`RebuildOverlayImages` 와 동일 패턴); `InsertShapeBlock` / `TryPasteFlowSelection` 의 오버레이 도형 경로에서 RTB 앵커 삽입 제거 — 도형은 모델에만 저장되고 캔버스 표시는 `RebuildOverlayShapes` 가 모델을 읽어 처리.
 - **Fixed** — **글상자(TextBoxObject) 복사/붙여넣기 불가 버그**: `TryPasteFlowSelection` 에서 `BuildWpfBlockFromCore` 가 `TextBoxObject` 에 대해 `null` 을 반환해 클립보드의 글상자가 조용히 무시되었음. TextBoxObject 를 별도 분기로 처리해 모델(`AddOverlayBlockToCurrentSection`)에 등록 후 `hasOverlay = true` + `continue`; `hasOverlay` 블록에서 `RebuildFloatingObjects()` 를 호출해 FloatingCanvas 에 배치하도록 수정.
