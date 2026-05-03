@@ -81,12 +81,12 @@ public static class FlowDocumentBuilder
         }
 
         // 다단 — FlowDocument.ColumnWidth 로 단 너비 지정
-        // (RichTextBox 에서는 시각적 효과가 제한적이나 PageViewer/Print 에서 적용됨)
         if (page.ColumnCount > 1)
         {
             double gapDip = MmToDip(page.ColumnGapMm);
             fd.ColumnWidth = Math.Max(10, (contentWDip - gapDip * (page.ColumnCount - 1)) / page.ColumnCount);
             fd.ColumnGap   = gapDip;
+            fd.IsColumnWidthFlexible = false;
         }
 
         foreach (var section in document.Sections)
@@ -131,6 +131,15 @@ public static class FlowDocumentBuilder
                 fd.Background = new WpfMedia.SolidColorBrush(c);
             }
             catch { }
+        }
+
+        // 다단 — per-page RTB 도 본문 폭 안에서 단을 분할한다.
+        if (page.ColumnCount > 1)
+        {
+            double gapDip = MmToDip(page.ColumnGapMm);
+            fd.ColumnWidth = Math.Max(10, (contentWDip - gapDip * (page.ColumnCount - 1)) / page.ColumnCount);
+            fd.ColumnGap   = gapDip;
+            fd.IsColumnWidthFlexible = false;
         }
 
         AppendBlocks(fd.Blocks, blocks.ToList(), outlineStyles);
