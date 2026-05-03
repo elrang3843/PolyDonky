@@ -1302,7 +1302,7 @@ public partial class MainWindow : Window
         return ids;
     }
 
-    private record CaretState(int PageIndex, int Offset);
+    private record CaretState(int PageIndex, int Offset, int VirtualDocOffset = -1);
 
     /// <summary>
     /// 현재 포커스된 페이지 RTB 와 캐럿 오프셋을 저장한다.
@@ -1317,9 +1317,20 @@ public partial class MainWindow : Window
             if (!rtb.IsKeyboardFocusWithin && !rtb.IsFocused) continue;
             try
             {
-                int offset = rtb.Document.ContentStart
+                int rtbOffset = rtb.Document.ContentStart
                     .GetOffsetToPosition(rtb.CaretPosition);
-                return new CaretState(i, offset);
+
+                // 가상 문서 위치(VDP) = 이전 RTB 들의 콘텐츠 합산 + 이 RTB 내 오프셋.
+                // 단 간 블록 재분배 후에도 전체 VDP 합은 보존되므로 복원 시
+                // 어느 RTB 로 블록이 이동했는지 자동으로 추적된다.
+                int vdp = rtbOffset;
+                for (int j = 0; j < i; j++)
+                {
+                    vdp += rtbs[j].Document.ContentStart
+                        .GetOffsetToPosition(rtbs[j].Document.ContentEnd);
+                }
+
+                return new CaretState(i, rtbOffset, vdp);
             }
             catch { break; }
         }
@@ -1328,7 +1339,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// <see cref="SaveCaretState"/> 로 저장한 위치로 커서를 복원한다.
-    /// 재구성으로 페이지 수나 내용이 바뀌었으면 최대한 근사한 위치로 이동한다.
+    /// VDP 방식을 우선 시도하고, 실패하면 RTB 인덱스·오프셋으로 폴백한다.
     /// </summary>
     private void RestoreCaretState(CaretState? saved)
     {
@@ -1337,6 +1348,12 @@ public partial class MainWindow : Window
 
         if (saved is not null)
         {
+            // 1순위: 가상 문서 위치로 복원
+            // — 블록이 다른 단 RTB 로 이동했을 때도 올바른 위치를 찾는다.
+            if (saved.VirtualDocOffset >= 0 && TryRestoreByVdp(rtbs, saved.VirtualDocOffset))
+                return;
+
+            // 2순위: 원래 RTB 인덱스 + 오프셋 (폴백)
             int pageIdx = Math.Min(saved.PageIndex, rtbs.Count - 1);
             var rtb = rtbs[pageIdx];
             try
@@ -1358,6 +1375,39 @@ public partial class MainWindow : Window
         }
 
         RestoreCaretToLastEditor();
+    }
+
+    private bool TryRestoreByVdp(System.Collections.Generic.IReadOnlyList<System.Windows.Controls.RichTextBox> rtbs, int vdp)
+    {
+        int remaining = vdp;
+        for (int i = 0; i < rtbs.Count; i++)
+        {
+            var rtb    = rtbs[i];
+            int rtbLen = rtb.Document.ContentStart
+                             .GetOffsetToPosition(rtb.Document.ContentEnd);
+
+            bool isLast = i == rtbs.Count - 1;
+            if (remaining <= rtbLen || isLast)
+            {
+                try
+                {
+                    int target = Math.Clamp(remaining, 0, rtbLen);
+                    var pos = rtb.Document.ContentStart.GetPositionAtOffset(
+                        target, System.Windows.Documents.LogicalDirection.Forward);
+                    if (pos != null)
+                    {
+                        rtb.CaretPosition = pos;
+                        rtb.Focus();
+                        Keyboard.Focus(rtb);
+                        return true;
+                    }
+                }
+                catch { }
+                return false;
+            }
+            remaining -= rtbLen;
+        }
+        return false;
     }
 
     /// <summary>
