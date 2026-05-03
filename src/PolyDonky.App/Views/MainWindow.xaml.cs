@@ -1268,7 +1268,13 @@ public partial class MainWindow : Window
                     else
                     {
                         if (openFrags.TryGetValue(groupId, out var target))
+                        {
                             foreach (var run in p.Runs) target.Runs.Add(run);
+                            // 분할 시 frag1.SpaceAfterPt=0 으로 변경되므로, 마지막 조각의 원본
+                            // SpaceAfterPt 를 target 으로 복원 — 그렇지 않으면 split→merge 라운드트립
+                            // 이후 단락 뒤 간격이 영구히 사라져 다음 페이지네이션의 블록 분배가 달라진다.
+                            target.Style.SpaceAfterPt = p.Style.SpaceAfterPt;
+                        }
                         else
                         {
                             // 짝 없는 이어지는 조각 — 단독으로 추가
