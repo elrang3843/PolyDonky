@@ -1151,13 +1151,17 @@ public partial class MainWindow : Window
         freshDoc.Sections.Add(section);
 
         // 각 페이지 RTB 를 파싱해 본문 블록 수집 (오버레이는 제외 — per-page RTB 에는 없다)
+        var rawBlocks = new System.Collections.Generic.List<PolyDonky.Core.Block>();
         foreach (var rtb in PageEditorHost.PageEditors)
         {
             var pageDoc = PolyDonky.App.Services.FlowDocumentParser.Parse(rtb.Document);
             if (pageDoc.Sections.FirstOrDefault() is { } ps)
                 foreach (var b in ps.Blocks)
-                    section.Blocks.Add(b);
+                    rawBlocks.Add(b);
         }
+        // 줄 단위 분할로 생성된 조각 단락(§f0/§f1 접미사)을 원본 단락으로 재결합한다.
+        foreach (var b in MergeColumnFragments(rawBlocks))
+            section.Blocks.Add(b);
 
         // 오버레이 블록 (_viewModel.Document 가 stable source) — 글상자는 RTB 에 앵커가 없고,
         // 오버레이 모드 표/그림/도형의 앵커 단락은 PerPageDocumentSplitter 가 BodyBlocks 에서 제외하므로
@@ -1176,6 +1180,58 @@ public partial class MainWindow : Window
         }
 
         return freshDoc;
+    }
+
+    /// <summary>
+    /// MapBodyBlocksToPages 의 줄 단위 분할이 생성한 조각 단락들을 재결합한다.
+    /// 조각 단락은 Id 에 "§f0" / "§f1" 접미사를 포함한다.
+    /// 첫 조각(§f0)을 결과에 추가하고, 이어지는 조각(§f1, §f2 …)의 텍스트 런을 거기에 병합한다.
+    /// </summary>
+    private static System.Collections.Generic.IEnumerable<PolyDonky.Core.Block>
+        MergeColumnFragments(System.Collections.Generic.IList<PolyDonky.Core.Block> blocks)
+    {
+        const string FragSep   = "§f";
+        const string GenPrefix = "§g";
+
+        var result   = new System.Collections.Generic.List<PolyDonky.Core.Block>();
+        var openFrags = new System.Collections.Generic.Dictionary<string, PolyDonky.Core.Paragraph>();
+
+        foreach (var block in blocks)
+        {
+            if (block is PolyDonky.Core.Paragraph p && p.Id is { } id)
+            {
+                int sepIdx = id.LastIndexOf(FragSep, StringComparison.Ordinal);
+                if (sepIdx >= 0)
+                {
+                    string groupId     = id[..sepIdx];
+                    string fragIdxStr  = id[(sepIdx + FragSep.Length)..];
+                    bool   isFirst     = fragIdxStr == "0";
+
+                    if (isFirst)
+                    {
+                        // Id 를 원본으로 복원 (임시 생성 Id 이면 null)
+                        p.Id = groupId.StartsWith(GenPrefix, StringComparison.Ordinal) ? null : groupId;
+                        result.Add(p);
+                        openFrags[groupId] = p;
+                    }
+                    else
+                    {
+                        if (openFrags.TryGetValue(groupId, out var target))
+                            foreach (var run in p.Runs) target.Runs.Add(run);
+                        else
+                        {
+                            // 짝 없는 이어지는 조각 — 단독으로 추가
+                            p.Id = groupId.StartsWith(GenPrefix, StringComparison.Ordinal) ? null : groupId;
+                            result.Add(p);
+                        }
+                    }
+                    continue;
+                }
+            }
+            result.Add(block);
+        }
+
+        return result;
     }
 
     private bool _liveRefreshQueued;

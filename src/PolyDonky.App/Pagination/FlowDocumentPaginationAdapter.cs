@@ -166,54 +166,247 @@ public static class FlowDocumentPaginationAdapter
 
             double topY    = TryGetTopY(wpfBlock);
             double bottomY = TryGetBottomY(wpfBlock);
-            int    pageIdx;
-            int    colIdx;
 
+            // Y 를 측정할 수 없으면 첫 슬롯에 배정하고 다음 블록으로.
             if (double.IsNaN(topY))
             {
-                pageIdx = 0;
-                colIdx  = 0;
+                result.Add((0, 0, coreBlock, Rect.Empty));
+                continue;
             }
-            else
+
+            double blockH  = (!double.IsNaN(bottomY) && bottomY > topY) ? (bottomY - topY) : 0.0;
+            // 연속 스크롤 공간에서 "단 슬롯" 인덱스 (단 슬롯 = 단 × 페이지).
+            // 상한 클램프 없음 — 호출자(Paginate) 가 max pageIdx 로 pageCount 를 보정한다.
+            int slotTop = Math.Max(0, (int)(topY / bodyH));
+
+            // ── 줄 단위 분할 ──────────────────────────────────────────────────────────
+            // 목록 마커가 없는 일반 단락이고, 한 슬롯에 들어갈 수 있는 높이일 때만 시도.
+            // blockH >= bodyH 인 초장문 단락은 분할을 생략(구조 복잡도 대비 효용 낮음).
+            if (coreBlock is Paragraph corePara
+                && corePara.Style.ListMarker == null
+                && blockH > 0 && blockH < bodyH
+                && wpfBlock is WpfDocs.Paragraph wpfPara)
             {
-                double blockH  = (!double.IsNaN(bottomY) && bottomY > topY) ? (bottomY - topY) : 0.0;
-                // 연속 스크롤 공간에서 "단 슬롯" 인덱스 (단 슬롯 = 단 × 페이지).
-                // 상한 클램프 없음 — 호출자(Paginate) 가 max pageIdx 로 pageCount 를 보정한다.
-                int slotTop = Math.Max(0, (int)(topY / bodyH));
+                double slotBoundaryY = (slotTop + 1) * bodyH;
+                bool   crossesBoundary = !double.IsNaN(bottomY) && bottomY > slotBoundaryY;
+                bool   fillOverflow    = slotFill.GetValueOrDefault(slotTop, 0.0) + blockH > bodyH;
 
-                // 블록이 단 슬롯 경계를 넘고 한 슬롯에 들어갈 만큼 작으면 다음 슬롯으로 이동.
-                if (!double.IsNaN(bottomY)
-                    && bottomY > (slotTop + 1) * bodyH
-                    && blockH < bodyH)
+                if (crossesBoundary || fillOverflow)
                 {
-                    slotTop += 1;
+                    // 분할 Y: 자연 슬롯 경계(crossesBoundary) 우선, 아니면 누적 채움 기반.
+                    double splitY = crossesBoundary
+                        ? slotBoundaryY
+                        : topY + Math.Max(0.0, bodyH - slotFill.GetValueOrDefault(slotTop, 0.0));
+
+                    int splitCharOffset = FindSplitCharOffset(wpfPara, splitY);
+                    int totalChars      = corePara.Runs.Sum(r => r.Text.Length);
+
+                    if (splitCharOffset > 0 && splitCharOffset < totalChars)
+                    {
+                        var (frag1, frag2) = SplitCoreParagraph(corePara, splitCharOffset);
+
+                        // 첫 조각 → 현재 슬롯
+                        double frag1H = Math.Max(0.0, splitY - topY);
+                        slotFill[slotTop] = Math.Min(bodyH,
+                            slotFill.GetValueOrDefault(slotTop, 0.0) + frag1H);
+                        var rect1 = TryGetColumnLocalRect(
+                            wpfBlock, slotTop / colCount, slotTop % colCount, bodyH, colWidth, colCount);
+                        result.Add((slotTop / colCount, slotTop % colCount, frag1, rect1));
+
+                        // 이어지는 조각 → 다음 슬롯 (누적 채움 검사)
+                        int    nextSlot = slotTop + 1;
+                        double frag2H   = blockH - frag1H;
+                        if (frag2H > 0 && frag2H < bodyH)
+                        {
+                            while (slotFill.GetValueOrDefault(nextSlot, 0.0) + frag2H > bodyH)
+                                nextSlot++;
+                        }
+                        if (frag2H > 0)
+                            slotFill[nextSlot] = Math.Min(bodyH,
+                                slotFill.GetValueOrDefault(nextSlot, 0.0) + Math.Min(frag2H, bodyH));
+                        result.Add((nextSlot / colCount, nextSlot % colCount, frag2, Rect.Empty));
+
+                        continue; // 아래 단일 블록 처리 생략
+                    }
                 }
-
-                // 슬롯 누적 채움이 이 블록을 수용하기에 부족하면 다음 슬롯으로 밀어낸다.
-                // bodyH 이상인 블록은 분할 불가이므로 채움 추적 대상에서 제외.
-                if (blockH > 0 && blockH < bodyH)
-                {
-                    while (slotFill.GetValueOrDefault(slotTop, 0.0) + blockH > bodyH)
-                        slotTop += 1;
-                }
-
-                // 슬롯 채움 갱신 (bodyH 캡 — 단 높이를 초과하는 블록은 슬롯 전체를 포화로 표시)
-                if (blockH > 0)
-                    slotFill[slotTop] = Math.Min(bodyH,
-                        slotFill.GetValueOrDefault(slotTop, 0.0) + Math.Min(blockH, bodyH));
-
-                pageIdx = slotTop / colCount;
-                colIdx  = slotTop % colCount;
             }
 
-            var bodyLocalRect = TryGetColumnLocalRect(wpfBlock, pageIdx, colIdx, bodyH, colWidth, colCount);
-            result.Add((pageIdx, colIdx, coreBlock, bodyLocalRect));
+            // ── 단일 블록 배정 (기존 로직) ────────────────────────────────────────────
+            // 블록이 단 슬롯 경계를 넘고 한 슬롯에 들어갈 만큼 작으면 다음 슬롯으로 이동.
+            if (!double.IsNaN(bottomY)
+                && bottomY > (slotTop + 1) * bodyH
+                && blockH < bodyH)
+            {
+                slotTop += 1;
+            }
+
+            // 슬롯 누적 채움이 이 블록을 수용하기에 부족하면 다음 슬롯으로 밀어낸다.
+            // bodyH 이상인 블록은 분할 불가이므로 채움 추적 대상에서 제외.
+            if (blockH > 0 && blockH < bodyH)
+            {
+                while (slotFill.GetValueOrDefault(slotTop, 0.0) + blockH > bodyH)
+                    slotTop += 1;
+            }
+
+            // 슬롯 채움 갱신 (bodyH 캡 — 단 높이를 초과하는 블록은 슬롯 전체를 포화로 표시)
+            if (blockH > 0)
+                slotFill[slotTop] = Math.Min(bodyH,
+                    slotFill.GetValueOrDefault(slotTop, 0.0) + Math.Min(blockH, bodyH));
+
+            var bodyLocalRect = TryGetColumnLocalRect(
+                wpfBlock, slotTop / colCount, slotTop % colCount, bodyH, colWidth, colCount);
+            result.Add((slotTop / colCount, slotTop % colCount, coreBlock, bodyLocalRect));
         }
 
         // RichTextBox 분리 (FlowDocument 재사용을 위해)
         rtb.Document = new WpfDocs.FlowDocument();
         return result;
     }
+
+    // ── 줄 단위 분할 헬퍼 ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// WPF Paragraph 내에서 Y 좌표 splitY 직전까지의 텍스트 문자 수를 반환한다.
+    /// 이진 탐색으로 O(log n) 심볼 위치를 찾은 뒤 TextRange 로 문자 수를 센다.
+    /// </summary>
+    private static int FindSplitCharOffset(WpfDocs.Paragraph wpfPara, double splitY)
+    {
+        var start = wpfPara.ContentStart;
+        var end   = wpfPara.ContentEnd;
+        int total = start.GetOffsetToPosition(end);
+        if (total <= 0) return 0;
+
+        // 이진 탐색: rect.Y < splitY 인 마지막 심볼 위치 찾기
+        int lo = 0, hi = total;
+        while (lo < hi - 1)
+        {
+            int mid = (lo + hi) / 2;
+            var tp = start.GetPositionAtOffset(mid);
+            if (tp == null) { hi = mid; continue; }
+
+            var rect = tp.GetCharacterRect(WpfDocs.LogicalDirection.Forward);
+            if (rect == Rect.Empty || double.IsNaN(rect.Y) || double.IsInfinity(rect.Y))
+            {
+                lo = mid; // 측정 불가 위치는 분할선 이전으로 처리
+                continue;
+            }
+            if (rect.Y < splitY) lo = mid;
+            else                 hi = mid;
+        }
+
+        var splitPtr = start.GetPositionAtOffset(lo);
+        if (splitPtr == null || splitPtr.CompareTo(start) <= 0) return 0;
+
+        // 심볼 위치 → 텍스트 문자 수 (단락 내부 범위이므로 \n 없음)
+        try
+        {
+            return new WpfDocs.TextRange(start, splitPtr).Text.Length;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// 단락을 charOffset 문자 위치에서 두 조각으로 나눈다.
+    /// 각 조각의 Id 에 "§f0" / "§f1" 접미사를 붙여 ParseAllPageEditors 에서 재결합할 수 있게 한다.
+    /// </summary>
+    private static (Paragraph first, Paragraph second) SplitCoreParagraph(
+        Paragraph para, int charOffset)
+    {
+        // 원본 Id 가 없으면 임시 그룹 Id 생성 (§g 접두사로 식별)
+        string groupId = para.Id is { } origId
+            ? origId
+            : "§g" + System.Guid.NewGuid().ToString("N")[..8];
+
+        var first  = CloneParaForSplit(para, groupId + "§f0");
+        var second = CloneParaForSplit(para, groupId + "§f1");
+        // 이어지는 조각의 문단 앞뒤 간격은 제거 (시각적 연속성)
+        second.Style.SpaceBeforePt = 0;
+        first.Style.SpaceAfterPt  = 0;
+
+        int remaining = charOffset;
+        bool inSecond = false;
+
+        foreach (var run in para.Runs)
+        {
+            if (inSecond)
+            {
+                second.Runs.Add(CloneRunForSplit(run));
+                continue;
+            }
+
+            string text = run.Text;
+
+            if (remaining <= 0)
+            {
+                second.Runs.Add(CloneRunForSplit(run));
+                inSecond = true;
+            }
+            else if (remaining >= text.Length)
+            {
+                first.Runs.Add(CloneRunForSplit(run));
+                remaining -= text.Length;
+            }
+            else // 0 < remaining < text.Length: run 을 둘로 쪼갬
+            {
+                first.Runs.Add(new Run
+                    { Text = text[..remaining], Style = CloneRunStyleForSplit(run.Style) });
+                second.Runs.Add(new Run
+                    { Text = text[remaining..], Style = CloneRunStyleForSplit(run.Style) });
+                remaining = 0;
+                inSecond  = true;
+            }
+        }
+
+        return (first, second);
+    }
+
+    private static Paragraph CloneParaForSplit(Paragraph p, string? id) => new()
+    {
+        Id      = id,
+        Status  = p.Status,
+        StyleId = p.StyleId,
+        Style   = new ParagraphStyle
+        {
+            Alignment         = p.Style.Alignment,
+            LineHeightFactor  = p.Style.LineHeightFactor,
+            SpaceBeforePt     = p.Style.SpaceBeforePt,
+            SpaceAfterPt      = p.Style.SpaceAfterPt,
+            IndentFirstLineMm = p.Style.IndentFirstLineMm,
+            IndentLeftMm      = p.Style.IndentLeftMm,
+            IndentRightMm     = p.Style.IndentRightMm,
+            Outline           = p.Style.Outline,
+        },
+    };
+
+    private static Run CloneRunForSplit(Run r) => new()
+    {
+        Text              = r.Text,
+        Style             = CloneRunStyleForSplit(r.Style),
+        LatexSource       = r.LatexSource,
+        IsDisplayEquation = r.IsDisplayEquation,
+        EmojiKey          = r.EmojiKey,
+        EmojiAlignment    = r.EmojiAlignment,
+    };
+
+    private static RunStyle CloneRunStyleForSplit(RunStyle s) => new()
+    {
+        FontFamily      = s.FontFamily,
+        FontSizePt      = s.FontSizePt,
+        Bold            = s.Bold,
+        Italic          = s.Italic,
+        Underline       = s.Underline,
+        Strikethrough   = s.Strikethrough,
+        Overline        = s.Overline,
+        Superscript     = s.Superscript,
+        Subscript       = s.Subscript,
+        Foreground      = s.Foreground,
+        Background      = s.Background,
+        WidthPercent    = s.WidthPercent,
+        LetterSpacingPx = s.LetterSpacingPx,
+    };
 
     /// <summary>
     /// fd.Blocks 를 재귀적으로 열거한다.
