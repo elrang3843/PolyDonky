@@ -282,7 +282,12 @@ public static class FlowDocumentPaginationAdapter
         int total = start.GetOffsetToPosition(end);
         if (total <= 0) return 0;
 
-        // 이진 탐색: rect.Y < splitY 인 마지막 심볼 위치 찾기
+        // 이진 탐색: 줄의 하단(rect.Y + rect.Height) 이 splitY 이내인 마지막 심볼 위치 찾기.
+        // 줄 시작점(rect.Y) 만 비교하면 splitY 직전에서 시작하는 줄이 splitY 를 넘어 끝나도
+        // 포함되어 frag1 의 마지막 줄이 슬라이스 RTB(높이=bodyH) 에서 클리핑된다.
+        // 줄 하단까지 비교하면 그런 줄은 frag1 에 포함되지 않아 frag2(다음 단/페이지) 의 첫 줄로 간다.
+        // 2 DIP 허용치는 mm→DIP 반올림 오차 흡수용 (PerPageEditorHost.ClipRenderingTolerance 와 대응).
+        const double LineFitTol = 2.0;
         int lo = 0, hi = total;
         while (lo < hi - 1)
         {
@@ -296,8 +301,9 @@ public static class FlowDocumentPaginationAdapter
                 lo = mid; // 측정 불가 위치는 분할선 이전으로 처리
                 continue;
             }
-            if (rect.Y < splitY) lo = mid;
-            else                 hi = mid;
+            double lineBottom = rect.Y + (double.IsNaN(rect.Height) ? 0 : rect.Height);
+            if (lineBottom <= splitY + LineFitTol) lo = mid;
+            else                                   hi = mid;
         }
 
         var splitPtr = start.GetPositionAtOffset(lo);
