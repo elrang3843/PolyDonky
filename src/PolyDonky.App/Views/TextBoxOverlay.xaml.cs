@@ -625,19 +625,10 @@ public partial class TextBoxOverlay : UserControl
             _liveReflowQueued = false;
             try
             {
-                // 활성 RTB 인덱스 + 캐럿 오프셋 보존
-                int activeIdx = MultiColHost.ActiveEditor is null ? -1
-                              : MultiColHost.IndexOf(MultiColHost.ActiveEditor);
-                int caretOff  = -1;
-                if (activeIdx >= 0)
-                {
-                    var ed = MultiColHost.Editors[activeIdx];
-                    try
-                    {
-                        caretOff = ed.Document.ContentStart.GetOffsetToPosition(ed.CaretPosition);
-                    }
-                    catch { }
-                }
+                // 캐럿을 "전역 텍스트 오프셋"(=모든 단의 텍스트 길이 합산) 으로 추적.
+                // 단순한 (활성 단, 단 내 오프셋) 보존은 콘텐츠가 다음 단으로 밀려난 경우
+                // 캐럿이 자기 자리에 그대로 남아 텍스트와 분리되는 문제가 발생.
+                int globalCaretChars = ComputeGlobalCaretCharOffset();
 
                 // 1) 모든 단 파싱 + frag 머지 → 모델 갱신
                 SyncMultiColContentToModel();
@@ -646,22 +637,90 @@ public partial class TextBoxOverlay : UserControl
                 try { LoadMultiColContent(); }
                 finally { _suppressTextChanged = false; }
 
-                // 캐럿 복원 (가능한 만큼만)
-                if (activeIdx >= 0 && activeIdx < MultiColHost.Editors.Count && caretOff > 0)
-                {
-                    var ed = MultiColHost.Editors[activeIdx];
-                    try
-                    {
-                        var pos = ed.Document.ContentStart.GetPositionAtOffset(caretOff)
-                                  ?? ed.Document.ContentEnd;
-                        ed.CaretPosition = pos;
-                        ed.Focus();
-                    }
-                    catch { }
-                }
+                // 3) 전역 텍스트 오프셋을 새 분배에 매핑해 캐럿 복원 — 입력 텍스트가
+                //    다음 단으로 흘렀다면 캐럿도 다음 단의 같은 글자 직후로 이동.
+                if (globalCaretChars >= 0)
+                    RestoreCaretAtGlobalCharOffset(globalCaretChars);
             }
             catch { /* 실패 시 캐시 유지 */ }
         });
+    }
+
+    /// <summary>현재 캐럿의 전역 텍스트 오프셋(모든 단 텍스트 길이 누적).</summary>
+    private int ComputeGlobalCaretCharOffset()
+    {
+        if (MultiColHost.ActiveEditor is null) return -1;
+        int actIdx = MultiColHost.IndexOf(MultiColHost.ActiveEditor);
+        if (actIdx < 0) return -1;
+
+        int total = 0;
+        for (int i = 0; i < actIdx; i++)
+        {
+            var doc = MultiColHost.Editors[i].Document;
+            total += new TextRange(doc.ContentStart, doc.ContentEnd).Text.Length;
+        }
+        try
+        {
+            var actEd = MultiColHost.ActiveEditor;
+            total += new TextRange(actEd.Document.ContentStart, actEd.CaretPosition).Text.Length;
+            return total;
+        }
+        catch { return -1; }
+    }
+
+    /// <summary>전역 텍스트 오프셋 → (단 인덱스, 단 내 위치) 매핑 후 캐럿/포커스 복원.</summary>
+    private void RestoreCaretAtGlobalCharOffset(int globalOffset)
+    {
+        int remaining = globalOffset;
+        for (int i = 0; i < MultiColHost.Editors.Count; i++)
+        {
+            var ed = MultiColHost.Editors[i];
+            int len = new TextRange(ed.Document.ContentStart, ed.Document.ContentEnd).Text.Length;
+            // 마지막 단이 아니고 정확히 단 끝(remaining == len) 인 경우 다음 단의 시작으로 보낸다.
+            // — 입력으로 텍스트가 단 경계를 넘어 다음 단의 시작에 떨어졌을 때 캐럿이
+            // 새 텍스트 직후(다음 단 첫 글자 뒤) 가 아니라 그 직전 단 끝에 머무르는 것을 막기 위함.
+            if (remaining < len || (remaining == len && i == MultiColHost.Editors.Count - 1))
+            {
+                ed.CaretPosition = FindCaretAtCharOffset(ed.Document, remaining);
+                ed.Focus();
+                return;
+            }
+            remaining -= len;
+        }
+        // 폴백 — 마지막 단의 끝으로.
+        if (MultiColHost.Editors.Count > 0)
+        {
+            var last = MultiColHost.Editors[^1];
+            last.CaretPosition = last.Document.ContentEnd;
+            last.Focus();
+        }
+    }
+
+    /// <summary>FlowDocument 내에서 텍스트 문자 offset 위치의 TextPointer 를 찾는다.</summary>
+    private static TextPointer FindCaretAtCharOffset(FlowDocument doc, int charOffset)
+    {
+        if (charOffset <= 0) return doc.ContentStart;
+        var pointer = doc.ContentStart;
+        int consumed = 0;
+        while (pointer != null && pointer.CompareTo(doc.ContentEnd) < 0)
+        {
+            if (pointer.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+            {
+                int run = pointer.GetTextRunLength(LogicalDirection.Forward);
+                if (consumed + run >= charOffset)
+                {
+                    return pointer.GetPositionAtOffset(charOffset - consumed, LogicalDirection.Forward)
+                           ?? doc.ContentEnd;
+                }
+                consumed += run;
+                pointer = pointer.GetPositionAtOffset(run, LogicalDirection.Forward) ?? doc.ContentEnd;
+            }
+            else
+            {
+                pointer = pointer.GetNextContextPosition(LogicalDirection.Forward) ?? doc.ContentEnd;
+            }
+        }
+        return doc.ContentEnd;
     }
 
     private void OnColumnTextChanged(object? sender, TextChangedEventArgs e)
@@ -954,9 +1013,11 @@ public partial class TextBoxOverlay : UserControl
 
     private void OnRootKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Delete
-            && !InnerEditor.IsKeyboardFocusWithin
-            && !MultiColHost.IsKeyboardFocusWithin)
+        // Del 은 chrome(편집기 외부 영역) 에서만 박스 삭제. 편집기(InnerEditor 또는 다단 RTB) 안에서
+        // 발생한 Del 은 RTB 가 텍스트 삭제로 처리하도록 그대로 흘려보낸다.
+        // IsKeyboardFocusWithin 만으로는 일부 케이스(다단 RTB 가 시각적 트리에 막 추가된 직후 등)에서
+        // 잘못된 결과가 나와 박스가 통째로 삭제되는 버그가 있어 이벤트 소스로 직접 검사한다.
+        if (e.Key == Key.Delete && !IsInsideEditor(e.OriginalSource as DependencyObject))
         {
             DeleteRequested?.Invoke(this, EventArgs.Empty);
             e.Handled = true;
