@@ -369,20 +369,7 @@ public partial class MainWindow : Window
         {
             if (_viewModel?.Document is not null && _pageGeometry is not null)
             {
-                // Live RTB 에 이미 사용자 편집 내용이 있으면(예: ShowDialog 모달 루프 중
-                // 이 콜백이 발화한 경우) ParseAllPageEditors 로 현재 RTB 내용을 읽어
-                // _viewModel.Document(저장 전 구버전) 로 덮어쓰는 것을 방지한다.
-                if (PageEditorHost.PageCount > 0)
-                {
-                    var freshDoc = ParseAllPageEditors();
-                    if (freshDoc.Sections.FirstOrDefault() is { } s)
-                        s.Page = _viewModel.Document.Sections.FirstOrDefault()?.Page ?? s.Page;
-                    _currentPaginatedDoc = FlowDocumentPaginationAdapter.Paginate(freshDoc);
-                }
-                else
-                {
-                    UpdatePaginatedDoc();
-                }
+                UpdatePaginatedDoc();
                 SetupPageEditors();
                 RebuildOverlays();
             }
