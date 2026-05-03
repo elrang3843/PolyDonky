@@ -48,6 +48,15 @@ public sealed class PerPageEditorHost : Canvas
     /// <param name="slices"><see cref="PerPageDocumentSplitter.Split"/> 결과.</param>
     /// <param name="geo">현재 페이지 기하 정보.</param>
     /// <param name="configure">각 RTB 생성 후 호출되는 콜백 — 이벤트 구독·속성 설정.</param>
+    /// <summary>
+    /// mm→DIP 변환과 WPF 장치 픽셀 반올림의 미세한 차이로 인해
+    /// RTB 의 실제 콘텐츠 표시 영역(Height - Padding)이 페이지네이터가 계산한
+    /// bodyH 보다 1-2 DIP 작을 수 있다. 이 차이가 마지막 줄의 하단을
+    /// ScrollBarVisibility.Hidden/Disabled 로 잘라낸다.
+    /// 2 DIP 여유를 단일 단 RTB 하단 패딩 축소 / 다단 RTB 높이 확장으로 흡수한다.
+    /// </summary>
+    private const double ClipRenderingTolerance = 2.0;
+
     public void SetupPages(
         IReadOnlyList<PerPageDocumentSlice> slices,
         PageGeometry                        geo,
@@ -77,8 +86,11 @@ public sealed class PerPageEditorHost : Canvas
                     Document      = slice.FlowDocument,
                     Width         = geo.PageWidthDip,
                     Height        = geo.PageHeightDip,
+                    // 하단 패딩을 ClipRenderingTolerance 만큼 줄여 콘텐츠 표시 영역을 넓힌다.
+                    // 이렇게 해도 추가 표시 영역은 인쇄 여백 안이라 시각·인쇄 결과에 영향 없음.
                     Padding       = new Thickness(geo.PadLeftDip, geo.PadTopDip,
-                                                  geo.PadRightDip, geo.PadBottomDip),
+                                                  geo.PadRightDip,
+                                                  Math.Max(0, geo.PadBottomDip - ClipRenderingTolerance)),
                     VerticalScrollBarVisibility   = ScrollBarVisibility.Hidden,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
                     AcceptsReturn     = true,
@@ -100,7 +112,9 @@ public sealed class PerPageEditorHost : Canvas
                 {
                     Document      = slice.FlowDocument,
                     Width         = slice.BodyWidthDip,
-                    Height        = slice.BodyHeightDip,
+                    // ClipRenderingTolerance 만큼 높이를 늘려 mm→DIP 반올림 오차로 인한
+                    // 마지막 줄 하단 클리핑을 방지한다. 추가 영역은 하단 여백 안에 위치.
+                    Height        = slice.BodyHeightDip + ClipRenderingTolerance,
                     Padding       = new Thickness(0),
                     VerticalScrollBarVisibility   = ScrollBarVisibility.Disabled,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
