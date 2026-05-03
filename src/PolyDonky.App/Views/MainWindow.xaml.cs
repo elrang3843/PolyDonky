@@ -3297,6 +3297,14 @@ public partial class MainWindow : Window
             case Key.Up when caret.GetLineStartPosition(-1) is null:
                 return MoveCaretToPage(idx - 1, atTop: false, e);
 
+            // 좌우 화살표: 현재 RTB 의 첫/마지막 삽입 위치에서 인접 RTB(다음/이전 단 또는 페이지)로 이동.
+            // 다단 모드에서 단 사이 캐럿 이동을 처리한다 — 단 1 끝에서 →, 단 2 시작에서 ←.
+            case Key.Right when caret.GetNextInsertionPosition(WpfDocs.LogicalDirection.Forward) is null:
+                return MoveCaretToPage(idx + 1, atTop: true, e);
+
+            case Key.Left when caret.GetNextInsertionPosition(WpfDocs.LogicalDirection.Backward) is null:
+                return MoveCaretToPage(idx - 1, atTop: false, e);
+
             case Key.Home when ctrl:
                 return MoveCaretToPage(0, atTop: true, e);
 
