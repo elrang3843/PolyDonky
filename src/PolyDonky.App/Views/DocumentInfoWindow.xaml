@@ -12,6 +12,7 @@
         Foreground="{DynamicResource OnSurface}">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="Foreground"        Value="{DynamicResource OnSurfaceMuted}" />
             <Setter Property="TextAlignment"     Value="Right" />
@@ -243,61 +244,75 @@
             <TabItem Header="{Binding DocInfoTabWatermark, Source={x:Static svc:LocalizedStrings.Instance}}">
                 <StackPanel Margin="20,20,20,16" MinWidth="440">
 
-                    <CheckBox Content="{Binding DocInfoWmEnabled, Source={x:Static svc:LocalizedStrings.Instance}}"
-                              IsChecked="{Binding WatermarkEnabled}" />
+                    <!-- 잠금 영역 — 편집 암호 미해제 시 워터마크 데이터를 노출하지 않음 -->
+                    <StackPanel Visibility="{Binding IsWatermarkLocked, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding DocInfoWmLockedHint, Source={x:Static svc:LocalizedStrings.Instance}}"
+                                   Foreground="{DynamicResource OnSurfaceMuted}"
+                                   TextWrapping="Wrap" Margin="0,0,0,12" />
+                        <Button Content="{Binding DocInfoUnlock, Source={x:Static svc:LocalizedStrings.Instance}}"
+                                HorizontalAlignment="Left" Padding="14,6"
+                                Click="OnUnlockWatermark" />
+                    </StackPanel>
 
-                    <Grid Margin="0,14,0,0" IsEnabled="{Binding WatermarkEnabled}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="140" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+                    <!-- 일반 영역 — 잠금 해제 상태에서만 표시 -->
+                    <StackPanel Visibility="{Binding IsWatermarkUnlocked, Converter={StaticResource BoolToVis}}">
+                        <CheckBox Content="{Binding DocInfoWmEnabled, Source={x:Static svc:LocalizedStrings.Instance}}"
+                                  IsChecked="{Binding WatermarkEnabled}" />
 
-                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="{Binding DocInfoWmText, Source={x:Static svc:LocalizedStrings.Instance}}" />
-                        <TextBox   Grid.Row="0" Grid.Column="1"
-                                   Text="{Binding WatermarkText, UpdateSourceTrigger=PropertyChanged}"
-                                   Margin="0,4,0,4" Padding="6,3" />
+                        <Grid Margin="0,14,0,0" IsEnabled="{Binding WatermarkEnabled}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="{Binding DocInfoWmFontSize, Source={x:Static svc:LocalizedStrings.Instance}}" />
-                        <TextBox   Grid.Row="1" Grid.Column="1"
-                                   Text="{Binding WatermarkFontSize, UpdateSourceTrigger=PropertyChanged}"
-                                   Margin="0,4,0,4" Padding="6,3" Width="80" HorizontalAlignment="Left" />
+                            <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                       Text="{Binding DocInfoWmText, Source={x:Static svc:LocalizedStrings.Instance}}" />
+                            <TextBox   Grid.Row="0" Grid.Column="1"
+                                       Text="{Binding WatermarkText, UpdateSourceTrigger=PropertyChanged}"
+                                       Margin="0,4,0,4" Padding="6,3" />
 
-                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="{Binding DocInfoWmRotation, Source={x:Static svc:LocalizedStrings.Instance}}" />
-                        <TextBox   Grid.Row="2" Grid.Column="1"
-                                   Text="{Binding WatermarkRotation, UpdateSourceTrigger=PropertyChanged}"
-                                   Margin="0,4,0,4" Padding="6,3" Width="80" HorizontalAlignment="Left" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                       Text="{Binding DocInfoWmFontSize, Source={x:Static svc:LocalizedStrings.Instance}}" />
+                            <TextBox   Grid.Row="1" Grid.Column="1"
+                                       Text="{Binding WatermarkFontSize, UpdateSourceTrigger=PropertyChanged}"
+                                       Margin="0,4,0,4" Padding="6,3" Width="80" HorizontalAlignment="Left" />
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="{Binding DocInfoWmOpacity, Source={x:Static svc:LocalizedStrings.Instance}}" />
-                        <TextBox   Grid.Row="3" Grid.Column="1"
-                                   Text="{Binding WatermarkOpacity, UpdateSourceTrigger=PropertyChanged}"
-                                   Margin="0,4,0,4" Padding="6,3" Width="80" HorizontalAlignment="Left" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                       Text="{Binding DocInfoWmRotation, Source={x:Static svc:LocalizedStrings.Instance}}" />
+                            <TextBox   Grid.Row="2" Grid.Column="1"
+                                       Text="{Binding WatermarkRotation, UpdateSourceTrigger=PropertyChanged}"
+                                       Margin="0,4,0,4" Padding="6,3" Width="80" HorizontalAlignment="Left" />
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="{Binding DocInfoWmColor, Source={x:Static svc:LocalizedStrings.Instance}}" />
-                        <TextBox   Grid.Row="4" Grid.Column="1"
-                                   Text="{Binding WatermarkColor, UpdateSourceTrigger=PropertyChanged}"
-                                   Margin="0,4,0,4" Padding="6,3" Width="120" HorizontalAlignment="Left"
-                                   FontFamily="Consolas, D2Coding" />
-                    </Grid>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                       Text="{Binding DocInfoWmOpacity, Source={x:Static svc:LocalizedStrings.Instance}}" />
+                            <TextBox   Grid.Row="3" Grid.Column="1"
+                                       Text="{Binding WatermarkOpacity, UpdateSourceTrigger=PropertyChanged}"
+                                       Margin="0,4,0,4" Padding="6,3" Width="80" HorizontalAlignment="Left" />
 
-                    <Separator Margin="0,14,0,12" />
+                            <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                       Text="{Binding DocInfoWmColor, Source={x:Static svc:LocalizedStrings.Instance}}" />
+                            <TextBox   Grid.Row="4" Grid.Column="1"
+                                       Text="{Binding WatermarkColor, UpdateSourceTrigger=PropertyChanged}"
+                                       Margin="0,4,0,4" Padding="6,3" Width="120" HorizontalAlignment="Left"
+                                       FontFamily="Consolas, D2Coding" />
+                        </Grid>
 
-                    <CheckBox Content="{Binding DocInfoWmPrintWith, Source={x:Static svc:LocalizedStrings.Instance}}"
-                              IsChecked="{Binding PrintWithWatermark}"
-                              IsEnabled="{Binding WatermarkEnabled}"
-                              Margin="0,4,0,4" />
+                        <Separator Margin="0,14,0,12" />
 
+                        <CheckBox Content="{Binding DocInfoWmPrintWith, Source={x:Static svc:LocalizedStrings.Instance}}"
+                                  IsChecked="{Binding PrintWithWatermark}"
+                                  IsEnabled="{Binding WatermarkEnabled}"
+                                  Margin="0,4,0,4" />
+                    </StackPanel>
+
+                    <!-- 인쇄 가능 여부는 잠금과 무관하게 항상 표시 -->
                     <CheckBox Content="{Binding DocInfoIsPrintable, Source={x:Static svc:LocalizedStrings.Instance}}"
                               IsChecked="{Binding IsPrintable}"
                               Margin="0,4,0,4" />

@@ -162,6 +162,8 @@ namespace PolyDonky.App.Properties
         internal static string DocInfoWmPrintWith  => Get(nameof(DocInfoWmPrintWith));
         internal static string DocInfoIsPrintable  => Get(nameof(DocInfoIsPrintable));
         internal static string DocInfoNotPrintable => Get(nameof(DocInfoNotPrintable));
+        internal static string DocInfoWmLockedHint => Get(nameof(DocInfoWmLockedHint));
+        internal static string DocInfoUnlock       => Get(nameof(DocInfoUnlock));
 
         // 비밀번호 다이얼로그
         internal static string PwdPromptTitle        => Get(nameof(PwdPromptTitle));

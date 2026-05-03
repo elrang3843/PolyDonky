@@ -1,3 +1,4 @@
+using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using PolyDonky.Iwpf;
 
@@ -85,4 +86,19 @@ public sealed partial class DocumentInfoModel : ObservableObject
     /// <summary>문서 인쇄 가능 여부.</summary>
     [ObservableProperty]
     private bool _isPrintable = true;
+
+    /// <summary>
+    /// 워터마크가 편집 암호로 잠겨 있는지 여부. true 면 워터마크 입력 필드를 숨기고
+    /// 잠금 해제 UI 만 표시. 잠금 해제 후 false 가 된다.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsWatermarkUnlocked))]
+    private bool _isWatermarkLocked;
+
+    /// <summary>IsWatermarkLocked 의 반대값. XAML 에서 입력 폼 가시성 바인딩용.</summary>
+    public bool IsWatermarkUnlocked => !IsWatermarkLocked;
+
+    /// <summary>잠금 해제 버튼 클릭 시 호출되는 콜백. 검증 성공 시 워터마크 필드를 채우고
+    /// IsWatermarkLocked = false 로 설정한다.</summary>
+    public Action? UnlockWatermarkAction { get; set; }
 }

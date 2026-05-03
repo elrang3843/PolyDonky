@@ -399,6 +399,9 @@ public partial class MainViewModel : ObservableObject
         // 워터마크 초기값 — 없으면 기본값 채워서 다이얼로그가 즉시 입력 가능한 상태가 되게.
         var wm = _document.Watermark ?? new WatermarkSettings { Enabled = false };
 
+        // 편집 암호로 잠긴 상태이면 워터마크 데이터를 노출하지 않음.
+        bool wmLocked = IsWriteProtected;
+
         var info = new DocumentInfoModel
         {
             FilePath       = path,
@@ -419,15 +422,33 @@ public partial class MainViewModel : ObservableObject
             TableCount     = tables.ToString("N0"),
             ImageCount     = images.ToString("N0"),
             PasswordMode      = CurrentPasswordMode,
-            WatermarkEnabled  = wm.Enabled,
-            WatermarkText     = wm.Text,
-            WatermarkColor    = wm.Color,
-            WatermarkFontSize = wm.FontSize,
-            WatermarkRotation = wm.Rotation,
-            WatermarkOpacity  = wm.Opacity,
-            PrintWithWatermark = wm.PrintWithWatermark,
+            WatermarkEnabled  = wmLocked ? false : wm.Enabled,
+            WatermarkText     = wmLocked ? "" : wm.Text,
+            WatermarkColor    = wmLocked ? "#FF808080" : wm.Color,
+            WatermarkFontSize = wmLocked ? 48 : wm.FontSize,
+            WatermarkRotation = wmLocked ? -45.0 : wm.Rotation,
+            WatermarkOpacity  = wmLocked ? 0.3 : wm.Opacity,
+            PrintWithWatermark = wmLocked ? true : wm.PrintWithWatermark,
             IsPrintable       = _document.IsPrintable,
+            IsWatermarkLocked = wmLocked,
         };
+
+        // 잠금 해제 콜백 — 기존 VerifyWritePassword() 재사용.
+        if (wmLocked)
+        {
+            info.UnlockWatermarkAction = () =>
+            {
+                if (!VerifyWritePassword()) return;
+                info.WatermarkEnabled  = wm.Enabled;
+                info.WatermarkText     = wm.Text;
+                info.WatermarkColor    = wm.Color;
+                info.WatermarkFontSize = wm.FontSize;
+                info.WatermarkRotation = wm.Rotation;
+                info.WatermarkOpacity  = wm.Opacity;
+                info.PrintWithWatermark = wm.PrintWithWatermark;
+                info.IsWatermarkLocked = false;
+            };
+        }
 
         var dlg = new DocumentInfoWindow(info) { Owner = Application.Current.MainWindow };
         if (dlg.ShowDialog() != true) return;
@@ -518,22 +539,26 @@ public partial class MainViewModel : ObservableObject
         }
 
         // ── 워터마크 ──
-        WatermarkSettings? newWm = info.WatermarkEnabled
-            ? new WatermarkSettings
-            {
-                Enabled  = true,
-                Text     = info.WatermarkText ?? "",
-                Color    = info.WatermarkColor ?? "#FF808080",
-                FontSize = Math.Max(1, info.WatermarkFontSize),
-                Rotation = info.WatermarkRotation,
-                Opacity  = Math.Clamp(info.WatermarkOpacity, 0.0, 1.0),
-                PrintWithWatermark = info.PrintWithWatermark,
-            }
-            : null;
-        if (!WatermarkEquals(_document.Watermark, newWm))
+        // 잠금 상태로 닫힌 경우 모델 필드는 빈 값이므로 _document.Watermark 를 건드리지 않는다.
+        if (!info.IsWatermarkLocked)
         {
-            _document.Watermark = newWm;
-            dirty = true;
+            WatermarkSettings? newWm = info.WatermarkEnabled
+                ? new WatermarkSettings
+                {
+                    Enabled  = true,
+                    Text     = info.WatermarkText ?? "",
+                    Color    = info.WatermarkColor ?? "#FF808080",
+                    FontSize = Math.Max(1, info.WatermarkFontSize),
+                    Rotation = info.WatermarkRotation,
+                    Opacity  = Math.Clamp(info.WatermarkOpacity, 0.0, 1.0),
+                    PrintWithWatermark = info.PrintWithWatermark,
+                }
+                : null;
+            if (!WatermarkEquals(_document.Watermark, newWm))
+            {
+                _document.Watermark = newWm;
+                dirty = true;
+            }
         }
 
         // ── 인쇄 가능 여부 ──

@@ -45,6 +45,9 @@ public partial class DocumentInfoWindow : Window
         UpdatePasswordStatus();
     }
 
+    private void OnUnlockWatermark(object sender, RoutedEventArgs e)
+        => _model.UnlockWatermarkAction?.Invoke();
+
     private void OnOk(object sender, RoutedEventArgs e)     => DialogResult = true;
     private void OnCancel(object sender, RoutedEventArgs e) => DialogResult = false;
 }

@@ -115,6 +115,8 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string DocInfoWmPrintWith  => SR.DocInfoWmPrintWith;
     public string DocInfoIsPrintable  => SR.DocInfoIsPrintable;
     public string DocInfoNotPrintable => SR.DocInfoNotPrintable;
+    public string DocInfoWmLockedHint => SR.DocInfoWmLockedHint;
+    public string DocInfoUnlock       => SR.DocInfoUnlock;
     public string PwdPromptTitle        => SR.PwdPromptTitle;
     public string PwdPromptMessage      => SR.PwdPromptMessage;
     public string PwdPromptInput        => SR.PwdPromptInput;
