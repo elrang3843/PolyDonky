@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using PolyDonky.App.Pagination;
+using PolyDonky.App.Services;
 using PolyDonky.App.ViewModels;
 using PolyDonky.Core;
 using SR = PolyDonky.App.Properties.Resources;
@@ -1206,6 +1207,8 @@ public partial class MainWindow : Window
     /// 새로 계산된 <see cref="_currentPaginatedDoc"/> 의 페이지별 블록 분배가
     /// 현재 페이지 RTB 들과 다르면 true.
     /// 블록 수뿐 아니라 블록 ID 시퀀스까지 비교해 "개수는 같지만 다른 블록으로 채워진" 경우도 검출한다.
+    /// 다단의 경우: 페이지당 단 수 × 페이지 수 = 총 RTB 수이므로 각 페이지의 모든 단 RTB 에서
+    /// 블록 ID 를 수집해 페이지 전체 블록 목록과 비교한다.
     /// </summary>
     private bool NeedsPageRebuild()
     {
@@ -1215,22 +1218,41 @@ public partial class MainWindow : Window
         int oldPageCount = PageEditorHost.PageCount;
         if (newPageCount != oldPageCount) return true;
 
-        var rtbs = PageEditorHost.PageEditors;
+        int colCount = _pageGeometry?.ColumnCount ?? 1;
+        var rtbs     = PageEditorHost.PageEditors;
+
         for (int i = 0; i < newPageCount; i++)
         {
             var newPage = _currentPaginatedDoc.Pages[i];
-            var oldIds  = CollectBodyBlockIds(rtbs[i].Document.Blocks);
 
-            if (newPage.BodyBlocks.Count != oldIds.Count) return true;
-
-            for (int j = 0; j < newPage.BodyBlocks.Count; j++)
+            if (colCount <= 1)
             {
-                var newId = newPage.BodyBlocks[j].Source.Id;
-                var oldId = oldIds[j];
-                // 둘 다 ID 가 있으면 직접 비교. 하나라도 null 이면 신규 단락(Enter/붙여넣기)이므로
-                // ID 로 판단 불가 — 이 위치는 카운트 일치로만 체크한다.
-                if (newId != null && oldId != null && newId != oldId)
-                    return true;
+                // 단일 단: RTB 인덱스 == 페이지 인덱스
+                if (i >= rtbs.Count) return true;
+                var oldIds = CollectBodyBlockIds(rtbs[i].Document.Blocks);
+
+                if (newPage.BodyBlocks.Count != oldIds.Count) return true;
+
+                for (int j = 0; j < newPage.BodyBlocks.Count; j++)
+                {
+                    var newId = newPage.BodyBlocks[j].Source.Id;
+                    var oldId = oldIds[j];
+                    // 둘 다 ID 가 있으면 직접 비교. 하나라도 null 이면 신규 단락이므로 카운트만 체크.
+                    if (newId != null && oldId != null && newId != oldId)
+                        return true;
+                }
+            }
+            else
+            {
+                // 다단: 이 페이지에 속한 모든 단 RTB 의 블록을 합산해 비교
+                int oldCount = 0;
+                for (int col = 0; col < colCount; col++)
+                {
+                    int rtbIdx = i * colCount + col;
+                    if (rtbIdx < rtbs.Count)
+                        oldCount += CollectBodyBlockIds(rtbs[rtbIdx].Document.Blocks).Count;
+                }
+                if (newPage.BodyBlocks.Count != oldCount) return true;
             }
         }
         return false;

@@ -27,6 +27,16 @@ public sealed class PageGeometry
     public double PadRightDip    { get; }
     public double PadBottomDip   { get; }
 
+    /// <summary>단 수 (≥ 1).</summary>
+    public int    ColumnCount    { get; }
+    /// <summary>단 너비 (DIP). 단일 단이면 전체 본문 폭.</summary>
+    public double ColWidthDip    { get; }
+    /// <summary>단 간격 (DIP). 단일 단이면 0.</summary>
+    public double ColGapDip      { get; }
+
+    /// <summary>단 인덱스에 해당하는 본문 영역(PadLeft 이후) 기준 X 오프셋 (DIP).</summary>
+    public double ColumnXOffsetDip(int colIdx) => colIdx * (ColWidthDip + ColGapDip);
+
     /// <summary>페이지 N 의 절대 Y 시작 위치. = N × (pageHeight + gap).</summary>
     public double PageStrideDip  => PageHeightDip + InterPageGapDip;
 
@@ -39,6 +49,13 @@ public sealed class PageGeometry
         PadTopDip     = FlowDocumentBuilder.MmToDip(page.MarginTopMm);
         PadRightDip   = FlowDocumentBuilder.MmToDip(page.MarginRightMm);
         PadBottomDip  = FlowDocumentBuilder.MmToDip(page.MarginBottomMm);
+
+        ColumnCount = Math.Max(1, page.ColumnCount);
+        ColGapDip   = ColumnCount > 1 ? FlowDocumentBuilder.MmToDip(page.ColumnGapMm) : 0.0;
+        double bodyW = Math.Max(1.0, PageWidthDip - PadLeftDip - PadRightDip);
+        ColWidthDip  = ColumnCount > 1
+            ? Math.Max(10.0, (bodyW - ColGapDip * (ColumnCount - 1)) / ColumnCount)
+            : bodyW;
     }
 
     /// <summary>(페이지 인덱스, 페이지 로컬 mm) → PaperHost 절대 DIP 좌표.</summary>

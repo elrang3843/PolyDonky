@@ -57,19 +57,16 @@ public static class FlowDocumentPaginationAdapter
         // 2. DocumentPaginator 로 정확한 페이지 수 산출
         int pageCount = ComputePageCountSync(fd, geo);
 
-        // 3. 오프스크린 RichTextBox 에서 본문 블록 Y 좌표 측정 → 페이지 배정
-        // DocumentPaginator 용으로 설정한 PageWidth(전체 용지 폭)를 본문 폭으로 리셋한다.
-        // PageWidth = 전체 폭으로 두면 오프스크린 RTB 의 줄바꿈이 실제 페이지 RTB 보다 적게
-        // 일어나 Y 좌표가 낮게 측정되고, 결과적으로 모든 블록이 page 0 에 배정돼 버린다.
-        double measureW = Math.Max(1.0, geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip);
-        fd.PageWidth   = measureW;
+        // 3. 오프스크린 RichTextBox 에서 본문 블록 Y 좌표 측정 → (페이지, 단) 배정.
+        // 측정 폭은 단 폭(geo.ColWidthDip) — 단일 단이면 본문 폭과 동일.
+        // 전체 용지 폭으로 두면 줄바꿈이 적게 일어나 Y 좌표가 실제 단 RTB 와 달라진다.
+        fd.PageWidth   = geo.ColWidthDip;
         fd.PagePadding = new Thickness(0);
         var bodyAssignments = MapBodyBlocksToPages(fd, geo, pageCount);
 
         // 본문 블록의 실제 배치 결과로 pageCount 보정.
-        // DocumentPaginator(풀 페이지+여백) 와 오프스크린 RTB(bodyH) 측정이 미세하게 어긋나
-        // 본문 블록이 DocumentPaginator 산출 pageCount 를 넘는 페이지로 떨어질 수 있다.
-        // 이 경우 페이지 수를 늘려서 마지막 페이지에 강제 배정·클립되는 것을 막는다.
+        // DocumentPaginator(풀 페이지+여백) 와 오프스크린 RTB(단 폭·단 슬롯 높이) 측정이
+        // 미세하게 어긋나 블록이 DocumentPaginator 산출 pageCount 를 넘는 페이지로 떨어질 수 있다.
         if (bodyAssignments.Count > 0)
         {
             int maxBodyPage = bodyAssignments.Max(b => b.pageIdx) + 1;
@@ -127,22 +124,23 @@ public static class FlowDocumentPaginationAdapter
         }
     }
 
-    // ── 본문 블록 → 페이지 매핑 ──────────────────────────────────────────────
+    // ── 본문 블록 → 페이지·단 매핑 ──────────────────────────────────────────
 
-    private static List<(int pageIdx, Block coreBlock, Rect bodyLocalRect)> MapBodyBlocksToPages(
-        WpfDocs.FlowDocument fd, PageGeometry geo, int pageCount)
+    private static List<(int pageIdx, int colIdx, Block coreBlock, Rect bodyLocalRect)>
+        MapBodyBlocksToPages(WpfDocs.FlowDocument fd, PageGeometry geo, int pageCount)
     {
-        var result = new List<(int, Block, Rect)>();
+        var result = new List<(int, int, Block, Rect)>();
 
-        // 연속 스크롤 공간에서 "페이지당 본문 높이" = pageHeight - padTop - padBottom
+        // 연속 스크롤 공간에서 "단 슬롯 높이" = pageHeight - padTop - padBottom
         double bodyH = geo.PageHeightDip - geo.PadTopDip - geo.PadBottomDip;
         if (bodyH <= 0) bodyH = geo.PageHeightDip;
-        double bodyW = geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip;
-        if (bodyW <= 0) bodyW = geo.PageWidthDip;
 
-        // 오프스크린 RichTextBox 에서 Measure/Arrange → TextPointer.GetCharacterRect 활성화.
-        // 측정 폭은 반드시 bodyW (본문 영역 폭) — PageWidthDip(전체 폭) 로 측정하면 줄바꿈이
-        // 적게 일어나 Y 좌표가 실제 페이지네이터 / 온스크린 RTB 와 달라진다.
+        int    colCount  = geo.ColumnCount;
+        double colWidth  = geo.ColWidthDip;
+
+        // 오프스크린 RichTextBox — 측정 폭은 단 폭(colWidth).
+        // 다단일 때 전체 본문 폭으로 측정하면 줄바꿈이 적게 일어나
+        // Y 좌표가 실제 단 레이아웃과 달라진다.
         var rtb = new RichTextBox
         {
             Document          = fd,
@@ -150,7 +148,7 @@ public static class FlowDocumentPaginationAdapter
             BorderThickness   = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Top,
         };
-        rtb.Measure(new Size(bodyW, double.PositiveInfinity));
+        rtb.Measure(new Size(colWidth, double.PositiveInfinity));
         rtb.Arrange(new Rect(rtb.DesiredSize));
 
         foreach (var wpfBlock in FlattenBlocks(fd.Blocks))
@@ -161,38 +159,33 @@ public static class FlowDocumentPaginationAdapter
             double topY    = TryGetTopY(wpfBlock);
             double bottomY = TryGetBottomY(wpfBlock);
             int    pageIdx;
+            int    colIdx;
 
             if (double.IsNaN(topY))
             {
                 pageIdx = 0;
+                colIdx  = 0;
             }
             else
             {
-                // 자연 페이지 = topY 가 떨어지는 본문 페이지(여백 제외 bodyH 기준).
-                // 상한 클램프를 두지 않는다 — DocumentPaginator(여백 포함 풀 페이지로 측정) 와
-                // 오프스크린 RTB(여백 제외 bodyH 로 측정) 의 누적 Y 가 미세하게 다를 때
-                // pageCount-1 로 클램프하면 마지막 페이지에 넘치는 블록이 강제 배정되어 클립된다.
-                // 호출자(Paginate) 가 bodyAssignments 의 max pageIdx 로 pageCount 를 보정한다.
-                int topPage = Math.Max(0, (int)(topY / bodyH));
+                // 연속 스크롤 공간에서 "단 슬롯" 인덱스 (단 슬롯 = 단 × 페이지).
+                // 상한 클램프 없음 — 호출자(Paginate) 가 max pageIdx 로 pageCount 를 보정한다.
+                int slotTop = Math.Max(0, (int)(topY / bodyH));
 
-                // 블록이 페이지 경계를 넘고(bottomY > 다음 페이지 시작),
-                // 한 페이지에 들어갈 만큼 작으면 다음 페이지로 이동한다.
-                // DocumentPaginator 는 줄 단위로 나누지만 여기서는 블록 단위 이동으로 근사 —
-                // 빈 페이지보다 블록이 올바른 페이지에 놓이는 쪽이 시각적으로 훨씬 낫다.
+                // 블록이 단 슬롯 경계를 넘고 한 슬롯에 들어갈 만큼 작으면 다음 슬롯으로 이동.
                 if (!double.IsNaN(bottomY)
-                    && bottomY > (topPage + 1) * bodyH
+                    && bottomY > (slotTop + 1) * bodyH
                     && (bottomY - topY) < bodyH)
                 {
-                    pageIdx = topPage + 1;
+                    slotTop += 1;
                 }
-                else
-                {
-                    pageIdx = topPage;
-                }
+
+                pageIdx = slotTop / colCount;
+                colIdx  = slotTop % colCount;
             }
 
-            var bodyLocalRect = TryGetBodyLocalRect(wpfBlock, pageIdx, bodyH, bodyW);
-            result.Add((pageIdx, coreBlock, bodyLocalRect));
+            var bodyLocalRect = TryGetColumnLocalRect(wpfBlock, pageIdx, colIdx, bodyH, colWidth, colCount);
+            result.Add((pageIdx, colIdx, coreBlock, bodyLocalRect));
         }
 
         // RichTextBox 분리 (FlowDocument 재사용을 위해)
@@ -249,12 +242,12 @@ public static class FlowDocumentPaginationAdapter
     }
 
     /// <summary>
-    /// 연속 스크롤 공간에서 블록의 전체 경계 상자를 측정해 페이지-본문 기준 Rect 로 변환한다.
-    /// 페이지 경계를 넘어서는 블록은 현재 페이지 본문 높이로 잘린다.
+    /// 연속 스크롤 공간에서 블록의 경계 상자를 측정해 해당 단 슬롯 기준 Rect 로 변환한다.
+    /// 단 슬롯 경계를 넘어서는 블록은 슬롯 높이로 잘린다.
     /// 측정 실패 시 <see cref="Rect.Empty"/> 반환.
     /// </summary>
-    private static Rect TryGetBodyLocalRect(
-        WpfDocs.Block block, int pageIdx, double bodyH, double bodyW)
+    private static Rect TryGetColumnLocalRect(
+        WpfDocs.Block block, int pageIdx, int colIdx, double bodyH, double colWidth, int colCount)
     {
         try
         {
@@ -271,13 +264,15 @@ public static class FlowDocumentPaginationAdapter
                 ? botRect.Bottom
                 : globalTop;
 
-            double pageOriginY = pageIdx * bodyH;
-            double localTop    = globalTop - pageOriginY;
-            // 페이지 경계를 넘어서는 부분은 이 페이지에서 잘림
-            double localBottom = Math.Min(globalBottom - pageOriginY, bodyH);
+            // 단 슬롯 인덱스 (다단에서 페이지·단을 통합 순서로 열거)
+            int    slotIdx     = pageIdx * colCount + colIdx;
+            double slotOriginY = slotIdx * bodyH;
+            double localTop    = globalTop - slotOriginY;
+            // 슬롯 경계를 넘어서는 부분은 잘림
+            double localBottom = Math.Min(globalBottom - slotOriginY, bodyH);
             double height      = Math.Max(0, localBottom - localTop);
 
-            return new Rect(0, localTop, bodyW, height);
+            return new Rect(0, localTop, colWidth, height);
         }
         catch
         {
@@ -325,9 +320,9 @@ public static class FlowDocumentPaginationAdapter
     // ── PaginatedPage 조립 ───────────────────────────────────────────────────
 
     private static IReadOnlyList<PaginatedPage> BuildPages(
-        int                                                          pageCount,
-        List<(int pageIdx, Block coreBlock, Rect bodyLocalRect)>     bodyAssignments,
-        List<(int pageIdx, Block coreBlock, double xMm, double yMm)> overlayAssignments)
+        int                                                                    pageCount,
+        List<(int pageIdx, int colIdx, Block coreBlock, Rect bodyLocalRect)>  bodyAssignments,
+        List<(int pageIdx, Block coreBlock, double xMm, double yMm)>          overlayAssignments)
     {
         var pages = new PaginatedPage[pageCount];
         for (int i = 0; i < pageCount; i++)
@@ -341,6 +336,7 @@ public static class FlowDocumentPaginationAdapter
                     {
                         Source        = b.coreBlock,
                         PageIndex     = i,
+                        ColumnIndex   = b.colIdx,
                         BodyLocalRect = b.bodyLocalRect,
                     })
                     .ToArray(),

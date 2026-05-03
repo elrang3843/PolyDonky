@@ -80,15 +80,6 @@ public static class FlowDocumentBuilder
             catch { /* 파싱 실패 시 기본 배경 유지 */ }
         }
 
-        // 다단 — FlowDocument.ColumnWidth 로 단 너비 지정
-        // (RichTextBox 에서는 시각적 효과가 제한적이나 PageViewer/Print 에서 적용됨)
-        if (page.ColumnCount > 1)
-        {
-            double gapDip = MmToDip(page.ColumnGapMm);
-            fd.ColumnWidth = Math.Max(10, (contentWDip - gapDip * (page.ColumnCount - 1)) / page.ColumnCount);
-            fd.ColumnGap   = gapDip;
-        }
-
         foreach (var section in document.Sections)
         {
             BuildSection(fd, section, outlineStyles);

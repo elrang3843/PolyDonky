@@ -225,8 +225,8 @@ public static class PageViewBuilder
     {
         try
         {
-            if (WpfColor.TryParse(colorHex, out var c))
-                return new SolidColorBrush(c) { Opacity = opacity };
+            var c = (WpfColor)System.Windows.Media.ColorConverter.ConvertFromString(colorHex)!;
+            return new SolidColorBrush(c) { Opacity = opacity };
         }
         catch { }
         return new SolidColorBrush(Colors.Gray) { Opacity = opacity };
