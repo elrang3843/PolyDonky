@@ -123,6 +123,14 @@ public sealed class TextBoxObject : Block, IOverlayAnchored
     public double PieStartAngleDeg { get; set; } = 0;
     public double PieSweepAngleDeg { get; set; } = 270;
 
+    // ── 다단 (글상자 내부 다단 레이아웃) ─────────────────────────────────────
+    /// <summary>단 수. 1 이면 단일 단(기본값), 2 이상이면 다단.</summary>
+    public int ColumnCount { get; set; } = 1;
+    /// <summary>단 간격 (mm). 단일 단이면 무시.</summary>
+    public double ColumnGapMm { get; set; } = 5.0;
+    /// <summary>각 단의 너비 (mm). null/빈 = 균등 배분. 길이가 ColumnCount 와 다르면 균등 배분.</summary>
+    public List<double>? ColumnWidthsMm { get; set; }
+
     /// <summary>본문 블록. 최소 1개의 빈 Paragraph 를 포함하도록 기본값 설정.</summary>
     public IList<Block> Content { get; set; } = new List<Block> { new Paragraph() };
 

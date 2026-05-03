@@ -307,6 +307,34 @@
             </ComboBox>
         </Grid>
 
+        <!-- ── 다단 (글상자 내부 다단 레이아웃) ── -->
+        <TextBlock Text="다단" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="단 수 (1~4)" VerticalAlignment="Center" />
+            <TextBox x:Name="TxtColumnCount"
+                     Grid.Column="1"
+                     Padding="4,3"
+                     Background="{DynamicResource SurfaceAlt}"
+                     Foreground="{DynamicResource OnSurface}"
+                     BorderBrush="{DynamicResource Divider}"
+                     TextAlignment="Center" />
+            <TextBlock Grid.Column="3" Text="단 간격 (mm)" VerticalAlignment="Center" />
+            <TextBox x:Name="TxtColumnGap"
+                     Grid.Column="4"
+                     Padding="4,3"
+                     Background="{DynamicResource SurfaceAlt}"
+                     Foreground="{DynamicResource OnSurface}"
+                     BorderBrush="{DynamicResource Divider}"
+                     TextAlignment="Center" />
+        </Grid>
+
         <!-- ── 회전 ── -->
         <TextBlock Text="회전" FontWeight="SemiBold" Margin="0,0,0,6" />
 

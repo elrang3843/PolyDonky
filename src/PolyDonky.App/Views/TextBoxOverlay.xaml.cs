@@ -250,11 +250,26 @@ public partial class TextBoxOverlay : UserControl
     public event EventHandler? AppearanceChangedCommitted;
 
     private bool _suppressTextChanged;
+    private bool _liveReflowQueued;
+
+    /// <summary>다단 모드 여부 — Model.ColumnCount &gt; 1.</summary>
+    private bool IsMultiCol => Model.ColumnCount > 1;
+
+    /// <summary>현재 키보드 포커스를 가진 편집기 (다단/단일 자동 분기).</summary>
+    private RichTextBox ActiveEditor =>
+        IsMultiCol ? (MultiColHost.ActiveEditor ?? MultiColHost.FirstEditor ?? InnerEditor)
+                   : InnerEditor;
+
+    /// <summary>모든 편집기 (다단=N개, 단일=1개).</summary>
+    private IReadOnlyList<RichTextBox> AllEditors =>
+        IsMultiCol ? MultiColHost.Editors : new[] { InnerEditor };
 
     public TextBoxOverlay(TextBoxObject model)
     {
         Model = model ?? throw new ArgumentNullException(nameof(model));
         InitializeComponent();
+
+        MultiColHost.ColumnTextChanged += OnColumnTextChanged;
 
         // 초기 텍스트 로드 (plain text → FlowDocument)
         _suppressTextChanged = true;
@@ -269,6 +284,8 @@ public partial class TextBoxOverlay : UserControl
             // 비사각형 모양은 인셋이 박스 크기에 비례하므로 크기 변경 시 재계산.
             if (Model.Shape != TextBoxShape.Rectangle)
                 UpdateInnerEditorMargin();
+            // 다단 모드는 박스 크기 변경에 따라 단 너비/높이가 달라지므로 재배치.
+            if (IsMultiCol) ScheduleColumnReflow();
         };
     }
 
@@ -284,7 +301,7 @@ public partial class TextBoxOverlay : UserControl
             _isSelected = value;
             SelectionFrame.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
             HandlesCanvas.Visibility  = value ? Visibility.Visible : Visibility.Collapsed;
-            if (!value && InnerEditor.IsKeyboardFocusWithin)
+            if (!value && (InnerEditor.IsKeyboardFocusWithin || MultiColHost.IsKeyboardFocusWithin))
                 Keyboard.ClearFocus();
         }
     }
@@ -293,8 +310,9 @@ public partial class TextBoxOverlay : UserControl
     public void BeginEditing()
     {
         IsSelected = true;
-        InnerEditor.Focus();
-        Keyboard.Focus(InnerEditor);
+        var ed = ActiveEditor;
+        ed.Focus();
+        Keyboard.Focus(ed);
     }
 
     // ── 모양/배경/테두리 적용 ────────────────────────────────────────
@@ -346,6 +364,27 @@ public partial class TextBoxOverlay : UserControl
                 ShapePath.Fill = Brushes.White;
         }
 
+        // ── 다단 / 단일 단 분기 ─────────────────────────────────────────
+        // ColumnCount > 1 이면 InnerEditor 숨기고 MultiColHost 활성화.
+        if (IsMultiCol)
+        {
+            InnerEditor.Visibility = Visibility.Collapsed;
+            MultiColHost.Visibility = Visibility.Visible;
+            // 단일→다단 전환 직후 또는 박스 크기 변경 직후에는 콘텐츠를 다시 채워야 함.
+            // (콘텐츠가 InnerEditor 에만 있고 MultiColHost 가 비어 있을 수 있으므로)
+            if (MultiColHost.Editors.Count == 0)
+            {
+                _suppressTextChanged = true;
+                try { LoadMultiColContent(); }
+                finally { _suppressTextChanged = false; }
+            }
+        }
+        else
+        {
+            InnerEditor.Visibility = Visibility.Visible;
+            MultiColHost.Visibility = Visibility.Collapsed;
+        }
+
         // ── 안쪽 여백 (Margin = padding + shape inset) ────────────────
         UpdateInnerEditorMargin();
 
@@ -357,23 +396,28 @@ public partial class TextBoxOverlay : UserControl
             TextBoxHAlign.Justify => System.Windows.TextAlignment.Justify,
             _                     => System.Windows.TextAlignment.Left,
         };
-        InnerEditor.Document.TextAlignment = ta;
-        foreach (var b in InnerEditor.Document.Blocks)
-            if (b is System.Windows.Documents.Paragraph wp) wp.TextAlignment = ta;
+        foreach (var ed in AllEditors)
+        {
+            ed.Document.TextAlignment = ta;
+            foreach (var b in ed.Document.Blocks)
+                if (b is System.Windows.Documents.Paragraph wp) wp.TextAlignment = ta;
+        }
 
         // ── 세로 정렬 ─────────────────────────────────────────────────
         // RichTextBox 는 VerticalContentAlignment 를 지원하지 않으므로
         // VerticalAlignment(Stretch/Center/Bottom) 로 컨테이너 내 위치를 제어.
-        // 내용이 박스보다 클 때는 세 경우 모두 스크롤 동작.
         InnerEditor.VerticalAlignment = Model.VAlign switch
         {
             TextBoxVAlign.Middle => VerticalAlignment.Center,
             TextBoxVAlign.Bottom => VerticalAlignment.Bottom,
             _                    => VerticalAlignment.Stretch,
         };
+        // 다단 모드는 호스트가 단들을 가로로 배치하므로 세로 정렬은 호스트 자체에 적용.
+        MultiColHost.VerticalAlignment = InnerEditor.VerticalAlignment;
 
         // 글자 방향은 추후 지원 예정 — 현재 항상 LTR.
         InnerEditor.FlowDirection = FlowDirection.LeftToRight;
+        MultiColHost.FlowDirection = FlowDirection.LeftToRight;
 
         // ── 회전 ───────────────────────────────────────────────────────
         // 박스 중심을 피벗으로 모양·본문 모두 함께 회전. 0이면 transform 제거.
@@ -406,13 +450,16 @@ public partial class TextBoxOverlay : UserControl
 
     private void LoadModelTextToEditor()
     {
+        if (IsMultiCol)
+        {
+            LoadMultiColContent();
+            return;
+        }
+
+        // 단일 단 — 기존 경로.
         // 글자 방향은 추후 지원 예정 — 현재 항상 LTR.
         // 본문(MainWindow) 와 동일한 Run 빌더를 써서 글자 속성(폰트·크기·볼드·이탤릭·
         // 색·밑줄 등) 을 그대로 FlowDocument 에 반영한다.
-        // 추가로 각 Wpf.Run.Tag 에 원본 PolyDonky.Run 을 심어둔다 — 라운드트립 시
-        // FlowDocumentParser 가 Tag 를 우선 시드로 사용해 비-Wpf 속성(LetterSpacingPx,
-        // WidthPercent 등) 까지 정확히 복원하고, WPF 의 inheritance 로 인한 미세한
-        // 속성 drift(폰트 패밀리 자동 stamping 등) 도 막을 수 있다.
         var doc = new System.Windows.Documents.FlowDocument();
         foreach (var block in Model.Content)
         {
@@ -438,16 +485,191 @@ public partial class TextBoxOverlay : UserControl
         InnerEditor.Document = doc;
     }
 
+    /// <summary>다단 모드 — 콘텐츠를 단별로 분배해 MultiColHost 채우기.</summary>
+    private void LoadMultiColContent()
+    {
+        var (innerW, innerH) = ComputeInnerArea();
+        if (innerW <= 0 || innerH <= 0) return;
+
+        double colGap   = Model.ColumnGapMm * DipsPerMm;
+        var widthsDip   = Model.ColumnWidthsMm?.Select(mm => mm * DipsPerMm).ToList();
+
+        var slices = TextBoxColumnLayout.Distribute(
+            Model.Content, Model.ColumnCount, innerW, innerH, colGap, widthsDip);
+
+        MultiColHost.SetupColumns(slices, ConfigureColumnRtb);
+    }
+
+    /// <summary>각 단 RTB 생성 직후 호출되는 콜백 — 이벤트·속성 설정.</summary>
+    private void ConfigureColumnRtb(RichTextBox rtb)
+    {
+        rtb.SpellCheck.IsEnabled = false;
+        rtb.FontFamily = InnerEditor.FontFamily;
+        rtb.FlowDirection = FlowDirection.LeftToRight;
+        // 본문 컨텍스트 메뉴는 InnerEditor 와 동일한 항목으로 (글자/문단 속성).
+        rtb.ContextMenu = InnerEditor.ContextMenu;
+        // 단락 정렬은 ApplyShapeFromModel 에서 일괄 적용.
+    }
+
     private void SyncEditorToModel()
     {
-        // 본문 파서를 재사용해 InnerEditor 의 FlowDocument 를 PolyDonky.Core.Block
-        // 트리로 변환 — 글자 속성(폰트·볼드·이탤릭·색·밑줄 등) 과 단락 구조를 그대로 보존.
+        if (IsMultiCol)
+        {
+            SyncMultiColContentToModel();
+            return;
+        }
+
+        // 단일 단 — 기존 경로.
         var parsed = PolyDonky.App.Services.FlowDocumentParser.Parse(InnerEditor.Document);
         Model.Content.Clear();
         foreach (var b in parsed.Sections.FirstOrDefault()?.Blocks ?? new List<PolyDonky.Core.Block>())
             Model.Content.Add(b);
         if (Model.Content.Count == 0)
             Model.Content.Add(new PolyDonky.Core.Paragraph());
+    }
+
+    /// <summary>다단 모드 — 모든 단의 RTB 를 파싱하고 frag0/frag1 단락 머지 후 모델 갱신.</summary>
+    private void SyncMultiColContentToModel()
+    {
+        var rawBlocks = new List<PolyDonky.Core.Block>();
+        foreach (var rtb in MultiColHost.Editors)
+        {
+            var parsed = PolyDonky.App.Services.FlowDocumentParser.Parse(rtb.Document);
+            if (parsed.Sections.FirstOrDefault() is { } sec)
+                foreach (var b in sec.Blocks)
+                    rawBlocks.Add(b);
+        }
+
+        Model.Content.Clear();
+        foreach (var b in MergeColumnFragments(rawBlocks))
+            Model.Content.Add(b);
+        if (Model.Content.Count == 0)
+            Model.Content.Add(new PolyDonky.Core.Paragraph());
+    }
+
+    /// <summary>
+    /// 본문 다단의 <c>MainWindow.MergeColumnFragments</c> 와 동일 로직 — frag1+frag2 재결합.
+    /// </summary>
+    private static IEnumerable<PolyDonky.Core.Block> MergeColumnFragments(
+        IList<PolyDonky.Core.Block> blocks)
+    {
+        const string FragSep   = "§f";
+        const string GenPrefix = "§g";
+
+        var result    = new List<PolyDonky.Core.Block>();
+        var openFrags = new Dictionary<string, PolyDonky.Core.Paragraph>();
+
+        foreach (var block in blocks)
+        {
+            if (block is PolyDonky.Core.Paragraph p && p.Id is { } id)
+            {
+                int sepIdx = id.LastIndexOf(FragSep, StringComparison.Ordinal);
+                if (sepIdx >= 0)
+                {
+                    string groupId    = id[..sepIdx];
+                    string fragIdxStr = id[(sepIdx + FragSep.Length)..];
+                    bool   isFirst    = fragIdxStr == "0";
+
+                    if (isFirst)
+                    {
+                        p.Id = groupId.StartsWith(GenPrefix, StringComparison.Ordinal) ? null : groupId;
+                        result.Add(p);
+                        openFrags[groupId] = p;
+                    }
+                    else
+                    {
+                        if (openFrags.TryGetValue(groupId, out var target))
+                            foreach (var run in p.Runs) target.Runs.Add(run);
+                        else
+                        {
+                            p.Id = groupId.StartsWith(GenPrefix, StringComparison.Ordinal) ? null : groupId;
+                            result.Add(p);
+                        }
+                    }
+                    continue;
+                }
+            }
+            result.Add(block);
+        }
+        return result;
+    }
+
+    /// <summary>박스 안쪽 영역(여백·모양 인셋 제외) DIP 단위 (W, H).</summary>
+    private (double W, double H) ComputeInnerArea()
+    {
+        double w = ActualWidth, h = ActualHeight;
+        if (double.IsNaN(w) || w <= 0)
+            w = Model.WidthMm * DipsPerMm;
+        if (double.IsNaN(h) || h <= 0)
+            h = Model.HeightMm * DipsPerMm;
+
+        double padL = Model.PaddingLeftMm   * DipsPerMm;
+        double padT = Model.PaddingTopMm    * DipsPerMm;
+        double padR = Model.PaddingRightMm  * DipsPerMm;
+        double padB = Model.PaddingBottomMm * DipsPerMm;
+        var (sl, st, sr, sb) = ComputeShapeInset();
+
+        double innerW = Math.Max(1.0, w - padL - padR - sl - sr);
+        double innerH = Math.Max(1.0, h - padT - padB - st - sb);
+        return (innerW, innerH);
+    }
+
+    /// <summary>다단 라이브 리플로우 — TextChanged 시 콘텐츠 재분배 + RTB 재구성.</summary>
+    private void ScheduleColumnReflow()
+    {
+        if (_liveReflowQueued || _suppressTextChanged) return;
+        if (!IsMultiCol) return;
+        _liveReflowQueued = true;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
+        {
+            _liveReflowQueued = false;
+            try
+            {
+                // 활성 RTB 인덱스 + 캐럿 오프셋 보존
+                int activeIdx = MultiColHost.Editors.IndexOf(MultiColHost.ActiveEditor!);
+                int caretOff  = -1;
+                if (activeIdx >= 0)
+                {
+                    var ed = MultiColHost.Editors[activeIdx];
+                    try
+                    {
+                        caretOff = ed.Document.ContentStart.GetOffsetToPosition(ed.CaretPosition);
+                    }
+                    catch { }
+                }
+
+                // 1) 모든 단 파싱 + frag 머지 → 모델 갱신
+                SyncMultiColContentToModel();
+                // 2) 새 분배로 다시 채움
+                _suppressTextChanged = true;
+                try { LoadMultiColContent(); }
+                finally { _suppressTextChanged = false; }
+
+                // 캐럿 복원 (가능한 만큼만)
+                if (activeIdx >= 0 && activeIdx < MultiColHost.Editors.Count && caretOff > 0)
+                {
+                    var ed = MultiColHost.Editors[activeIdx];
+                    try
+                    {
+                        var pos = ed.Document.ContentStart.GetPositionAtOffset(caretOff)
+                                  ?? ed.Document.ContentEnd;
+                        ed.CaretPosition = pos;
+                        ed.Focus();
+                    }
+                    catch { }
+                }
+            }
+            catch { /* 실패 시 캐시 유지 */ }
+        });
+    }
+
+    private void OnColumnTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (_suppressTextChanged) return;
+        // Model.Content 는 reflow 가 끝난 뒤 SyncMultiColContentToModel 에서 갱신.
+        Model.Status = NodeStatus.Modified;
+        ContentChangedCommitted?.Invoke(this, EventArgs.Empty);
+        ScheduleColumnReflow();
     }
 
     // ── 내부 편집 ────────────────────────────────────────────────────
@@ -494,7 +716,50 @@ public partial class TextBoxOverlay : UserControl
             Model.RotationAngleDeg   = dlg.ResultRotationAngleDeg;
             Model.TextOrientation    = dlg.ResultTextOrientation;
             Model.TextProgression    = dlg.ResultTextProgression;
-            Model.Status             = NodeStatus.Modified;
+
+            // 단 수 / 단 간격 변경 — 단일↔다단 전환 시 콘텐츠 재로드.
+            int oldColCount = Model.ColumnCount;
+            Model.ColumnCount = Math.Max(1, dlg.ResultColumnCount);
+            Model.ColumnGapMm = Math.Max(0, dlg.ResultColumnGapMm);
+            // 단 수가 바뀌면 ColumnWidthsMm(사용자 지정)는 무효화 — 균등 배분으로 리셋.
+            if (Model.ColumnCount != oldColCount)
+                Model.ColumnWidthsMm = null;
+
+            Model.Status = NodeStatus.Modified;
+
+            // 단일→다단 또는 다단→단일 전환 시 콘텐츠를 새 모드로 재로드.
+            if (oldColCount != Model.ColumnCount)
+            {
+                // 기존 편집기에서 모델로 sync (전환 전 마지막 상태 보존)
+                _suppressTextChanged = true;
+                try
+                {
+                    if (oldColCount > 1)
+                    {
+                        // 다단 → 단일: 모든 단 RTB 머지해서 모델에 저장 후 InnerEditor 로 로드
+                        SyncMultiColContentToModel();
+                    }
+                    else
+                    {
+                        // 단일 → 다단: InnerEditor 의 콘텐츠를 모델에 저장
+                        var parsed = PolyDonky.App.Services.FlowDocumentParser.Parse(InnerEditor.Document);
+                        Model.Content.Clear();
+                        foreach (var b in parsed.Sections.FirstOrDefault()?.Blocks
+                                 ?? new List<PolyDonky.Core.Block>())
+                            Model.Content.Add(b);
+                        if (Model.Content.Count == 0)
+                            Model.Content.Add(new PolyDonky.Core.Paragraph());
+                    }
+                    LoadModelTextToEditor();
+                }
+                finally { _suppressTextChanged = false; }
+            }
+            else if (IsMultiCol)
+            {
+                // 단 간격만 바뀐 경우 — 분배 다시.
+                ScheduleColumnReflow();
+            }
+
             ApplyShapeFromModel();
             AppearanceChangedCommitted?.Invoke(this, EventArgs.Empty);
         }
@@ -503,32 +768,34 @@ public partial class TextBoxOverlay : UserControl
     private void OnContextMenuCharFormat(object sender, RoutedEventArgs e)
     {
         // Focus 를 미리 복귀시키면 inactive selection 이 collapse 되므로
-        // 다이얼로그에 InnerEditor 를 그대로 전달 — Selection 포인터는 포커스
+        // 다이얼로그에 활성 편집기 그대로 전달 — Selection 포인터는 포커스
         // 없이도 유효하게 유지된다.
-        // selection 이 비어 있으면 안쪽 텍스트 전체에 적용 — chrome 우클릭 흐름에서
-        // 사용자가 아무것도 선택 안 했어도 시각적으로 결과가 나오도록.
-        if (InnerEditor.Selection.IsEmpty) InnerEditor.SelectAll();
-        var dlg = new CharFormatWindow(InnerEditor) { Owner = Window.GetWindow(this) };
+        var ed = ActiveEditor;
+        if (ed.Selection.IsEmpty) ed.SelectAll();
+        var dlg = new CharFormatWindow(ed) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
             SyncEditorToModel();
             Model.Status = NodeStatus.Modified;
             ContentChangedCommitted?.Invoke(this, EventArgs.Empty);
+            if (IsMultiCol) ScheduleColumnReflow();
         }
-        InnerEditor.Focus();
+        ed.Focus();
     }
 
     private void OnContextMenuParaFormat(object sender, RoutedEventArgs e)
     {
-        if (InnerEditor.Selection.IsEmpty) InnerEditor.SelectAll();
-        var dlg = new ParaFormatWindow(InnerEditor) { Owner = Window.GetWindow(this) };
+        var ed = ActiveEditor;
+        if (ed.Selection.IsEmpty) ed.SelectAll();
+        var dlg = new ParaFormatWindow(ed) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
             SyncEditorToModel();
             Model.Status = NodeStatus.Modified;
             ContentChangedCommitted?.Invoke(this, EventArgs.Empty);
+            if (IsMultiCol) ScheduleColumnReflow();
         }
-        InnerEditor.Focus();
+        ed.Focus();
     }
 
     private void OnContextMenuBringForward(object sender, RoutedEventArgs e)
@@ -686,10 +953,50 @@ public partial class TextBoxOverlay : UserControl
 
     private void OnRootKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Delete && !InnerEditor.IsKeyboardFocusWithin)
+        if (e.Key == Key.Delete
+            && !InnerEditor.IsKeyboardFocusWithin
+            && !MultiColHost.IsKeyboardFocusWithin)
         {
             DeleteRequested?.Invoke(this, EventArgs.Empty);
             e.Handled = true;
+            return;
+        }
+
+        // 다단 모드 — 단 경계 좌/우/상/하 화살표로 인접 단 RTB 로 캐럿 이동.
+        if (IsMultiCol && MultiColHost.IsKeyboardFocusWithin && MultiColHost.ActiveEditor is { } cur)
+        {
+            int idx = MultiColHost.Editors.IndexOf(cur);
+            if (idx < 0) return;
+
+            int targetIdx = -1;
+            bool moveToEnd = false;
+
+            if (e.Key == Key.Right || e.Key == Key.Down)
+            {
+                if (cur.CaretPosition.GetNextInsertionPosition(LogicalDirection.Forward) is null
+                    && idx + 1 < MultiColHost.Editors.Count)
+                {
+                    targetIdx = idx + 1;
+                    moveToEnd = false;
+                }
+            }
+            else if (e.Key == Key.Left || e.Key == Key.Up)
+            {
+                if (cur.CaretPosition.GetNextInsertionPosition(LogicalDirection.Backward) is null
+                    && idx - 1 >= 0)
+                {
+                    targetIdx = idx - 1;
+                    moveToEnd = true;
+                }
+            }
+
+            if (targetIdx >= 0)
+            {
+                var next = MultiColHost.Editors[targetIdx];
+                next.Focus();
+                next.CaretPosition = moveToEnd ? next.Document.ContentEnd : next.Document.ContentStart;
+                e.Handled = true;
+            }
         }
     }
 
@@ -702,7 +1009,9 @@ public partial class TextBoxOverlay : UserControl
         double padB = Model.PaddingBottomMm * DipsPerMm;
 
         var (sl, st, sr, sb) = ComputeShapeInset();
-        InnerEditor.Margin = new Thickness(padL + sl, padT + st, padR + sr, padB + sb);
+        var margin = new Thickness(padL + sl, padT + st, padR + sr, padB + sb);
+        InnerEditor.Margin  = margin;
+        MultiColHost.Margin = margin;
     }
 
     /// <summary>

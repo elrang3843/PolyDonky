@@ -275,6 +275,15 @@ public static class FlowDocumentPaginationAdapter
     /// WPF Paragraph 내에서 Y 좌표 splitY 직전까지의 텍스트 문자 수를 반환한다.
     /// 이진 탐색으로 O(log n) 심볼 위치를 찾은 뒤 TextRange 로 문자 수를 센다.
     /// </summary>
+    /// <summary>외부(글상자 다단 등)에서 동일 분할 로직 재사용을 위한 internal alias.</summary>
+    internal static int FindSplitCharOffsetPublic(WpfDocs.Paragraph wpfPara, double splitY)
+        => FindSplitCharOffset(wpfPara, splitY);
+
+    /// <summary>외부에서 동일 분할 로직 재사용을 위한 internal alias.</summary>
+    internal static (Paragraph first, Paragraph second) SplitCoreParagraphPublic(
+        Paragraph para, int charOffset)
+        => SplitCoreParagraph(para, charOffset);
+
     private static int FindSplitCharOffset(WpfDocs.Paragraph wpfPara, double splitY)
     {
         var start = wpfPara.ContentStart;
