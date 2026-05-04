@@ -814,7 +814,7 @@ public static class FlowDocumentBuilder
 
         canvas.Children.Add(path);
 
-        // 화살촉 (선 계열 — 열린 선에만); path 추가 후 그 위에 그림
+        // 끝모양 (선 계열 — 열린 선에만); path 추가 후 그 위에 그림
         if (shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline)
         {
             var ptsDip = GetPointsDip(shape.Points, wDip, hDip);
@@ -822,7 +822,7 @@ public static class FlowDocumentBuilder
             {
                 ptsDip = new List<Point> { new(0, hDip / 2), new(wDip, hDip / 2) };
             }
-            AddArrowHeads(canvas, shape.StartArrow, shape.EndArrow, ptsDip, strokeBrush, strokeDip);
+            AddArrowHeads(canvas, shape.StartArrow, shape.EndArrow, shape.EndShapeSizeMm, ptsDip, strokeBrush, strokeDip);
         }
 
         // 레이블
@@ -850,6 +850,7 @@ public static class FlowDocumentBuilder
     private static void AddArrowHeads(
         System.Windows.Controls.Canvas canvas,
         ShapeArrow start, ShapeArrow end,
+        double endShapeSizeMm,
         List<Point> ptsDip,
         WpfMedia.Brush strokeBrush,
         double strokeDip)
@@ -857,7 +858,10 @@ public static class FlowDocumentBuilder
         if (start == ShapeArrow.None && end == ShapeArrow.None) return;
         if (ptsDip.Count < 2) return;
 
-        double arrowLen  = Math.Max(strokeDip * 5.0, MmToDip(2.5));
+        // 사용자가 mm 로 명시한 크기가 있으면 그 값 사용, 아니면 선 두께에 비례 (최소 2.5 mm).
+        double arrowLen  = endShapeSizeMm > 0
+            ? MmToDip(endShapeSizeMm)
+            : Math.Max(strokeDip * 5.0, MmToDip(2.5));
         double arrowHalf = arrowLen * 0.38;
 
         if (start != ShapeArrow.None)

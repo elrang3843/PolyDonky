@@ -40,9 +40,10 @@ public partial class ShapePropertiesWindow : Window
         FillColorPicker.ColorText = _shape.FillColor ?? string.Empty;
         TxtFillOpacity.Text       = _shape.FillOpacity.ToString("0.##");
 
-        // ── 화살촉 ────────────────────────────────────────────────────────
+        // ── 끝모양 ────────────────────────────────────────────────────────
         SelectComboByTag(CboStartArrow, _shape.StartArrow.ToString());
         SelectComboByTag(CboEndArrow,   _shape.EndArrow.ToString());
+        TxtEndShapeSize.Text = _shape.EndShapeSizeMm.ToString("0.##");
         bool isLineKind = _shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline;
         GrpArrows.IsEnabled = isLineKind;
 
@@ -108,11 +109,13 @@ public partial class ShapePropertiesWindow : Window
         if (double.TryParse(TxtFillOpacity.Text, out double fo))
             _shape.FillOpacity = Math.Clamp(fo, 0, 1);
 
-        // ── 화살촉 ────────────────────────────────────────────────────────
+        // ── 끝모양 ────────────────────────────────────────────────────────
         if (GetComboTag(CboStartArrow) is string saStr && Enum.TryParse<ShapeArrow>(saStr, out var sa))
             _shape.StartArrow = sa;
         if (GetComboTag(CboEndArrow) is string eaStr && Enum.TryParse<ShapeArrow>(eaStr, out var ea))
             _shape.EndArrow = ea;
+        if (double.TryParse(TxtEndShapeSize.Text, out double esz) && esz >= 0)
+            _shape.EndShapeSizeMm = esz;
 
         // ── 모양 파라미터 ─────────────────────────────────────────────────
         if (int.TryParse(TxtSideCount.Text, out int sc) && sc >= 3) _shape.SideCount = sc;

@@ -27,7 +27,7 @@ public enum StrokeDash
     DashDot,
 }
 
-/// <summary>화살촉 종류 (선·폴리곤선·스플라인 선의 시작/끝에 적용).</summary>
+/// <summary>끝모양 종류 (선·폴리곤선·스플라인 선의 시작/끝에 적용).</summary>
 public enum ShapeArrow
 {
     None,
@@ -113,11 +113,14 @@ public sealed class ShapeObject : Block, IOverlayAnchored
     /// <summary>선 종류 (실선·파선·점선·일점쇄선).</summary>
     public StrokeDash StrokeDash { get; set; } = StrokeDash.Solid;
 
-    /// <summary>시작점 화살촉 (Line/Polyline/Spline 에만 의미 있음).</summary>
+    /// <summary>시작점 끝모양 (Line/Polyline/Spline 에만 의미 있음).</summary>
     public ShapeArrow StartArrow { get; set; } = ShapeArrow.None;
 
-    /// <summary>끝점 화살촉 (Line/Polyline/Spline 에만 의미 있음).</summary>
+    /// <summary>끝점 끝모양 (Line/Polyline/Spline 에만 의미 있음).</summary>
     public ShapeArrow EndArrow { get; set; } = ShapeArrow.None;
+
+    /// <summary>끝모양 크기 (mm). 0 이하면 선 두께에 비례한 자동 크기.</summary>
+    public double EndShapeSizeMm { get; set; } = 0;
 
     // ── 채우기 속성 ───────────────────────────────────────────────────────────
 
