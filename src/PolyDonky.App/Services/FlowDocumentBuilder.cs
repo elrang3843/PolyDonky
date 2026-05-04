@@ -1044,7 +1044,11 @@ public static class FlowDocumentBuilder
             _                       => Math.Max(0, (hDip - lineDip) / 2.0),
         };
 
-        System.Windows.Controls.Canvas.SetLeft(tb, 0);
+        // 사용자 지정 오프셋 (mm) 추가 — 정렬 위치에서 추가로 이동.
+        double leftDip = MmToDip(shape.LabelOffsetXMm);
+        topDip       += MmToDip(shape.LabelOffsetYMm);
+
+        System.Windows.Controls.Canvas.SetLeft(tb, leftDip);
         System.Windows.Controls.Canvas.SetTop (tb, topDip);
         return tb;
     }

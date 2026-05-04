@@ -167,6 +167,12 @@ public sealed class ShapeObject : Block, IOverlayAnchored
     /// <summary>레이블 배경색 hex. null / 빈 문자열이면 배경 없음(투명).</summary>
     public string? LabelBackgroundColor { get; set; }
 
+    /// <summary>레이블 가로 위치 오프셋 (mm). 정렬 기준점에서 양수면 오른쪽, 음수면 왼쪽으로 이동.</summary>
+    public double LabelOffsetXMm { get; set; }
+
+    /// <summary>레이블 세로 위치 오프셋 (mm). 정렬 기준점에서 양수면 아래, 음수면 위로 이동.</summary>
+    public double LabelOffsetYMm { get; set; }
+
     // ── 여백 ─────────────────────────────────────────────────────────────────
 
     /// <summary>위 여백 (mm). Inline/WrapLeft/WrapRight 에서 본문과의 간격.</summary>

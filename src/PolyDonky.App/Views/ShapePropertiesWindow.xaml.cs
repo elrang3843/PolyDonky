@@ -73,6 +73,8 @@ public partial class ShapePropertiesWindow : Window
         ChkLabelItalic.IsChecked = _shape.LabelItalic;
         SelectComboByTag(CboLabelHAlign, _shape.LabelHAlign.ToString());
         SelectComboByTag(CboLabelVAlign, _shape.LabelVAlign.ToString());
+        TxtLabelOffsetX.Text = _shape.LabelOffsetXMm.ToString("0.##");
+        TxtLabelOffsetY.Text = _shape.LabelOffsetYMm.ToString("0.##");
     }
 
     private void OnOk(object sender, RoutedEventArgs e)
@@ -139,6 +141,8 @@ public partial class ShapePropertiesWindow : Window
             _shape.LabelHAlign = lh;
         if (GetComboTag(CboLabelVAlign) is string lvStr && Enum.TryParse<ShapeLabelVAlign>(lvStr, out var lv))
             _shape.LabelVAlign = lv;
+        if (double.TryParse(TxtLabelOffsetX.Text, out double lox)) _shape.LabelOffsetXMm = lox;
+        if (double.TryParse(TxtLabelOffsetY.Text, out double loy)) _shape.LabelOffsetYMm = loy;
 
         _shape.Status = NodeStatus.Modified;
         return true;

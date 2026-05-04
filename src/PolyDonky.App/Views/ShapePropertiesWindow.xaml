@@ -234,6 +234,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <Label Grid.Row="0" Grid.Column="0" Content="텍스트:" VerticalAlignment="Center" />
@@ -268,9 +269,16 @@
                             <ComboBoxItem Tag="Bottom">아래</ComboBoxItem>
                         </ComboBox>
 
-                        <Label Grid.Row="4" Grid.Column="0" Content="배경색:" VerticalAlignment="Center" />
+                        <Label Grid.Row="4" Grid.Column="0" Content="X 오프셋(mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtLabelOffsetX" Grid.Row="4" Grid.Column="1" Margin="4,2"
+                                 ToolTip="정렬 위치에서 양수=오른쪽, 음수=왼쪽" />
+                        <Label Grid.Row="4" Grid.Column="2" Content="Y 오프셋(mm):" VerticalAlignment="Center" />
+                        <TextBox x:Name="TxtLabelOffsetY" Grid.Row="4" Grid.Column="3" Margin="4,2"
+                                 ToolTip="정렬 위치에서 양수=아래, 음수=위" />
+
+                        <Label Grid.Row="5" Grid.Column="0" Content="배경색:" VerticalAlignment="Center" />
                         <ctrl:ColorPickerBox x:Name="LabelBgColorPicker"
-                                             Grid.Row="4" Grid.Column="1"
+                                             Grid.Row="5" Grid.Column="1"
                                              AllowEmpty="True" Margin="4,2" />
                     </Grid>
                 </GroupBox>
