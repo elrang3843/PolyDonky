@@ -643,6 +643,14 @@ public partial class TextBoxOverlay : UserControl
 
     /// <summary>
     /// 본문 다단의 <c>MainWindow.MergeColumnFragments</c> 와 동일 로직 — frag1+frag2 재결합.
+    /// <para>
+    /// WPF 의 엔터 단락 분할(<c>EditingCommands.EnterParagraphBreak</c>) 은 첫째 반쪽이
+    /// 원본 element 를 유지하므로 그 element 의 <c>Tag</c>(=원본 Core.Paragraph) 가 그대로 남는다.
+    /// 둘째 반쪽도 일부 시나리오에서 같은 Tag 가 따라가는 경우가 있어, 두 반쪽 모두 같은
+    /// <c>§f</c> fragIdx 를 갖고 머지에서 §f0 으로 되돌아가는 버그가 발생한다(엔터가
+    /// 시각적으로 사라짐). 같은 group 안에서 같은 fragIdx 가 두 번째로 등장하면 그 단락은
+    /// 사용자의 엔터로 새로 생긴 단락으로 간주해 머지하지 않고 결과에 그대로 추가한다.
+    /// </para>
     /// </summary>
     private static IEnumerable<PolyDonky.Core.Block> MergeColumnFragments(
         IList<PolyDonky.Core.Block> blocks)
@@ -650,8 +658,9 @@ public partial class TextBoxOverlay : UserControl
         const string FragSep   = "§f";
         const string GenPrefix = "§g";
 
-        var result    = new List<PolyDonky.Core.Block>();
-        var openFrags = new Dictionary<string, PolyDonky.Core.Paragraph>();
+        var result      = new List<PolyDonky.Core.Block>();
+        var openFrags   = new Dictionary<string, PolyDonky.Core.Paragraph>();
+        var seenFragIdx = new Dictionary<string, HashSet<string>>();
 
         foreach (var block in blocks)
         {
@@ -662,8 +671,23 @@ public partial class TextBoxOverlay : UserControl
                 {
                     string groupId    = id[..sepIdx];
                     string fragIdxStr = id[(sepIdx + FragSep.Length)..];
-                    bool   isFirst    = fragIdxStr == "0";
 
+                    // 같은 group 의 같은 fragIdx 가 두 번째 등장이면 — WPF 엔터로 분할된
+                    // 두 반쪽이 같은 §f Id 를 공유하는 케이스. 둘째는 사용자가 새로 만든 단락이므로
+                    // §f 머지 대상에서 빼고 그대로 추가한다.
+                    if (!seenFragIdx.TryGetValue(groupId, out var seen))
+                    {
+                        seen = new HashSet<string>(StringComparer.Ordinal);
+                        seenFragIdx[groupId] = seen;
+                    }
+                    if (!seen.Add(fragIdxStr))
+                    {
+                        p.Id = null;
+                        result.Add(p);
+                        continue;
+                    }
+
+                    bool isFirst = fragIdxStr == "0";
                     if (isFirst)
                     {
                         p.Id = groupId.StartsWith(GenPrefix, StringComparison.Ordinal) ? null : groupId;

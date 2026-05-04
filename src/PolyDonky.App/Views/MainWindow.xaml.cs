@@ -1244,8 +1244,9 @@ public partial class MainWindow : Window
         const string FragSep   = "§f";
         const string GenPrefix = "§g";
 
-        var result   = new System.Collections.Generic.List<PolyDonky.Core.Block>();
-        var openFrags = new System.Collections.Generic.Dictionary<string, PolyDonky.Core.Paragraph>();
+        var result      = new System.Collections.Generic.List<PolyDonky.Core.Block>();
+        var openFrags   = new System.Collections.Generic.Dictionary<string, PolyDonky.Core.Paragraph>();
+        var seenFragIdx = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>();
 
         foreach (var block in blocks)
         {
@@ -1256,8 +1257,23 @@ public partial class MainWindow : Window
                 {
                     string groupId     = id[..sepIdx];
                     string fragIdxStr  = id[(sepIdx + FragSep.Length)..];
-                    bool   isFirst     = fragIdxStr == "0";
 
+                    // 같은 group 의 같은 fragIdx 가 두 번째 등장이면 — WPF 엔터 분할로 인해 같은
+                    // §f Id 를 공유하게 된 두 반쪽 중 둘째. 사용자가 새로 만든 단락이므로
+                    // §f 머지 대상에서 빼고 그대로 추가한다(엔터가 시각적으로 사라지는 버그 방지).
+                    if (!seenFragIdx.TryGetValue(groupId, out var seen))
+                    {
+                        seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+                        seenFragIdx[groupId] = seen;
+                    }
+                    if (!seen.Add(fragIdxStr))
+                    {
+                        p.Id = null;
+                        result.Add(p);
+                        continue;
+                    }
+
+                    bool isFirst = fragIdxStr == "0";
                     if (isFirst)
                     {
                         // Id 를 원본으로 복원 (임시 생성 Id 이면 null)
