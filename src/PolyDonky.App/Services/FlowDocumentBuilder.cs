@@ -805,12 +805,6 @@ public static class FlowDocumentBuilder
             Stretch         = WpfMedia.Stretch.None,
         };
 
-        // 화살촉 (선 계열 — 열린 선에만)
-        if (shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline)
-        {
-            ApplyArrows(path, shape.StartArrow, shape.EndArrow);
-        }
-
         // 회전
         if (Math.Abs(shape.RotationAngleDeg) > 0.01)
         {
@@ -819,6 +813,17 @@ public static class FlowDocumentBuilder
         }
 
         canvas.Children.Add(path);
+
+        // 화살촉 (선 계열 — 열린 선에만); path 추가 후 그 위에 그림
+        if (shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline)
+        {
+            var ptsDip = GetPointsDip(shape.Points, wDip, hDip);
+            if (ptsDip.Count < 2 && shape.Kind == ShapeKind.Line)
+            {
+                ptsDip = new List<Point> { new(0, hDip / 2), new(wDip, hDip / 2) };
+            }
+            AddArrowHeads(canvas, shape.StartArrow, shape.EndArrow, ptsDip, strokeBrush, strokeDip);
+        }
 
         // 레이블
         if (!string.IsNullOrWhiteSpace(shape.LabelText))
@@ -842,12 +847,129 @@ public static class FlowDocumentBuilder
         };
     }
 
-    private static void ApplyArrows(WpfShapes.Path path, ShapeArrow start, ShapeArrow end)
+    private static void AddArrowHeads(
+        System.Windows.Controls.Canvas canvas,
+        ShapeArrow start, ShapeArrow end,
+        List<Point> ptsDip,
+        WpfMedia.Brush strokeBrush,
+        double strokeDip)
     {
+        if (start == ShapeArrow.None && end == ShapeArrow.None) return;
+        if (ptsDip.Count < 2) return;
+
+        double arrowLen  = Math.Max(strokeDip * 5.0, MmToDip(2.5));
+        double arrowHalf = arrowLen * 0.38;
+
         if (start != ShapeArrow.None)
-            path.Tag = ("arrows", start, end); // stored for hit-test routing; actual markers drawn via decorators
-        // WPF Path 는 built-in 화살촉이 없으므로 여기서는 스타일 힌트만 저장.
-        // 실제 화살촉 렌더링은 후속 사이클(Adorner/Decorator) 에서 구현한다.
+            AddOneArrowHead(canvas, start, ptsDip[0], ptsDip[1], arrowLen, arrowHalf, strokeBrush, strokeDip);
+
+        if (end != ShapeArrow.None)
+        {
+            int n = ptsDip.Count;
+            AddOneArrowHead(canvas, end, ptsDip[n - 1], ptsDip[n - 2], arrowLen, arrowHalf, strokeBrush, strokeDip);
+        }
+    }
+
+    private static void AddOneArrowHead(
+        System.Windows.Controls.Canvas canvas,
+        ShapeArrow kind,
+        Point tip, Point from,
+        double arrowLen, double arrowHalf,
+        WpfMedia.Brush brush,
+        double strokeDip)
+    {
+        double dx  = tip.X - from.X;
+        double dy  = tip.Y - from.Y;
+        double len = Math.Sqrt(dx * dx + dy * dy);
+        if (len < 0.001) return;
+
+        double ux = dx / len;   // 화살 방향 단위 벡터
+        double uy = dy / len;
+        double px = -uy;        // 수직 방향
+        double py =  ux;
+
+        // 삼각형 밑변 중점
+        double bcx = tip.X - ux * arrowLen;
+        double bcy = tip.Y - uy * arrowLen;
+
+        switch (kind)
+        {
+            case ShapeArrow.Open:
+            {
+                var left  = new Point(bcx + px * arrowHalf, bcy + py * arrowHalf);
+                var right = new Point(bcx - px * arrowHalf, bcy - py * arrowHalf);
+                var pg    = new WpfMedia.PathGeometry();
+                var fig   = new WpfMedia.PathFigure { StartPoint = left };
+                fig.Segments.Add(new WpfMedia.LineSegment(tip,   true));
+                fig.Segments.Add(new WpfMedia.LineSegment(right, true));
+                pg.Figures.Add(fig);
+                canvas.Children.Add(new WpfShapes.Path
+                {
+                    Data            = pg,
+                    Stroke          = brush,
+                    StrokeThickness = strokeDip > 0 ? strokeDip : 1.0,
+                    Fill            = WpfMedia.Brushes.Transparent,
+                    StrokeLineJoin  = WpfMedia.PenLineJoin.Miter,
+                });
+                break;
+            }
+            case ShapeArrow.Filled:
+            {
+                var left  = new Point(bcx + px * arrowHalf, bcy + py * arrowHalf);
+                var right = new Point(bcx - px * arrowHalf, bcy - py * arrowHalf);
+                var pg    = new WpfMedia.PathGeometry();
+                var fig   = new WpfMedia.PathFigure { StartPoint = tip, IsClosed = true, IsFilled = true };
+                fig.Segments.Add(new WpfMedia.LineSegment(left,  true));
+                fig.Segments.Add(new WpfMedia.LineSegment(right, true));
+                pg.Figures.Add(fig);
+                canvas.Children.Add(new WpfShapes.Path
+                {
+                    Data            = pg,
+                    Fill            = brush,
+                    Stroke          = brush,
+                    StrokeThickness = 0,
+                });
+                break;
+            }
+            case ShapeArrow.Diamond:
+            {
+                var midLeft  = new Point(bcx + px * arrowHalf,    bcy + py * arrowHalf);
+                var midRight = new Point(bcx - px * arrowHalf,    bcy - py * arrowHalf);
+                var back     = new Point(tip.X - ux * arrowLen * 2, tip.Y - uy * arrowLen * 2);
+                var pg       = new WpfMedia.PathGeometry();
+                var fig      = new WpfMedia.PathFigure { StartPoint = tip, IsClosed = true, IsFilled = true };
+                fig.Segments.Add(new WpfMedia.LineSegment(midLeft,  true));
+                fig.Segments.Add(new WpfMedia.LineSegment(back,     true));
+                fig.Segments.Add(new WpfMedia.LineSegment(midRight, true));
+                pg.Figures.Add(fig);
+                canvas.Children.Add(new WpfShapes.Path
+                {
+                    Data            = pg,
+                    Fill            = brush,
+                    Stroke          = brush,
+                    StrokeThickness = 0,
+                });
+                break;
+            }
+            case ShapeArrow.Circle:
+            {
+                double r   = arrowHalf;
+                double cx  = tip.X - ux * r;
+                double cy  = tip.Y - uy * r;
+                var ellipse = new WpfShapes.Ellipse
+                {
+                    Width           = r * 2,
+                    Height          = r * 2,
+                    Fill            = brush,
+                    Stroke          = brush,
+                    StrokeThickness = 0,
+                };
+                System.Windows.Controls.Canvas.SetLeft(ellipse, cx - r);
+                System.Windows.Controls.Canvas.SetTop (ellipse, cy - r);
+                canvas.Children.Add(ellipse);
+                break;
+            }
+        }
     }
 
     private static System.Windows.Controls.TextBlock BuildShapeLabel(ShapeObject shape, double wDip, double hDip)
