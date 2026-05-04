@@ -53,6 +53,10 @@
             </MenuItem>
 
             <MenuItem Header="{Binding MenuEdit, Source={x:Static svc:LocalizedStrings.Instance}}">
+                <MenuItem Header="{Binding MenuEditDelete, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnEditDelete"
+                          InputGestureText="Del" />
+                <Separator />
                 <MenuItem Header="{Binding MenuEditCopy, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Command="ApplicationCommands.Copy"
                           InputGestureText="Ctrl+C" />
@@ -62,9 +66,6 @@
                 <MenuItem Header="{Binding MenuEditPaste, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Command="ApplicationCommands.Paste"
                           InputGestureText="Ctrl+V" />
-                <MenuItem Header="{Binding MenuEditDelete, Source={x:Static svc:LocalizedStrings.Instance}}"
-                          Click="OnEditDelete"
-                          InputGestureText="Del" />
                 <Separator />
                 <MenuItem Header="{Binding MenuEditFindReplace, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding FindReplaceCommand}" InputGestureText="Ctrl+F" />
                 <Separator />
