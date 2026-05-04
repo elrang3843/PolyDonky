@@ -60,7 +60,7 @@ public partial class MainWindow
             for (int i = 0; i < pts.Count; i++)
             {
                 var h = CreateHandle($"{VertexHandleTagPrefix}{i}", isVertex: true);
-                PositionVertexHandle(h, shapeCtrl, pts[i]);
+                PositionVertexHandle(h, shapeCtrl, shape, pts[i]);
                 parent.Children.Add(h);
                 _shapeEditHandles.Add(h);
             }
@@ -97,7 +97,7 @@ public partial class MainWindow
             {
                 if (!int.TryParse(tag.AsSpan(1), out int idx)) continue;
                 if (idx < 0 || idx >= _selectedShape.Points.Count) continue;
-                PositionVertexHandle(h, _selectedShapeCtrl, _selectedShape.Points[idx]);
+                PositionVertexHandle(h, _selectedShapeCtrl, _selectedShape, _selectedShape.Points[idx]);
             }
             else
             {
@@ -144,12 +144,15 @@ public partial class MainWindow
         };
     }
 
-    private static void PositionVertexHandle(Rectangle h, FrameworkElement ctrl, ShapePoint pt)
+    private static void PositionVertexHandle(Rectangle h, FrameworkElement ctrl, ShapeObject shape, ShapePoint pt)
     {
         double left = Canvas.GetLeft(ctrl); if (double.IsNaN(left)) left = 0;
         double top  = Canvas.GetTop (ctrl); if (double.IsNaN(top))  top  = 0;
         double cx = left + FlowDocumentBuilder.MmToDip(pt.X);
         double cy = top  + FlowDocumentBuilder.MmToDip(pt.Y);
+
+        ApplyShapeRotation(ref cx, ref cy, ctrl, shape);
+
         Canvas.SetLeft(h, cx - ShapeHandleSize / 2);
         Canvas.SetTop (h, cy - ShapeHandleSize / 2);
     }
@@ -168,8 +171,43 @@ public partial class MainWindow
                   : tag.Contains('B') ? top + hd
                   : top + hd / 2;
 
+        ApplyShapeRotation(ref cx, ref cy, ctrl, shape);
+
         Canvas.SetLeft(h, cx - ShapeHandleSize / 2);
         Canvas.SetTop (h, cy - ShapeHandleSize / 2);
+    }
+
+    /// <summary>
+    /// 도형의 회전 각도를 적용해 (cx, cy) 핸들 위치를 도형 중심 기준으로 회전시킨다.
+    /// FlowDocumentBuilder.BuildShapeVisual 가 canvas 전체에 RenderTransform 으로 회전을
+    /// 적용하므로(원점 0.5,0.5), 핸들도 같은 변환을 따라가야 도형 위에 정확히 얹힌다.
+    /// </summary>
+    private static void ApplyShapeRotation(ref double cx, ref double cy, FrameworkElement ctrl, ShapeObject shape)
+    {
+        double angle = shape.RotationAngleDeg;
+        if (Math.Abs(angle) < 0.01) return;
+
+        double left = Canvas.GetLeft(ctrl); if (double.IsNaN(left)) left = 0;
+        double top  = Canvas.GetTop (ctrl); if (double.IsNaN(top))  top  = 0;
+        double centerX = left + FlowDocumentBuilder.MmToDip(shape.WidthMm)  / 2.0;
+        double centerY = top  + FlowDocumentBuilder.MmToDip(shape.HeightMm) / 2.0;
+
+        double rad = angle * Math.PI / 180.0;
+        double cos = Math.Cos(rad), sin = Math.Sin(rad);
+        double dx = cx - centerX;
+        double dy = cy - centerY;
+        cx = centerX + dx * cos - dy * sin;
+        cy = centerY + dx * sin + dy * cos;
+    }
+
+    /// <summary>캔버스 좌표 델타를 도형 로컬 좌표 델타로 역회전.</summary>
+    private static (double dxLocal, double dyLocal) InverseRotateDelta(double dxCanvas, double dyCanvas, double angleDeg)
+    {
+        if (Math.Abs(angleDeg) < 0.01) return (dxCanvas, dyCanvas);
+        double rad = -angleDeg * Math.PI / 180.0;
+        double cos = Math.Cos(rad), sin = Math.Sin(rad);
+        return (dxCanvas * cos - dyCanvas * sin,
+                dxCanvas * sin + dyCanvas * cos);
     }
 
     // ── 마우스 핸들러 ───────────────────────────────────────────────────
@@ -206,8 +244,12 @@ public partial class MainWindow
         if (handle.Parent is not Canvas canvas) return;
 
         var pos = e.GetPosition(canvas);
-        double dxMm = (pos.X - _handleDragStartCanvasDip.X) / FlowDocumentBuilder.MmToDip(1.0);
-        double dyMm = (pos.Y - _handleDragStartCanvasDip.Y) / FlowDocumentBuilder.MmToDip(1.0);
+        double dxCanvasMm = (pos.X - _handleDragStartCanvasDip.X) / FlowDocumentBuilder.MmToDip(1.0);
+        double dyCanvasMm = (pos.Y - _handleDragStartCanvasDip.Y) / FlowDocumentBuilder.MmToDip(1.0);
+
+        // 회전된 도형은 캔버스 좌표 델타를 도형 로컬 좌표로 역회전해서 처리해야
+        // 핸들 드래그 방향과 변형 결과가 일치한다.
+        var (dxMm, dyMm) = InverseRotateDelta(dxCanvasMm, dyCanvasMm, _selectedShape.RotationAngleDeg);
 
         if (Math.Abs(dxMm) > 0.01 || Math.Abs(dyMm) > 0.01) _handleDragMoved = true;
 
@@ -298,6 +340,17 @@ public partial class MainWindow
         {
             if (moveTop) newY = _handleDragOrigYMm + (_handleDragOrigHMm - ShapeMinSizeMm);
             newH = ShapeMinSizeMm;
+        }
+
+        // 회전된 도형은 회전 중심(원본 bbox 중심)을 그대로 유지해야 시각적 점프가 없다.
+        // 로컬 공간 리사이즈를 그대로 적용하면 RenderTransformOrigin(0.5,0.5)이 이동해
+        // 화면상 도형이 갑자기 튄다. 따라서 newX/newY 를 원본 중심에 다시 정렬한다.
+        if (Math.Abs(_selectedShape.RotationAngleDeg) > 0.01)
+        {
+            double origCenterX = _handleDragOrigXMm + _handleDragOrigWMm / 2.0;
+            double origCenterY = _handleDragOrigYMm + _handleDragOrigHMm / 2.0;
+            newX = origCenterX - newW / 2.0;
+            newY = origCenterY - newH / 2.0;
         }
 
         _selectedShape.OverlayXMm = newX;

@@ -805,13 +805,6 @@ public static class FlowDocumentBuilder
             Stretch         = WpfMedia.Stretch.None,
         };
 
-        // 회전
-        if (Math.Abs(shape.RotationAngleDeg) > 0.01)
-        {
-            path.RenderTransformOrigin = new Point(0.5, 0.5);
-            path.RenderTransform = new WpfMedia.RotateTransform(shape.RotationAngleDeg);
-        }
-
         canvas.Children.Add(path);
 
         // 끝모양 (선 계열 — 열린 선에만); path 추가 후 그 위에 그림
@@ -830,6 +823,13 @@ public static class FlowDocumentBuilder
         {
             var label = BuildShapeLabel(shape, wDip, hDip);
             canvas.Children.Add(label);
+        }
+
+        // 회전 — canvas 전체에 적용해 path·끝모양·레이블이 함께 회전한다.
+        if (Math.Abs(shape.RotationAngleDeg) > 0.01)
+        {
+            canvas.RenderTransformOrigin = new Point(0.5, 0.5);
+            canvas.RenderTransform = new WpfMedia.RotateTransform(shape.RotationAngleDeg);
         }
 
         return canvas;
