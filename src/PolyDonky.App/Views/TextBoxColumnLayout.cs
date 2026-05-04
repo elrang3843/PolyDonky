@@ -125,6 +125,10 @@ public static class TextBoxColumnLayout
         for (int i = 0; i < columnCount; i++) slotBlocks.Add(new List<Block>());
         var slotFill = new Dictionary<int, double>();
 
+        // 직전 블록의 bottomY — topY 가 NaN 인 블록(예: 너비 0 캐럿 마커 §⁠×3)의
+        // 위치 추정에 사용. Rect.Empty 를 반환하는 zero-width 문자에 대한 폴백.
+        double lastKnownBottomY = 0.0;
+
         foreach (var wpfBlock in FlattenBlocks(measureFd.Blocks))
         {
             if (wpfBlock.Tag is not Block coreBlock) continue;
@@ -133,8 +137,14 @@ public static class TextBoxColumnLayout
             double bottomY = TryGetBottomY(wpfBlock);
             if (double.IsNaN(topY))
             {
-                slotBlocks[0].Add(coreBlock);
-                continue;
+                // GetCharacterRect 가 Rect.Empty 를 반환하는 zero-width 콘텐츠(캐럿 마커 등)는
+                // 직전 블록의 bottomY 를 위치 추정치로 사용한다. 슬롯 0 으로 하드코딩하면
+                // 마커가 잘못된 단(column)에 배치되어 캐럿 복원이 틀린 단으로 이동하는 버그 발생.
+                topY = lastKnownBottomY;
+            }
+            else
+            {
+                lastKnownBottomY = (!double.IsNaN(bottomY) && bottomY > topY) ? bottomY : topY;
             }
 
             double blockH  = (!double.IsNaN(bottomY) && bottomY > topY) ? (bottomY - topY) : 0.0;
