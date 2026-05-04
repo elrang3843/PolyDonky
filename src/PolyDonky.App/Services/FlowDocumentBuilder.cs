@@ -89,6 +89,7 @@ public static class FlowDocumentBuilder
             fd.IsColumnWidthFlexible = false;
         }
 
+
         foreach (var section in document.Sections)
         {
             BuildSection(fd, section, outlineStyles);

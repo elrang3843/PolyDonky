@@ -29,6 +29,8 @@ public partial class TextBoxPropertiesWindow : Window
     public double                 ResultRotationAngleDeg   { get; private set; }
     public TextOrientation        ResultTextOrientation    { get; private set; }
     public TextProgression        ResultTextProgression    { get; private set; }
+    public int                    ResultColumnCount        { get; private set; } = 1;
+    public double                 ResultColumnGapMm        { get; private set; } = 5.0;
 
     public TextBoxPropertiesWindow(TextBoxObject model)
     {
@@ -58,6 +60,9 @@ public partial class TextBoxPropertiesWindow : Window
 
         CboTextOrientation.SelectedIndex = (int)model.TextOrientation;
         CboTextProgression.SelectedIndex = (int)model.TextProgression;
+
+        TxtColumnCount.Text = System.Math.Max(1, model.ColumnCount).ToString();
+        TxtColumnGap.Text   = model.ColumnGapMm.ToString("0.##");
 
         UpdateShapePanelVisibility();
 
@@ -196,6 +201,9 @@ public partial class TextBoxPropertiesWindow : Window
         ResultRotationAngleDeg   = ParseAngle(TxtRotationAngle.Text);
         ResultTextOrientation    = (TextOrientation)System.Math.Clamp(CboTextOrientation.SelectedIndex, 0, 1);
         ResultTextProgression    = (TextProgression)System.Math.Clamp(CboTextProgression.SelectedIndex, 0, 1);
+
+        ResultColumnCount = ParseInt(TxtColumnCount.Text, 1, 1, 4);
+        ResultColumnGapMm = ParseMm(TxtColumnGap.Text);
 
         DialogResult = true;
     }

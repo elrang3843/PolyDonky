@@ -57,19 +57,16 @@ public static class FlowDocumentPaginationAdapter
         // 2. DocumentPaginator 로 정확한 페이지 수 산출
         int pageCount = ComputePageCountSync(fd, geo);
 
-        // 3. 오프스크린 RichTextBox 에서 본문 블록 Y 좌표 측정 → 페이지 배정
-        // DocumentPaginator 용으로 설정한 PageWidth(전체 용지 폭)를 본문 폭으로 리셋한다.
-        // PageWidth = 전체 폭으로 두면 오프스크린 RTB 의 줄바꿈이 실제 페이지 RTB 보다 적게
-        // 일어나 Y 좌표가 낮게 측정되고, 결과적으로 모든 블록이 page 0 에 배정돼 버린다.
-        double measureW = Math.Max(1.0, geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip);
-        fd.PageWidth   = measureW;
+        // 3. 오프스크린 RichTextBox 에서 본문 블록 Y 좌표 측정 → (페이지, 단) 배정.
+        // 측정 폭은 단 폭(geo.ColWidthDip) — 단일 단이면 본문 폭과 동일.
+        // 전체 용지 폭으로 두면 줄바꿈이 적게 일어나 Y 좌표가 실제 단 RTB 와 달라진다.
+        fd.PageWidth   = geo.ColWidthDip;
         fd.PagePadding = new Thickness(0);
         var bodyAssignments = MapBodyBlocksToPages(fd, geo, pageCount);
 
         // 본문 블록의 실제 배치 결과로 pageCount 보정.
-        // DocumentPaginator(풀 페이지+여백) 와 오프스크린 RTB(bodyH) 측정이 미세하게 어긋나
-        // 본문 블록이 DocumentPaginator 산출 pageCount 를 넘는 페이지로 떨어질 수 있다.
-        // 이 경우 페이지 수를 늘려서 마지막 페이지에 강제 배정·클립되는 것을 막는다.
+        // DocumentPaginator(풀 페이지+여백) 와 오프스크린 RTB(단 폭·단 슬롯 높이) 측정이
+        // 미세하게 어긋나 블록이 DocumentPaginator 산출 pageCount 를 넘는 페이지로 떨어질 수 있다.
         if (bodyAssignments.Count > 0)
         {
             int maxBodyPage = bodyAssignments.Max(b => b.pageIdx) + 1;
@@ -127,22 +124,23 @@ public static class FlowDocumentPaginationAdapter
         }
     }
 
-    // ── 본문 블록 → 페이지 매핑 ──────────────────────────────────────────────
+    // ── 본문 블록 → 페이지·단 매핑 ──────────────────────────────────────────
 
-    private static List<(int pageIdx, Block coreBlock, Rect bodyLocalRect)> MapBodyBlocksToPages(
-        WpfDocs.FlowDocument fd, PageGeometry geo, int pageCount)
+    private static List<(int pageIdx, int colIdx, Block coreBlock, Rect bodyLocalRect)>
+        MapBodyBlocksToPages(WpfDocs.FlowDocument fd, PageGeometry geo, int pageCount)
     {
-        var result = new List<(int, Block, Rect)>();
+        var result = new List<(int, int, Block, Rect)>();
 
-        // 연속 스크롤 공간에서 "페이지당 본문 높이" = pageHeight - padTop - padBottom
+        // 연속 스크롤 공간에서 "단 슬롯 높이" = pageHeight - padTop - padBottom
         double bodyH = geo.PageHeightDip - geo.PadTopDip - geo.PadBottomDip;
         if (bodyH <= 0) bodyH = geo.PageHeightDip;
-        double bodyW = geo.PageWidthDip - geo.PadLeftDip - geo.PadRightDip;
-        if (bodyW <= 0) bodyW = geo.PageWidthDip;
 
-        // 오프스크린 RichTextBox 에서 Measure/Arrange → TextPointer.GetCharacterRect 활성화.
-        // 측정 폭은 반드시 bodyW (본문 영역 폭) — PageWidthDip(전체 폭) 로 측정하면 줄바꿈이
-        // 적게 일어나 Y 좌표가 실제 페이지네이터 / 온스크린 RTB 와 달라진다.
+        int    colCount  = geo.ColumnCount;
+        double colWidth  = geo.ColWidthDip;
+
+        // 오프스크린 RichTextBox — 측정 폭은 단 폭(colWidth).
+        // 다단일 때 전체 본문 폭으로 측정하면 줄바꿈이 적게 일어나
+        // Y 좌표가 실제 단 레이아웃과 달라진다.
         var rtb = new RichTextBox
         {
             Document          = fd,
@@ -150,8 +148,21 @@ public static class FlowDocumentPaginationAdapter
             BorderThickness   = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Top,
         };
-        rtb.Measure(new Size(bodyW, double.PositiveInfinity));
+        rtb.Measure(new Size(colWidth, double.PositiveInfinity));
         rtb.Arrange(new Rect(rtb.DesiredSize));
+        // UpdateLayout() 을 명시적으로 호출해 FlowDocument 내부 레이아웃을 동기적으로 완료.
+        // OnLoaded 등 WPF 첫 렌더링 이전 시점에는 Measure/Arrange 만으로 텍스트 레이아웃이
+        // 확정되지 않아 GetCharacterRect 가 Y=0 을 반환할 수 있다.
+        rtb.UpdateLayout();
+
+        // mm→DIP 변환과 WPF 서브픽셀 반올림으로 인한 경계 오차 흡수용 허용치 (DIP).
+        // 블록의 bottomY 가 슬롯 경계를 이 값 이하로 넘어서면 경계 위반으로 보지 않는다.
+        // PerPageEditorHost.ClipRenderingTolerance 와 동일한 값을 유지한다.
+        const double BoundaryTol = 2.0;
+
+        // 단 슬롯별 누적 채움 높이. 슬롯 경계 이동 후 다른 블록과 합산 시
+        // bodyH 를 넘기는 경우를 감지해 다음 슬롯으로 밀어낸다.
+        var slotFill = new System.Collections.Generic.Dictionary<int, double>();
 
         foreach (var wpfBlock in FlattenBlocks(fd.Blocks))
         {
@@ -160,45 +171,263 @@ public static class FlowDocumentPaginationAdapter
 
             double topY    = TryGetTopY(wpfBlock);
             double bottomY = TryGetBottomY(wpfBlock);
-            int    pageIdx;
 
+            // Y 를 측정할 수 없으면 첫 슬롯에 배정하고 다음 블록으로.
             if (double.IsNaN(topY))
             {
-                pageIdx = 0;
+                result.Add((0, 0, coreBlock, Rect.Empty));
+                continue;
             }
-            else
+
+            double blockH  = (!double.IsNaN(bottomY) && bottomY > topY) ? (bottomY - topY) : 0.0;
+            // 연속 스크롤 공간에서 "단 슬롯" 인덱스 (단 슬롯 = 단 × 페이지).
+            // 상한 클램프 없음 — 호출자(Paginate) 가 max pageIdx 로 pageCount 를 보정한다.
+            int slotTop = Math.Max(0, (int)(topY / bodyH));
+
+            // ── 줄 단위 분할 ──────────────────────────────────────────────────────────
+            // 목록 마커가 없는 일반 단락이고, 한 슬롯에 들어갈 수 있는 높이일 때만 시도.
+            // blockH >= bodyH 인 초장문 단락은 분할을 생략(구조 복잡도 대비 효용 낮음).
+            if (coreBlock is Paragraph corePara
+                && corePara.Style.ListMarker == null
+                && blockH > 0 && blockH < bodyH
+                && wpfBlock is WpfDocs.Paragraph wpfPara)
             {
-                // 자연 페이지 = topY 가 떨어지는 본문 페이지(여백 제외 bodyH 기준).
-                // 상한 클램프를 두지 않는다 — DocumentPaginator(여백 포함 풀 페이지로 측정) 와
-                // 오프스크린 RTB(여백 제외 bodyH 로 측정) 의 누적 Y 가 미세하게 다를 때
-                // pageCount-1 로 클램프하면 마지막 페이지에 넘치는 블록이 강제 배정되어 클립된다.
-                // 호출자(Paginate) 가 bodyAssignments 의 max pageIdx 로 pageCount 를 보정한다.
-                int topPage = Math.Max(0, (int)(topY / bodyH));
+                double slotBoundaryY = (slotTop + 1) * bodyH;
+                bool   crossesBoundary = !double.IsNaN(bottomY) && bottomY > slotBoundaryY + BoundaryTol;
+                bool   fillOverflow    = slotFill.GetValueOrDefault(slotTop, 0.0) + blockH > bodyH + BoundaryTol;
 
-                // 블록이 페이지 경계를 넘고(bottomY > 다음 페이지 시작),
-                // 한 페이지에 들어갈 만큼 작으면 다음 페이지로 이동한다.
-                // DocumentPaginator 는 줄 단위로 나누지만 여기서는 블록 단위 이동으로 근사 —
-                // 빈 페이지보다 블록이 올바른 페이지에 놓이는 쪽이 시각적으로 훨씬 낫다.
-                if (!double.IsNaN(bottomY)
-                    && bottomY > (topPage + 1) * bodyH
-                    && (bottomY - topY) < bodyH)
+                if (crossesBoundary || fillOverflow)
                 {
-                    pageIdx = topPage + 1;
-                }
-                else
-                {
-                    pageIdx = topPage;
+                    // 분할 Y: 자연 슬롯 경계(crossesBoundary) 우선, 아니면 누적 채움 기반.
+                    double splitY = crossesBoundary
+                        ? slotBoundaryY
+                        : topY + Math.Max(0.0, bodyH - slotFill.GetValueOrDefault(slotTop, 0.0));
+
+                    int splitCharOffset = FindSplitCharOffset(wpfPara, splitY);
+                    int totalChars      = corePara.Runs.Sum(r => r.Text.Length);
+
+                    if (splitCharOffset > 0 && splitCharOffset < totalChars)
+                    {
+                        var (frag1, frag2) = SplitCoreParagraph(corePara, splitCharOffset);
+
+                        // 첫 조각 → 현재 슬롯
+                        double frag1H = Math.Max(0.0, splitY - topY);
+                        slotFill[slotTop] = Math.Min(bodyH,
+                            slotFill.GetValueOrDefault(slotTop, 0.0) + frag1H);
+                        var rect1 = TryGetColumnLocalRect(
+                            wpfBlock, slotTop / colCount, slotTop % colCount, bodyH, colWidth, colCount);
+                        result.Add((slotTop / colCount, slotTop % colCount, frag1, rect1));
+
+                        // 이어지는 조각 → 다음 슬롯 (누적 채움 검사)
+                        int    nextSlot = slotTop + 1;
+                        double frag2H   = blockH - frag1H;
+                        if (frag2H > 0 && frag2H < bodyH)
+                        {
+                            while (slotFill.GetValueOrDefault(nextSlot, 0.0) + frag2H > bodyH + BoundaryTol)
+                                nextSlot++;
+                        }
+                        if (frag2H > 0)
+                            slotFill[nextSlot] = Math.Min(bodyH,
+                                slotFill.GetValueOrDefault(nextSlot, 0.0) + Math.Min(frag2H, bodyH));
+                        result.Add((nextSlot / colCount, nextSlot % colCount, frag2, Rect.Empty));
+
+                        continue; // 아래 단일 블록 처리 생략
+                    }
                 }
             }
 
-            var bodyLocalRect = TryGetBodyLocalRect(wpfBlock, pageIdx, bodyH, bodyW);
-            result.Add((pageIdx, coreBlock, bodyLocalRect));
+            // ── 단일 블록 배정 (기존 로직) ────────────────────────────────────────────
+            // 블록이 단 슬롯 경계를 넘고 한 슬롯에 들어갈 만큼 작으면 다음 슬롯으로 이동.
+            // BoundaryTol 이하의 초과는 mm→DIP 변환 오차로 보고 현재 슬롯에 유지한다.
+            if (!double.IsNaN(bottomY)
+                && bottomY > (slotTop + 1) * bodyH + BoundaryTol
+                && blockH < bodyH)
+            {
+                slotTop += 1;
+            }
+
+            // 슬롯 누적 채움이 이 블록을 수용하기에 부족하면 다음 슬롯으로 밀어낸다.
+            // bodyH 이상인 블록은 분할 불가이므로 채움 추적 대상에서 제외.
+            if (blockH > 0 && blockH < bodyH)
+            {
+                while (slotFill.GetValueOrDefault(slotTop, 0.0) + blockH > bodyH + BoundaryTol)
+                    slotTop += 1;
+            }
+
+            // 슬롯 채움 갱신 (bodyH 캡 — 단 높이를 초과하는 블록은 슬롯 전체를 포화로 표시)
+            if (blockH > 0)
+                slotFill[slotTop] = Math.Min(bodyH,
+                    slotFill.GetValueOrDefault(slotTop, 0.0) + Math.Min(blockH, bodyH));
+
+            var bodyLocalRect = TryGetColumnLocalRect(
+                wpfBlock, slotTop / colCount, slotTop % colCount, bodyH, colWidth, colCount);
+            result.Add((slotTop / colCount, slotTop % colCount, coreBlock, bodyLocalRect));
         }
 
         // RichTextBox 분리 (FlowDocument 재사용을 위해)
         rtb.Document = new WpfDocs.FlowDocument();
         return result;
     }
+
+    // ── 줄 단위 분할 헬퍼 ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// WPF Paragraph 내에서 Y 좌표 splitY 직전까지의 텍스트 문자 수를 반환한다.
+    /// 이진 탐색으로 O(log n) 심볼 위치를 찾은 뒤 TextRange 로 문자 수를 센다.
+    /// </summary>
+    /// <summary>외부(글상자 다단 등)에서 동일 분할 로직 재사용을 위한 internal alias.</summary>
+    internal static int FindSplitCharOffsetPublic(WpfDocs.Paragraph wpfPara, double splitY)
+        => FindSplitCharOffset(wpfPara, splitY);
+
+    /// <summary>외부에서 동일 분할 로직 재사용을 위한 internal alias.</summary>
+    internal static (Paragraph first, Paragraph second) SplitCoreParagraphPublic(
+        Paragraph para, int charOffset)
+        => SplitCoreParagraph(para, charOffset);
+
+    private static int FindSplitCharOffset(WpfDocs.Paragraph wpfPara, double splitY)
+    {
+        var start = wpfPara.ContentStart;
+        var end   = wpfPara.ContentEnd;
+        int total = start.GetOffsetToPosition(end);
+        if (total <= 0) return 0;
+
+        // 이진 탐색: 줄의 하단(rect.Y + rect.Height) 이 splitY 이내인 마지막 심볼 위치 찾기.
+        // 줄 시작점(rect.Y) 만 비교하면 splitY 직전에서 시작하는 줄이 splitY 를 넘어 끝나도
+        // 포함되어 frag1 의 마지막 줄이 슬라이스 RTB(높이=bodyH) 에서 클리핑된다.
+        // 줄 하단까지 비교하면 그런 줄은 frag1 에 포함되지 않아 frag2(다음 단/페이지) 의 첫 줄로 간다.
+        // 2 DIP 허용치는 mm→DIP 반올림 오차 흡수용 (PerPageEditorHost.ClipRenderingTolerance 와 대응).
+        const double LineFitTol = 2.0;
+        int lo = 0, hi = total;
+        while (lo < hi - 1)
+        {
+            int mid = (lo + hi) / 2;
+            var tp = start.GetPositionAtOffset(mid);
+            if (tp == null) { hi = mid; continue; }
+
+            var rect = tp.GetCharacterRect(WpfDocs.LogicalDirection.Forward);
+            if (rect == Rect.Empty || double.IsNaN(rect.Y) || double.IsInfinity(rect.Y))
+            {
+                lo = mid; // 측정 불가 위치는 분할선 이전으로 처리
+                continue;
+            }
+            double lineBottom = rect.Y + (double.IsNaN(rect.Height) ? 0 : rect.Height);
+            if (lineBottom <= splitY + LineFitTol) lo = mid;
+            else                                   hi = mid;
+        }
+
+        var splitPtr = start.GetPositionAtOffset(lo);
+        if (splitPtr == null || splitPtr.CompareTo(start) <= 0) return 0;
+
+        // 심볼 위치 → 텍스트 문자 수 (단락 내부 범위이므로 \n 없음)
+        try
+        {
+            return new WpfDocs.TextRange(start, splitPtr).Text.Length;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// 단락을 charOffset 문자 위치에서 두 조각으로 나눈다.
+    /// 각 조각의 Id 에 "§f0" / "§f1" 접미사를 붙여 ParseAllPageEditors 에서 재결합할 수 있게 한다.
+    /// </summary>
+    private static (Paragraph first, Paragraph second) SplitCoreParagraph(
+        Paragraph para, int charOffset)
+    {
+        // 원본 Id 가 없으면 임시 그룹 Id 생성 (§g 접두사로 식별)
+        string groupId = para.Id is { } origId
+            ? origId
+            : "§g" + System.Guid.NewGuid().ToString("N")[..8];
+
+        var first  = CloneParaForSplit(para, groupId + "§f0");
+        var second = CloneParaForSplit(para, groupId + "§f1");
+        // 이어지는 조각의 문단 앞뒤 간격은 제거 (시각적 연속성)
+        second.Style.SpaceBeforePt = 0;
+        first.Style.SpaceAfterPt  = 0;
+
+        int remaining = charOffset;
+        bool inSecond = false;
+
+        foreach (var run in para.Runs)
+        {
+            if (inSecond)
+            {
+                second.Runs.Add(CloneRunForSplit(run));
+                continue;
+            }
+
+            string text = run.Text;
+
+            if (remaining <= 0)
+            {
+                second.Runs.Add(CloneRunForSplit(run));
+                inSecond = true;
+            }
+            else if (remaining >= text.Length)
+            {
+                first.Runs.Add(CloneRunForSplit(run));
+                remaining -= text.Length;
+            }
+            else // 0 < remaining < text.Length: run 을 둘로 쪼갬
+            {
+                first.Runs.Add(new Run
+                    { Text = text[..remaining], Style = CloneRunStyleForSplit(run.Style) });
+                second.Runs.Add(new Run
+                    { Text = text[remaining..], Style = CloneRunStyleForSplit(run.Style) });
+                remaining = 0;
+                inSecond  = true;
+            }
+        }
+
+        return (first, second);
+    }
+
+    private static Paragraph CloneParaForSplit(Paragraph p, string? id) => new()
+    {
+        Id      = id,
+        Status  = p.Status,
+        StyleId = p.StyleId,
+        Style   = new ParagraphStyle
+        {
+            Alignment         = p.Style.Alignment,
+            LineHeightFactor  = p.Style.LineHeightFactor,
+            SpaceBeforePt     = p.Style.SpaceBeforePt,
+            SpaceAfterPt      = p.Style.SpaceAfterPt,
+            IndentFirstLineMm = p.Style.IndentFirstLineMm,
+            IndentLeftMm      = p.Style.IndentLeftMm,
+            IndentRightMm     = p.Style.IndentRightMm,
+            Outline           = p.Style.Outline,
+        },
+    };
+
+    private static Run CloneRunForSplit(Run r) => new()
+    {
+        Text              = r.Text,
+        Style             = CloneRunStyleForSplit(r.Style),
+        LatexSource       = r.LatexSource,
+        IsDisplayEquation = r.IsDisplayEquation,
+        EmojiKey          = r.EmojiKey,
+        EmojiAlignment    = r.EmojiAlignment,
+    };
+
+    private static RunStyle CloneRunStyleForSplit(RunStyle s) => new()
+    {
+        FontFamily      = s.FontFamily,
+        FontSizePt      = s.FontSizePt,
+        Bold            = s.Bold,
+        Italic          = s.Italic,
+        Underline       = s.Underline,
+        Strikethrough   = s.Strikethrough,
+        Overline        = s.Overline,
+        Superscript     = s.Superscript,
+        Subscript       = s.Subscript,
+        Foreground      = s.Foreground,
+        Background      = s.Background,
+        WidthPercent    = s.WidthPercent,
+        LetterSpacingPx = s.LetterSpacingPx,
+    };
 
     /// <summary>
     /// fd.Blocks 를 재귀적으로 열거한다.
@@ -249,12 +478,12 @@ public static class FlowDocumentPaginationAdapter
     }
 
     /// <summary>
-    /// 연속 스크롤 공간에서 블록의 전체 경계 상자를 측정해 페이지-본문 기준 Rect 로 변환한다.
-    /// 페이지 경계를 넘어서는 블록은 현재 페이지 본문 높이로 잘린다.
+    /// 연속 스크롤 공간에서 블록의 경계 상자를 측정해 해당 단 슬롯 기준 Rect 로 변환한다.
+    /// 단 슬롯 경계를 넘어서는 블록은 슬롯 높이로 잘린다.
     /// 측정 실패 시 <see cref="Rect.Empty"/> 반환.
     /// </summary>
-    private static Rect TryGetBodyLocalRect(
-        WpfDocs.Block block, int pageIdx, double bodyH, double bodyW)
+    private static Rect TryGetColumnLocalRect(
+        WpfDocs.Block block, int pageIdx, int colIdx, double bodyH, double colWidth, int colCount)
     {
         try
         {
@@ -271,13 +500,15 @@ public static class FlowDocumentPaginationAdapter
                 ? botRect.Bottom
                 : globalTop;
 
-            double pageOriginY = pageIdx * bodyH;
-            double localTop    = globalTop - pageOriginY;
-            // 페이지 경계를 넘어서는 부분은 이 페이지에서 잘림
-            double localBottom = Math.Min(globalBottom - pageOriginY, bodyH);
+            // 단 슬롯 인덱스 (다단에서 페이지·단을 통합 순서로 열거)
+            int    slotIdx     = pageIdx * colCount + colIdx;
+            double slotOriginY = slotIdx * bodyH;
+            double localTop    = globalTop - slotOriginY;
+            // 슬롯 경계를 넘어서는 부분은 잘림
+            double localBottom = Math.Min(globalBottom - slotOriginY, bodyH);
             double height      = Math.Max(0, localBottom - localTop);
 
-            return new Rect(0, localTop, bodyW, height);
+            return new Rect(0, localTop, colWidth, height);
         }
         catch
         {
@@ -325,9 +556,9 @@ public static class FlowDocumentPaginationAdapter
     // ── PaginatedPage 조립 ───────────────────────────────────────────────────
 
     private static IReadOnlyList<PaginatedPage> BuildPages(
-        int                                                          pageCount,
-        List<(int pageIdx, Block coreBlock, Rect bodyLocalRect)>     bodyAssignments,
-        List<(int pageIdx, Block coreBlock, double xMm, double yMm)> overlayAssignments)
+        int                                                                    pageCount,
+        List<(int pageIdx, int colIdx, Block coreBlock, Rect bodyLocalRect)>  bodyAssignments,
+        List<(int pageIdx, Block coreBlock, double xMm, double yMm)>          overlayAssignments)
     {
         var pages = new PaginatedPage[pageCount];
         for (int i = 0; i < pageCount; i++)
@@ -341,6 +572,7 @@ public static class FlowDocumentPaginationAdapter
                     {
                         Source        = b.coreBlock,
                         PageIndex     = i,
+                        ColumnIndex   = b.colIdx,
                         BodyLocalRect = b.bodyLocalRect,
                     })
                     .ToArray(),
