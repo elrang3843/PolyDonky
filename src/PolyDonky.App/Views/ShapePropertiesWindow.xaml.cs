@@ -68,8 +68,11 @@ public partial class ShapePropertiesWindow : Window
         TxtLabelFont.Text             = _shape.LabelFontFamily ?? string.Empty;
         TxtLabelSize.Text             = _shape.LabelFontSizePt.ToString("0.##");
         LabelColorPicker.ColorText    = _shape.LabelColor ?? string.Empty;
+        LabelBgColorPicker.ColorText  = _shape.LabelBackgroundColor ?? string.Empty;
         ChkLabelBold.IsChecked   = _shape.LabelBold;
         ChkLabelItalic.IsChecked = _shape.LabelItalic;
+        SelectComboByTag(CboLabelHAlign, _shape.LabelHAlign.ToString());
+        SelectComboByTag(CboLabelVAlign, _shape.LabelVAlign.ToString());
     }
 
     private void OnOk(object sender, RoutedEventArgs e)
@@ -129,8 +132,13 @@ public partial class ShapePropertiesWindow : Window
         _shape.LabelFontFamily = string.IsNullOrWhiteSpace(TxtLabelFont.Text) ? null : TxtLabelFont.Text.Trim();
         if (double.TryParse(TxtLabelSize.Text, out double ls) && ls > 0) _shape.LabelFontSizePt = ls;
         _shape.LabelColor  = string.IsNullOrWhiteSpace(LabelColorPicker.ColorText) ? null : LabelColorPicker.ColorText.Trim();
+        _shape.LabelBackgroundColor = string.IsNullOrWhiteSpace(LabelBgColorPicker.ColorText) ? null : LabelBgColorPicker.ColorText.Trim();
         _shape.LabelBold   = ChkLabelBold.IsChecked   == true;
         _shape.LabelItalic = ChkLabelItalic.IsChecked == true;
+        if (GetComboTag(CboLabelHAlign) is string lhStr && Enum.TryParse<ShapeLabelHAlign>(lhStr, out var lh))
+            _shape.LabelHAlign = lh;
+        if (GetComboTag(CboLabelVAlign) is string lvStr && Enum.TryParse<ShapeLabelVAlign>(lvStr, out var lv))
+            _shape.LabelVAlign = lv;
 
         _shape.Status = NodeStatus.Modified;
         return true;

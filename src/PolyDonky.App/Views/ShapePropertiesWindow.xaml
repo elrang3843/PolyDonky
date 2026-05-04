@@ -232,6 +232,8 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <Label Grid.Row="0" Grid.Column="0" Content="텍스트:" VerticalAlignment="Center" />
@@ -252,6 +254,24 @@
                             <CheckBox x:Name="ChkLabelBold"   Content="굵게"   VerticalAlignment="Center" Margin="0,0,8,0" />
                             <CheckBox x:Name="ChkLabelItalic" Content="기울임" VerticalAlignment="Center" />
                         </StackPanel>
+
+                        <Label Grid.Row="3" Grid.Column="0" Content="가로 위치:" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CboLabelHAlign" Grid.Row="3" Grid.Column="1" Margin="4,2">
+                            <ComboBoxItem Tag="Left">왼쪽</ComboBoxItem>
+                            <ComboBoxItem Tag="Center">가운데</ComboBoxItem>
+                            <ComboBoxItem Tag="Right">오른쪽</ComboBoxItem>
+                        </ComboBox>
+                        <Label Grid.Row="3" Grid.Column="2" Content="세로 위치:" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CboLabelVAlign" Grid.Row="3" Grid.Column="3" Margin="4,2">
+                            <ComboBoxItem Tag="Top">위</ComboBoxItem>
+                            <ComboBoxItem Tag="Middle">가운데</ComboBoxItem>
+                            <ComboBoxItem Tag="Bottom">아래</ComboBoxItem>
+                        </ComboBox>
+
+                        <Label Grid.Row="4" Grid.Column="0" Content="배경색:" VerticalAlignment="Center" />
+                        <ctrl:ColorPickerBox x:Name="LabelBgColorPicker"
+                                             Grid.Row="4" Grid.Column="1"
+                                             AllowEmpty="True" Margin="4,2" />
                     </Grid>
                 </GroupBox>
 

@@ -1000,24 +1000,52 @@ public static class FlowDocumentBuilder
             catch { }
         }
 
+        WpfMedia.Brush? labelBgBrush = null;
+        if (!string.IsNullOrEmpty(shape.LabelBackgroundColor))
+        {
+            try
+            {
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(shape.LabelBackgroundColor)!;
+                labelBgBrush = new WpfMedia.SolidColorBrush(c);
+            }
+            catch { }
+        }
+
+        TextAlignment textAlign = shape.LabelHAlign switch
+        {
+            ShapeLabelHAlign.Left   => TextAlignment.Left,
+            ShapeLabelHAlign.Right  => TextAlignment.Right,
+            _                       => TextAlignment.Center,
+        };
+
+        double fontDip   = PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10);
+        double lineDip   = fontDip * 1.4;
+
         var tb = new System.Windows.Controls.TextBlock
         {
             Text                = shape.LabelText,
             Foreground          = labelBrush,
-            FontSize            = PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10),
+            FontSize            = fontDip,
             FontWeight          = shape.LabelBold   ? FontWeights.Bold   : FontWeights.Normal,
             FontStyle           = shape.LabelItalic ? FontStyles.Italic  : FontStyles.Normal,
             TextWrapping        = TextWrapping.Wrap,
-            TextAlignment       = TextAlignment.Center,
+            TextAlignment       = textAlign,
             Width               = wDip,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
         };
+        if (labelBgBrush is not null) tb.Background = labelBgBrush;
         if (!string.IsNullOrEmpty(shape.LabelFontFamily))
             tb.FontFamily = new WpfMedia.FontFamily(shape.LabelFontFamily);
 
+        // 세로 정렬 — Top/Middle/Bottom 에 따라 Y 위치 계산.
+        double topDip = shape.LabelVAlign switch
+        {
+            ShapeLabelVAlign.Top    => 0,
+            ShapeLabelVAlign.Bottom => Math.Max(0, hDip - lineDip),
+            _                       => Math.Max(0, (hDip - lineDip) / 2.0),
+        };
+
         System.Windows.Controls.Canvas.SetLeft(tb, 0);
-        System.Windows.Controls.Canvas.SetTop(tb, (hDip - PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10) * 1.4) / 2.0);
+        System.Windows.Controls.Canvas.SetTop (tb, topDip);
         return tb;
     }
 

@@ -37,6 +37,12 @@ public enum ShapeArrow
     Circle,
 }
 
+/// <summary>도형 레이블 텍스트의 가로 정렬.</summary>
+public enum ShapeLabelHAlign { Left, Center, Right }
+
+/// <summary>도형 레이블 텍스트의 세로 정렬.</summary>
+public enum ShapeLabelVAlign { Top, Middle, Bottom }
+
 /// <summary>도형 꼭짓점 또는 제어점. 좌표는 도형 바운딩 박스 좌상단 기준, 단위 mm.</summary>
 public sealed class ShapePoint
 {
@@ -151,6 +157,15 @@ public sealed class ShapeObject : Block, IOverlayAnchored
 
     public bool LabelBold { get; set; }
     public bool LabelItalic { get; set; }
+
+    /// <summary>레이블 가로 정렬. 기본 Center.</summary>
+    public ShapeLabelHAlign LabelHAlign { get; set; } = ShapeLabelHAlign.Center;
+
+    /// <summary>레이블 세로 정렬. 기본 Middle.</summary>
+    public ShapeLabelVAlign LabelVAlign { get; set; } = ShapeLabelVAlign.Middle;
+
+    /// <summary>레이블 배경색 hex. null / 빈 문자열이면 배경 없음(투명).</summary>
+    public string? LabelBackgroundColor { get; set; }
 
     // ── 여백 ─────────────────────────────────────────────────────────────────
 
