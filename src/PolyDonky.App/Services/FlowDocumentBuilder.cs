@@ -542,6 +542,9 @@ public static class FlowDocumentBuilder
             };
         }
 
+        // 그림 제목 래퍼
+        visual = WrapImageWithTitle(visual, image, imgHA);
+
         var marginTopDip    = MmToDip(image.MarginTopMm);
         var marginBottomDip = MmToDip(image.MarginBottomMm);
 
@@ -647,6 +650,7 @@ public static class FlowDocumentBuilder
         if (image.HeightMm > 0) control.Height = MmToDip(image.HeightMm);
         if (!string.IsNullOrEmpty(image.Description)) control.ToolTip = image.Description;
 
+        UIElement overlayVisual = control;
         if (!string.IsNullOrEmpty(image.BorderColor) && image.BorderThicknessPt > 0)
         {
             WpfMedia.Brush borderBrush;
@@ -654,7 +658,7 @@ public static class FlowDocumentBuilder
                     (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.BorderColor)!); }
             catch { borderBrush = WpfMedia.Brushes.Black; }
 
-            return new System.Windows.Controls.Border
+            overlayVisual = new System.Windows.Controls.Border
             {
                 Child           = control,
                 BorderBrush     = borderBrush,
@@ -662,7 +666,91 @@ public static class FlowDocumentBuilder
             };
         }
 
-        return control;
+        var withTitle = WrapImageWithTitle(overlayVisual, image, HorizontalAlignment.Left);
+        return withTitle as System.Windows.FrameworkElement ?? control;
+    }
+
+    /// <summary>
+    /// 그림 제목(캡션) 표시가 켜져 있으면 image 시각 요소를 Grid 로 감싸 제목을 함께 배치한다.
+    /// 위치(Above/Below/OverlayTop/Middle/Bottom) + 가로 정렬 + X/Y 오프셋(mm)을 적용.
+    /// </summary>
+    private static UIElement WrapImageWithTitle(UIElement imageVisual, ImageBlock image, HorizontalAlignment imgHA)
+    {
+        if (!image.ShowTitle || string.IsNullOrWhiteSpace(image.Title)) return imageVisual;
+
+        // 제목 텍스트블록
+        WpfMedia.Brush titleFg = WpfMedia.Brushes.Black;
+        if (!string.IsNullOrEmpty(image.TitleColor))
+        {
+            try { titleFg = new WpfMedia.SolidColorBrush(
+                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.TitleColor)!); }
+            catch { }
+        }
+        WpfMedia.Brush? titleBg = null;
+        if (!string.IsNullOrEmpty(image.TitleBackgroundColor))
+        {
+            try { titleBg = new WpfMedia.SolidColorBrush(
+                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.TitleBackgroundColor)!); }
+            catch { }
+        }
+        TextAlignment ta = image.TitleHAlign switch
+        {
+            ImageHAlign.Left   => TextAlignment.Left,
+            ImageHAlign.Right  => TextAlignment.Right,
+            _                  => TextAlignment.Center,
+        };
+        var tb = new System.Windows.Controls.TextBlock
+        {
+            Text          = image.Title,
+            Foreground    = titleFg,
+            FontSize      = PtToDip(image.TitleFontSizePt > 0 ? image.TitleFontSizePt : 10),
+            FontWeight    = image.TitleBold   ? FontWeights.Bold   : FontWeights.Normal,
+            FontStyle     = image.TitleItalic ? FontStyles.Italic  : FontStyles.Normal,
+            TextWrapping  = TextWrapping.Wrap,
+            TextAlignment = ta,
+        };
+        if (titleBg is not null) tb.Background = titleBg;
+        if (!string.IsNullOrEmpty(image.TitleFontFamily))
+            tb.FontFamily = new WpfMedia.FontFamily(image.TitleFontFamily);
+
+        // 오프셋 — TranslateTransform 으로 적용해 정렬·레이아웃에 영향 없이 미세 이동.
+        if (Math.Abs(image.TitleOffsetXMm) > 0.001 || Math.Abs(image.TitleOffsetYMm) > 0.001)
+        {
+            tb.RenderTransform = new WpfMedia.TranslateTransform(
+                MmToDip(image.TitleOffsetXMm), MmToDip(image.TitleOffsetYMm));
+        }
+
+        var grid = new System.Windows.Controls.Grid { HorizontalAlignment = imgHA };
+
+        bool isOverlay = image.TitlePosition is ImageTitlePosition.OverlayTop
+                                              or ImageTitlePosition.OverlayMiddle
+                                              or ImageTitlePosition.OverlayBottom;
+        if (isOverlay)
+        {
+            // 같은 셀에 그림과 제목이 겹침. VerticalAlignment 로 위/가운데/아래 결정.
+            grid.Children.Add(imageVisual);
+            tb.VerticalAlignment = image.TitlePosition switch
+            {
+                ImageTitlePosition.OverlayTop    => VerticalAlignment.Top,
+                ImageTitlePosition.OverlayBottom => VerticalAlignment.Bottom,
+                _                                => VerticalAlignment.Center,
+            };
+            tb.HorizontalAlignment = HorizontalAlignment.Stretch;
+            grid.Children.Add(tb);
+        }
+        else
+        {
+            grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
+            grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
+            int titleRow = image.TitlePosition == ImageTitlePosition.Above ? 0 : 1;
+            int imageRow = image.TitlePosition == ImageTitlePosition.Above ? 1 : 0;
+            System.Windows.Controls.Grid.SetRow(tb, titleRow);
+            System.Windows.Controls.Grid.SetRow((FrameworkElement)imageVisual, imageRow);
+            tb.HorizontalAlignment = HorizontalAlignment.Stretch;
+            grid.Children.Add(imageVisual);
+            grid.Children.Add(tb);
+        }
+        return grid;
     }
 
     // ── 도형 렌더링 ─────────────────────────────────────────────────────────

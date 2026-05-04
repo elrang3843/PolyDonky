@@ -60,9 +60,35 @@ public partial class ImagePropertiesWindow : Window
 
         DescriptionBox.Text = _image.Description ?? string.Empty;
 
+        // 그림 제목
+        ShowTitleCheck.IsChecked    = _image.ShowTitle;
+        TitleTextBox.Text           = _image.Title ?? string.Empty;
+        TitleFontBox.Text           = _image.TitleFontFamily ?? string.Empty;
+        TitleSizeBox.Text           = _image.TitleFontSizePt.ToString("0.##");
+        TitleColorBox.Text          = _image.TitleColor ?? string.Empty;
+        TitleBgColorBox.Text        = _image.TitleBackgroundColor ?? string.Empty;
+        TitleBoldCheck.IsChecked    = _image.TitleBold;
+        TitleItalicCheck.IsChecked  = _image.TitleItalic;
+        SelectComboByTag(TitlePositionCombo, _image.TitlePosition.ToString());
+        SelectComboByTag(TitleHAlignCombo,   _image.TitleHAlign.ToString());
+        TitleOffsetXBox.Text        = _image.TitleOffsetXMm.ToString("0.##");
+        TitleOffsetYBox.Text        = _image.TitleOffsetYMm.ToString("0.##");
+
         _suppressSync = false;
         UpdateBorderPreview();
     }
+
+    private static void SelectComboByTag(ComboBox cbo, string tag)
+    {
+        foreach (ComboBoxItem item in cbo.Items)
+        {
+            if (item.Tag?.ToString() == tag) { cbo.SelectedItem = item; return; }
+        }
+        if (cbo.Items.Count > 0) cbo.SelectedIndex = 0;
+    }
+
+    private static string? GetComboTag(ComboBox cbo)
+        => (cbo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
 
     private void OnWidthChanged(object sender, TextChangedEventArgs e)
     {
@@ -152,6 +178,22 @@ public partial class ImagePropertiesWindow : Window
         _image.BorderColor = bt > 0 && colorText.Length > 0 ? colorText : null;
 
         _image.Description = DescriptionBox.Text.Trim() is { Length: > 0 } d ? d : null;
+
+        // 그림 제목
+        _image.ShowTitle = ShowTitleCheck.IsChecked == true;
+        _image.Title     = string.IsNullOrWhiteSpace(TitleTextBox.Text) ? null : TitleTextBox.Text;
+        _image.TitleFontFamily = string.IsNullOrWhiteSpace(TitleFontBox.Text) ? null : TitleFontBox.Text.Trim();
+        if (double.TryParse(TitleSizeBox.Text, out double tfs) && tfs > 0) _image.TitleFontSizePt = tfs;
+        _image.TitleColor           = string.IsNullOrWhiteSpace(TitleColorBox.Text)   ? null : TitleColorBox.Text.Trim();
+        _image.TitleBackgroundColor = string.IsNullOrWhiteSpace(TitleBgColorBox.Text) ? null : TitleBgColorBox.Text.Trim();
+        _image.TitleBold   = TitleBoldCheck.IsChecked   == true;
+        _image.TitleItalic = TitleItalicCheck.IsChecked == true;
+        if (GetComboTag(TitlePositionCombo) is string tpStr && Enum.TryParse<ImageTitlePosition>(tpStr, out var tp))
+            _image.TitlePosition = tp;
+        if (GetComboTag(TitleHAlignCombo) is string thStr && Enum.TryParse<ImageHAlign>(thStr, out var th))
+            _image.TitleHAlign = th;
+        if (double.TryParse(TitleOffsetXBox.Text, out double tox)) _image.TitleOffsetXMm = tox;
+        if (double.TryParse(TitleOffsetYBox.Text, out double toy)) _image.TitleOffsetYMm = toy;
 
         DialogResult = true;
         Close();

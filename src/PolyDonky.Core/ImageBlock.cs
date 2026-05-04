@@ -3,6 +3,21 @@ namespace PolyDonky.Core;
 /// <summary>블록 단위 이미지 정렬.</summary>
 public enum ImageHAlign { Left, Center, Right }
 
+/// <summary>그림 제목(캡션)의 위치.</summary>
+public enum ImageTitlePosition
+{
+    /// <summary>그림 위쪽(외부) — 별도 행으로 그림 위에 표시.</summary>
+    Above,
+    /// <summary>그림 아래쪽(외부) — 별도 행으로 그림 아래에 표시.</summary>
+    Below,
+    /// <summary>그림 위에 겹침 — 상단.</summary>
+    OverlayTop,
+    /// <summary>그림 위에 겹침 — 가운데.</summary>
+    OverlayMiddle,
+    /// <summary>그림 위에 겹침 — 하단.</summary>
+    OverlayBottom,
+}
+
 /// <summary>그림과 본문 텍스트의 배치 관계.</summary>
 public enum ImageWrapMode
 {
@@ -71,4 +86,39 @@ public sealed class ImageBlock : Block, IOverlayAnchored
 
     /// <summary>오버레이 모드(InFrontOfText/BehindText) Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
+
+    // ── 그림 제목(캡션) ──────────────────────────────────────────────────────
+
+    /// <summary>그림 제목 표시 여부. 기본 false.</summary>
+    public bool ShowTitle { get; set; }
+
+    /// <summary>그림 제목 텍스트.</summary>
+    public string? Title { get; set; }
+
+    /// <summary>제목 글꼴. null 이면 문서 기본 글꼴.</summary>
+    public string? TitleFontFamily { get; set; }
+
+    /// <summary>제목 글자 크기 (pt). 기본 10.</summary>
+    public double TitleFontSizePt { get; set; } = 10;
+
+    /// <summary>제목 글자 색상 hex. null/빈 문자열이면 검정.</summary>
+    public string? TitleColor { get; set; }
+
+    /// <summary>제목 배경색 hex. null/빈 문자열이면 배경 없음.</summary>
+    public string? TitleBackgroundColor { get; set; }
+
+    public bool TitleBold { get; set; }
+    public bool TitleItalic { get; set; }
+
+    /// <summary>제목 배치 위치. 기본 Below.</summary>
+    public ImageTitlePosition TitlePosition { get; set; } = ImageTitlePosition.Below;
+
+    /// <summary>제목 가로 정렬. 기본 Center.</summary>
+    public ImageHAlign TitleHAlign { get; set; } = ImageHAlign.Center;
+
+    /// <summary>제목 가로 위치 오프셋 (mm). 양수=오른쪽, 음수=왼쪽.</summary>
+    public double TitleOffsetXMm { get; set; }
+
+    /// <summary>제목 세로 위치 오프셋 (mm). 양수=아래, 음수=위.</summary>
+    public double TitleOffsetYMm { get; set; }
 }
