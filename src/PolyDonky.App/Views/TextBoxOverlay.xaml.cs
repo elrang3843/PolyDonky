@@ -255,6 +255,24 @@ public partial class TextBoxOverlay : UserControl
     /// <summary>다단 모드 여부 — Model.ColumnCount &gt; 1.</summary>
     private bool IsMultiCol => Model.ColumnCount > 1;
 
+    /// <summary>
+    /// 단일 InnerEditor 또는 다단 column RTB 중 하나라도 키보드 포커스를 가지면 true.
+    /// MainWindow 의 글상자 삭제·전체 선택 단축키가 편집 중인 상태를 검사할 때 사용.
+    /// </summary>
+    public bool IsEditorFocusWithin
+        => InnerEditor.IsKeyboardFocusWithin || MultiColHost.IsKeyboardFocusWithin;
+
+    /// <summary>활성 편집기(단일 InnerEditor 또는 다단 활성 column RTB)에 비어있지 않은 텍스트 선택이 있으면 true.</summary>
+    public bool HasEditorTextSelection
+    {
+        get
+        {
+            if (IsMultiCol)
+                return MultiColHost.ActiveEditor is { } a && !a.Selection.IsEmpty;
+            return !InnerEditor.Selection.IsEmpty;
+        }
+    }
+
     /// <summary>현재 키보드 포커스를 가진 편집기 (다단/단일 자동 분기).</summary>
     private RichTextBox ActiveEditor =>
         IsMultiCol ? (MultiColHost.ActiveEditor ?? MultiColHost.FirstEditor ?? InnerEditor)
@@ -542,7 +560,16 @@ public partial class TextBoxOverlay : UserControl
 
         Model.Content.Clear();
         foreach (var b in MergeColumnFragments(rawBlocks))
+        {
+            // 빈 단 placeholder(§tbph) 처리: 비어있으면 모델에서 제거, 사용자 입력이 있으면 마커만 클리어.
+            if (b is PolyDonky.Core.Paragraph p && p.Id == TextBoxColumnLayout.PlaceholderId)
+            {
+                if (p.Runs.All(r => string.IsNullOrEmpty(r.Text)))
+                    continue;
+                p.Id = null;
+            }
             Model.Content.Add(b);
+        }
         if (Model.Content.Count == 0)
             Model.Content.Add(new PolyDonky.Core.Paragraph());
     }
@@ -676,10 +703,13 @@ public partial class TextBoxOverlay : UserControl
         {
             var ed = MultiColHost.Editors[i];
             int len = new TextRange(ed.Document.ContentStart, ed.Document.ContentEnd).Text.Length;
-            // 마지막 단이 아니고 정확히 단 끝(remaining == len) 인 경우 다음 단의 시작으로 보낸다.
-            // — 입력으로 텍스트가 단 경계를 넘어 다음 단의 시작에 떨어졌을 때 캐럿이
-            // 새 텍스트 직후(다음 단 첫 글자 뒤) 가 아니라 그 직전 단 끝에 머무르는 것을 막기 위함.
-            if (remaining < len || (remaining == len && i == MultiColHost.Editors.Count - 1))
+            // 캐럿을 이 단에 둘 조건:
+            // 1) remaining 이 단 길이 안쪽이면 무조건 (remaining < len)
+            // 2) 정확히 단 끝(remaining == len)이고 이 단에 콘텐츠가 있으면 — 다음 단의
+            //    "비어있는 시작" 보다 현재 단의 "콘텐츠 직후" 가 사용자 의도에 가까움
+            //    (입력으로 다음 단으로 흘러간 텍스트의 끝에 캐럿이 위치).
+            // 3) 모든 단을 다 소진해도 못 찾으면 폴백 — 마지막 단의 끝.
+            if (remaining < len || (remaining == len && len > 0))
             {
                 ed.CaretPosition = FindCaretAtCharOffset(ed.Document, remaining);
                 ed.Focus();

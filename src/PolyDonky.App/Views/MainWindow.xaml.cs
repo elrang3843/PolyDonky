@@ -966,7 +966,7 @@ public partial class MainWindow : Window
                     // 1단계: 안쪽 본문 편집 중이면 chrome 만 선택 상태로 전환 (포커스를 overlay 로 이동).
                     //        이후 Ctrl+C 가 글상자 자체를 복사하도록 해주는 진입점.
                     // 2단계: chrome 만 선택된 상태에서 다시 누르면 완전 해제.
-                    if (_selectedOverlay.InnerEditor.IsKeyboardFocusWithin)
+                    if (_selectedOverlay.IsEditorFocusWithin)
                     {
                         _selectedOverlay.Focus();
                         Keyboard.Focus(_selectedOverlay);
@@ -987,7 +987,7 @@ public partial class MainWindow : Window
             case Key.A when (Keyboard.Modifiers & ModifierKeys.Control) != 0:
                 // Ctrl+A — 본문 텍스트 + 모든 오버레이(이미지/도형/표/글상자) 통합 선택.
                 // 본문 InnerEditor(글상자 안쪽) 포커스 중이면 양보 (글상자 안쪽 텍스트만 SelectAll).
-                if (_selectedOverlay?.InnerEditor.IsKeyboardFocusWithin == true) break;
+                if (_selectedOverlay?.IsEditorFocusWithin == true) break;
                 SelectAllIncludingOverlays();
                 e.Handled = true;
                 break;
@@ -4755,8 +4755,7 @@ public partial class MainWindow : Window
     private bool TryCopySelectedFloatingObject()
     {
         if (_selectedOverlay is null) return false;
-        if (_selectedOverlay.InnerEditor.IsKeyboardFocusWithin
-            && !_selectedOverlay.InnerEditor.Selection.IsEmpty)
+        if (_selectedOverlay.IsEditorFocusWithin && _selectedOverlay.HasEditorTextSelection)
             return false;
 
         var json = System.Text.Json.JsonSerializer.Serialize(
@@ -4933,8 +4932,10 @@ public partial class MainWindow : Window
         }
         if (_selectedOverlay is { } overlay)
         {
-            // 안쪽 본문에 텍스트 selection 이 있으면 일반 텍스트 삭제에 양보.
-            if (overlay.InnerEditor.IsKeyboardFocusWithin && !overlay.InnerEditor.Selection.IsEmpty)
+            // 안쪽 편집기(단일 InnerEditor 또는 다단 column RTB)에 포커스가 있으면 — selection 유무
+            // 와 무관하게 — Del 키를 RTB 가 텍스트 삭제로 처리하도록 양보. 그렇지 않으면 글상자에서
+            // 텍스트 편집 중 Del 을 누를 때마다 글상자 자체가 통째로 삭제되는 버그 발생.
+            if (overlay.IsEditorFocusWithin)
                 return false;
             FloatingCanvas.Children.Remove(overlay);
             _viewModel?.RemoveOverlayBlock(overlay.Model);
@@ -4975,8 +4976,8 @@ public partial class MainWindow : Window
     /// <summary>붙여넣기는 클립보드 포맷에 따라 자동 분기.</summary>
     private bool TryPasteSelectedObject()
     {
-        // 글상자 InnerEditor 편집 중이면 RichTextBox 기본 붙여넣기에 양보
-        if (_selectedOverlay?.InnerEditor.IsKeyboardFocusWithin == true)
+        // 글상자 InnerEditor(또는 다단 column RTB) 편집 중이면 RichTextBox 기본 붙여넣기에 양보
+        if (_selectedOverlay?.IsEditorFocusWithin == true)
             return false;
 
         // 통합 멀티-선택 포맷 — 모든 부유 개체(글상자 포함)가 단일 Block 리스트로 직렬화됨

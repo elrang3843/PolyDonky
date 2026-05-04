@@ -17,6 +17,12 @@ namespace PolyDonky.App.Views;
 /// </summary>
 public static class TextBoxColumnLayout
 {
+    /// <summary>
+    /// 빈 단 placeholder 단락의 Id 마커. SyncMultiColContentToModel 에서 빈 placeholder 만
+    /// 골라 제거하기 위함 — 사용자 입력으로 채워지면 Id 가 클리어된다.
+    /// </summary>
+    public const string PlaceholderId = "§tbph";
+
     /// <summary>분배 결과 한 단의 정보.</summary>
     public sealed class ColumnSlice
     {
@@ -215,7 +221,9 @@ public static class TextBoxColumnLayout
         for (int col = 0; col < columnCount; col++)
         {
             var blocks = slotBlocks[col];
-            if (blocks.Count == 0) blocks.Add(new Paragraph()); // 빈 단도 편집 가능하도록 빈 단락 1개
+            // 빈 단도 편집 가능하도록 placeholder 단락 1개 추가. PlaceholderId 마커로
+            // SyncMultiColContentToModel 이 사용자 미입력 placeholder 를 골라 제거할 수 있게 함.
+            if (blocks.Count == 0) blocks.Add(new Paragraph { Id = PlaceholderId });
             var fd = FlowDocumentBuilder.BuildFromBlocks(blocks, page: null);
             fd.PageWidth   = colWidths[col];
             fd.PagePadding = new Thickness(0);
