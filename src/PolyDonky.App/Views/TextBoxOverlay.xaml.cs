@@ -552,6 +552,48 @@ public partial class TextBoxOverlay : UserControl
         // 본문 컨텍스트 메뉴는 InnerEditor 와 동일한 항목으로 (글자/문단 속성).
         rtb.ContextMenu = InnerEditor.ContextMenu;
         // 단락 정렬은 ApplyShapeFromModel 에서 일괄 적용.
+
+        // 단 경계 좌/우/상/하 화살표 — RTB 가 KeyDown(bubble) 에서 화살표를 처리해 e.Handled=true
+        // 로 만들기 때문에 PreviewKeyDown(tunnel) 에서 가로채야 단 이동이 가능.
+        rtb.PreviewKeyDown += OnColumnPreviewKeyDown;
+    }
+
+    private void OnColumnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not RichTextBox cur) return;
+        int idx = MultiColHost.IndexOf(cur);
+        if (idx < 0) return;
+
+        int targetIdx = -1;
+        bool moveToEnd = false;
+
+        if (e.Key == Key.Right || e.Key == Key.Down)
+        {
+            if (cur.CaretPosition.GetNextInsertionPosition(LogicalDirection.Forward) is null
+                && idx + 1 < MultiColHost.Editors.Count)
+            {
+                targetIdx = idx + 1;
+                moveToEnd = false;
+            }
+        }
+        else if (e.Key == Key.Left || e.Key == Key.Up)
+        {
+            if (cur.CaretPosition.GetNextInsertionPosition(LogicalDirection.Backward) is null
+                && idx - 1 >= 0)
+            {
+                targetIdx = idx - 1;
+                moveToEnd = true;
+            }
+        }
+
+        if (targetIdx >= 0)
+        {
+            var next = MultiColHost.Editors[targetIdx];
+            next.Focus();
+            Keyboard.Focus(next);
+            next.CaretPosition = moveToEnd ? next.Document.ContentEnd : next.Document.ContentStart;
+            e.Handled = true;
+        }
     }
 
     private void SyncEditorToModel()
@@ -695,17 +737,12 @@ public partial class TextBoxOverlay : UserControl
                 try { LoadMultiColContent(); }
                 finally { _suppressTextChanged = false; }
 
-                // 3) 캐럿 복원은 새 RTB 들이 layout pass 를 거친 뒤 Input 우선순위로 실행 —
-                //    SetupColumns 가 OLD RTB 를 visual tree 에서 제거할 때 keyboard focus 가
-                //    UserControl 로 잠시 떠나는데, 그 직후 동기적으로 ed.Focus() 를 호출하면
-                //    Window/UserControl 의 focus 처리 로직과 race 가 생겨 가끔 새 단으로
-                //    포커스가 이동하지 않는 문제 회피.
+                // 3) 전역 텍스트 오프셋을 새 분배에 매핑해 캐럿 복원 — 입력 텍스트가
+                //    다음 단으로 흘렀다면 캐럿도 다음 단의 같은 글자 직후로 이동.
+                //    동기적 복원 — Input 우선순위 deferral 은 사용자의 다음 keystroke 와
+                //    race 가 생겨 입력 char 가 엉뚱한 단으로 가거나 캐럿이 따라가지 않는 문제 유발.
                 if (globalCaretChars >= 0)
-                {
-                    int captured = globalCaretChars;
-                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input,
-                        () => RestoreCaretAtGlobalCharOffset(captured));
-                }
+                    RestoreCaretAtGlobalCharOffset(globalCaretChars);
             }
             catch { /* 실패 시 캐시 유지 */ }
         });
@@ -903,11 +940,9 @@ public partial class TextBoxOverlay : UserControl
 
     private void OnContextMenuCharFormat(object sender, RoutedEventArgs e)
     {
-        // Focus 를 미리 복귀시키면 inactive selection 이 collapse 되므로
-        // 다이얼로그에 활성 편집기 그대로 전달 — Selection 포인터는 포커스
-        // 없이도 유효하게 유지된다.
+        // 글자 속성: 선택이 있으면 그 영역, 없으면 caret 위치(이후 입력에 적용) — SelectAll 강제 안 함.
+        // 사용자가 "글상자 전체가 바뀌는" 동작을 원하지 않을 때 selection 없이 호출 가능.
         var ed = ActiveEditor;
-        if (ed.Selection.IsEmpty) ed.SelectAll();
         var dlg = new CharFormatWindow(ed) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
@@ -1093,51 +1128,14 @@ public partial class TextBoxOverlay : UserControl
     {
         // Del 은 chrome(편집기 외부 영역) 에서만 박스 삭제. 편집기(InnerEditor 또는 다단 RTB) 안에서
         // 발생한 Del 은 RTB 가 텍스트 삭제로 처리하도록 그대로 흘려보낸다.
-        // IsKeyboardFocusWithin 만으로는 일부 케이스(다단 RTB 가 시각적 트리에 막 추가된 직후 등)에서
-        // 잘못된 결과가 나와 박스가 통째로 삭제되는 버그가 있어 이벤트 소스로 직접 검사한다.
         if (e.Key == Key.Delete && !IsInsideEditor(e.OriginalSource as DependencyObject))
         {
             DeleteRequested?.Invoke(this, EventArgs.Empty);
             e.Handled = true;
             return;
         }
-
-        // 다단 모드 — 단 경계 좌/우/상/하 화살표로 인접 단 RTB 로 캐럿 이동.
-        if (IsMultiCol && MultiColHost.IsKeyboardFocusWithin && MultiColHost.ActiveEditor is { } cur)
-        {
-            int idx = MultiColHost.IndexOf(cur);
-            if (idx < 0) return;
-
-            int targetIdx = -1;
-            bool moveToEnd = false;
-
-            if (e.Key == Key.Right || e.Key == Key.Down)
-            {
-                if (cur.CaretPosition.GetNextInsertionPosition(LogicalDirection.Forward) is null
-                    && idx + 1 < MultiColHost.Editors.Count)
-                {
-                    targetIdx = idx + 1;
-                    moveToEnd = false;
-                }
-            }
-            else if (e.Key == Key.Left || e.Key == Key.Up)
-            {
-                if (cur.CaretPosition.GetNextInsertionPosition(LogicalDirection.Backward) is null
-                    && idx - 1 >= 0)
-                {
-                    targetIdx = idx - 1;
-                    moveToEnd = true;
-                }
-            }
-
-            if (targetIdx >= 0)
-            {
-                var next = MultiColHost.Editors[targetIdx];
-                next.Focus();
-                next.CaretPosition = moveToEnd ? next.Document.ContentEnd : next.Document.ContentStart;
-                e.Handled = true;
-            }
-        }
+        // 다단 단 경계 화살표 이동은 OnColumnPreviewKeyDown 에서 처리 — RTB 가 화살표를
+        // 가로채기 전에 PreviewKeyDown 에서 잡아야 함.
     }
 
     // ── 안쪽 편집기 여백 (사용자 padding + 비사각형 모양의 인셋) ────────

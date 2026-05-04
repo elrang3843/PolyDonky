@@ -2239,8 +2239,8 @@ public partial class MainWindow : Window
 
     private void OnFormatChar(object sender, RoutedEventArgs e)
     {
+        // 글자 속성: 선택이 있으면 그 영역만, 없으면 caret 위치(이후 입력에 적용) — SelectAll 강제 안 함.
         var editor = GetActiveTextEditor();
-        EnsureInnerSelectionForDialog(editor, _selectedOverlay);
         var dlg = new CharFormatWindow(editor) { Owner = this };
         if (dlg.ShowDialog() == true)
         {
