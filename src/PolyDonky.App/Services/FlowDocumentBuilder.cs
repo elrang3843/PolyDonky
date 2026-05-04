@@ -678,21 +678,16 @@ public static class FlowDocumentBuilder
     {
         if (!image.ShowTitle || string.IsNullOrWhiteSpace(image.Title)) return imageVisual;
 
-        // 제목 텍스트블록
-        WpfMedia.Brush titleFg = WpfMedia.Brushes.Black;
-        if (!string.IsNullOrEmpty(image.TitleColor))
-        {
-            try { titleFg = new WpfMedia.SolidColorBrush(
-                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.TitleColor)!); }
-            catch { }
-        }
-        WpfMedia.Brush? titleBg = null;
-        if (!string.IsNullOrEmpty(image.TitleBackgroundColor))
-        {
-            try { titleBg = new WpfMedia.SolidColorBrush(
-                    (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.TitleBackgroundColor)!); }
-            catch { }
-        }
+        var s = image.TitleStyle;
+
+        // 제목 텍스트블록 — RunStyle 기반 (CharFormatWindow 와 모델 공유).
+        WpfMedia.Brush titleFg = s.Foreground is { } fg
+            ? new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(fg.A, fg.R, fg.G, fg.B))
+            : WpfMedia.Brushes.Black;
+        WpfMedia.Brush? titleBg = s.Background is { } bg
+            ? new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(bg.A, bg.R, bg.G, bg.B))
+            : null;
+
         TextAlignment ta = image.TitleHAlign switch
         {
             ImageHAlign.Left   => TextAlignment.Left,
@@ -703,15 +698,25 @@ public static class FlowDocumentBuilder
         {
             Text          = image.Title,
             Foreground    = titleFg,
-            FontSize      = PtToDip(image.TitleFontSizePt > 0 ? image.TitleFontSizePt : 10),
-            FontWeight    = image.TitleBold   ? FontWeights.Bold   : FontWeights.Normal,
-            FontStyle     = image.TitleItalic ? FontStyles.Italic  : FontStyles.Normal,
+            FontSize      = PtToDip(s.FontSizePt > 0 ? s.FontSizePt : 10),
+            FontWeight    = s.Bold   ? FontWeights.Bold   : FontWeights.Normal,
+            FontStyle     = s.Italic ? FontStyles.Italic  : FontStyles.Normal,
             TextWrapping  = TextWrapping.Wrap,
             TextAlignment = ta,
         };
         if (titleBg is not null) tb.Background = titleBg;
-        if (!string.IsNullOrEmpty(image.TitleFontFamily))
-            tb.FontFamily = new WpfMedia.FontFamily(image.TitleFontFamily);
+        if (!string.IsNullOrEmpty(s.FontFamily))
+            tb.FontFamily = new WpfMedia.FontFamily(s.FontFamily);
+
+        // 텍스트 장식 (밑줄/취소선/위줄)
+        if (s.Underline || s.Strikethrough || s.Overline)
+        {
+            var decos = new System.Windows.TextDecorationCollection();
+            if (s.Underline)     foreach (var d in System.Windows.TextDecorations.Underline)    decos.Add(d);
+            if (s.Strikethrough) foreach (var d in System.Windows.TextDecorations.Strikethrough) decos.Add(d);
+            if (s.Overline)      foreach (var d in System.Windows.TextDecorations.OverLine)     decos.Add(d);
+            tb.TextDecorations = decos;
+        }
 
         // 오프셋 — TranslateTransform 으로 적용해 정렬·레이아웃에 영향 없이 미세 이동.
         if (Math.Abs(image.TitleOffsetXMm) > 0.001 || Math.Abs(image.TitleOffsetYMm) > 0.001)

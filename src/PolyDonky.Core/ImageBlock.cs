@@ -95,20 +95,9 @@ public sealed class ImageBlock : Block, IOverlayAnchored
     /// <summary>그림 제목 텍스트.</summary>
     public string? Title { get; set; }
 
-    /// <summary>제목 글꼴. null 이면 문서 기본 글꼴.</summary>
-    public string? TitleFontFamily { get; set; }
-
-    /// <summary>제목 글자 크기 (pt). 기본 10.</summary>
-    public double TitleFontSizePt { get; set; } = 10;
-
-    /// <summary>제목 글자 색상 hex. null/빈 문자열이면 검정.</summary>
-    public string? TitleColor { get; set; }
-
-    /// <summary>제목 배경색 hex. null/빈 문자열이면 배경 없음.</summary>
-    public string? TitleBackgroundColor { get; set; }
-
-    public bool TitleBold { get; set; }
-    public bool TitleItalic { get; set; }
+    /// <summary>제목 글자 서식 (글꼴·크기·굵게·기울임·글자색·배경색·밑줄·자간 등).
+    /// 서식 메뉴의 문자서식 다이얼로그(CharFormatWindow)와 동일한 모델을 공유한다.</summary>
+    public RunStyle TitleStyle { get; set; } = new();
 
     /// <summary>제목 배치 위치. 기본 Below.</summary>
     public ImageTitlePosition TitlePosition { get; set; } = ImageTitlePosition.Below;

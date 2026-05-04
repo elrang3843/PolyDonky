@@ -131,8 +131,6 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <CheckBox Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4"
@@ -143,41 +141,34 @@
                 <TextBox x:Name="TitleTextBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
                          Margin="4,2" />
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="글꼴:" VerticalAlignment="Center" />
-                <TextBox x:Name="TitleFontBox" Grid.Row="2" Grid.Column="1" Margin="4,2" />
-                <TextBlock Grid.Row="2" Grid.Column="2" Text="크기 (pt):" VerticalAlignment="Center" />
-                <TextBox x:Name="TitleSizeBox" Grid.Row="2" Grid.Column="3" Margin="4,2" />
-
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="글자색:" VerticalAlignment="Center" />
-                <TextBox x:Name="TitleColorBox" Grid.Row="3" Grid.Column="1" Margin="4,2" />
-                <TextBlock Grid.Row="3" Grid.Column="2" Text="배경색:" VerticalAlignment="Center" />
-                <TextBox x:Name="TitleBgColorBox" Grid.Row="3" Grid.Column="3" Margin="4,2" />
-
-                <StackPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="글자 서식:" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
                             Orientation="Horizontal" Margin="4,2">
-                    <CheckBox x:Name="TitleBoldCheck"   Content="굵게"   VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <CheckBox x:Name="TitleItalicCheck" Content="기울임" VerticalAlignment="Center" />
+                    <Button x:Name="TitleStyleBtn" Content="글자 서식..." Click="OnTitleStyleClick"
+                            Padding="10,3" Margin="0,0,8,0" />
+                    <TextBlock x:Name="TitleStylePreview" VerticalAlignment="Center"
+                               Foreground="{DynamicResource OnSurfaceMuted}" />
                 </StackPanel>
 
-                <TextBlock Grid.Row="5" Grid.Column="0" Text="배치:" VerticalAlignment="Center" />
-                <ComboBox x:Name="TitlePositionCombo" Grid.Row="5" Grid.Column="1" Margin="4,2">
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="배치:" VerticalAlignment="Center" />
+                <ComboBox x:Name="TitlePositionCombo" Grid.Row="3" Grid.Column="1" Margin="4,2">
                     <ComboBoxItem Tag="Above">그림 위(외부)</ComboBoxItem>
                     <ComboBoxItem Tag="Below">그림 아래(외부)</ComboBoxItem>
                     <ComboBoxItem Tag="OverlayTop">그림 위에 겹침 — 상단</ComboBoxItem>
                     <ComboBoxItem Tag="OverlayMiddle">그림 위에 겹침 — 가운데</ComboBoxItem>
                     <ComboBoxItem Tag="OverlayBottom">그림 위에 겹침 — 하단</ComboBoxItem>
                 </ComboBox>
-                <TextBlock Grid.Row="5" Grid.Column="2" Text="가로 정렬:" VerticalAlignment="Center" />
-                <ComboBox x:Name="TitleHAlignCombo" Grid.Row="5" Grid.Column="3" Margin="4,2">
+                <TextBlock Grid.Row="3" Grid.Column="2" Text="가로 정렬:" VerticalAlignment="Center" />
+                <ComboBox x:Name="TitleHAlignCombo" Grid.Row="3" Grid.Column="3" Margin="4,2">
                     <ComboBoxItem Tag="Left">왼쪽</ComboBoxItem>
                     <ComboBoxItem Tag="Center">가운데</ComboBoxItem>
                     <ComboBoxItem Tag="Right">오른쪽</ComboBoxItem>
                 </ComboBox>
 
-                <TextBlock Grid.Row="6" Grid.Column="0" Text="X 오프셋(mm):" VerticalAlignment="Center" />
-                <TextBox x:Name="TitleOffsetXBox" Grid.Row="6" Grid.Column="1" Margin="4,2" />
-                <TextBlock Grid.Row="6" Grid.Column="2" Text="Y 오프셋(mm):" VerticalAlignment="Center" />
-                <TextBox x:Name="TitleOffsetYBox" Grid.Row="6" Grid.Column="3" Margin="4,2" />
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="X 오프셋(mm):" VerticalAlignment="Center" />
+                <TextBox x:Name="TitleOffsetXBox" Grid.Row="4" Grid.Column="1" Margin="4,2" />
+                <TextBlock Grid.Row="4" Grid.Column="2" Text="Y 오프셋(mm):" VerticalAlignment="Center" />
+                <TextBox x:Name="TitleOffsetYBox" Grid.Row="4" Grid.Column="3" Margin="4,2" />
             </Grid>
         </GroupBox>
 

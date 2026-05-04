@@ -63,19 +63,38 @@ public partial class ImagePropertiesWindow : Window
         // 그림 제목
         ShowTitleCheck.IsChecked    = _image.ShowTitle;
         TitleTextBox.Text           = _image.Title ?? string.Empty;
-        TitleFontBox.Text           = _image.TitleFontFamily ?? string.Empty;
-        TitleSizeBox.Text           = _image.TitleFontSizePt.ToString("0.##");
-        TitleColorBox.Text          = _image.TitleColor ?? string.Empty;
-        TitleBgColorBox.Text        = _image.TitleBackgroundColor ?? string.Empty;
-        TitleBoldCheck.IsChecked    = _image.TitleBold;
-        TitleItalicCheck.IsChecked  = _image.TitleItalic;
         SelectComboByTag(TitlePositionCombo, _image.TitlePosition.ToString());
         SelectComboByTag(TitleHAlignCombo,   _image.TitleHAlign.ToString());
         TitleOffsetXBox.Text        = _image.TitleOffsetXMm.ToString("0.##");
         TitleOffsetYBox.Text        = _image.TitleOffsetYMm.ToString("0.##");
+        UpdateTitleStylePreview();
 
         _suppressSync = false;
         UpdateBorderPreview();
+    }
+
+    private void OnTitleStyleClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new CharFormatWindow(_image.TitleStyle) { Owner = this };
+        if (dlg.ShowDialog() == true && dlg.ResultStyle is { } result)
+        {
+            _image.TitleStyle = result;
+            UpdateTitleStylePreview();
+        }
+    }
+
+    private void UpdateTitleStylePreview()
+    {
+        var s = _image.TitleStyle;
+        var parts = new System.Collections.Generic.List<string>();
+        if (!string.IsNullOrEmpty(s.FontFamily)) parts.Add(s.FontFamily);
+        parts.Add($"{s.FontSizePt:0.#}pt");
+        if (s.Bold)       parts.Add("굵게");
+        if (s.Italic)     parts.Add("기울임");
+        if (s.Underline)  parts.Add("밑줄");
+        if (s.Foreground is { } fg) parts.Add($"글자 #{fg.R:X2}{fg.G:X2}{fg.B:X2}");
+        if (s.Background is { } bg) parts.Add($"배경 #{bg.R:X2}{bg.G:X2}{bg.B:X2}");
+        TitleStylePreview.Text = string.Join(" · ", parts);
     }
 
     private static void SelectComboByTag(ComboBox cbo, string tag)
@@ -179,15 +198,9 @@ public partial class ImagePropertiesWindow : Window
 
         _image.Description = DescriptionBox.Text.Trim() is { Length: > 0 } d ? d : null;
 
-        // 그림 제목
+        // 그림 제목 — 글자 서식은 OnTitleStyleClick 에서 이미 _image.TitleStyle 에 반영됨.
         _image.ShowTitle = ShowTitleCheck.IsChecked == true;
         _image.Title     = string.IsNullOrWhiteSpace(TitleTextBox.Text) ? null : TitleTextBox.Text;
-        _image.TitleFontFamily = string.IsNullOrWhiteSpace(TitleFontBox.Text) ? null : TitleFontBox.Text.Trim();
-        if (double.TryParse(TitleSizeBox.Text, out double tfs) && tfs > 0) _image.TitleFontSizePt = tfs;
-        _image.TitleColor           = string.IsNullOrWhiteSpace(TitleColorBox.Text)   ? null : TitleColorBox.Text.Trim();
-        _image.TitleBackgroundColor = string.IsNullOrWhiteSpace(TitleBgColorBox.Text) ? null : TitleBgColorBox.Text.Trim();
-        _image.TitleBold   = TitleBoldCheck.IsChecked   == true;
-        _image.TitleItalic = TitleItalicCheck.IsChecked == true;
         if (GetComboTag(TitlePositionCombo) is string tpStr && Enum.TryParse<ImageTitlePosition>(tpStr, out var tp))
             _image.TitlePosition = tp;
         if (GetComboTag(TitleHAlignCombo) is string thStr && Enum.TryParse<ImageHAlign>(thStr, out var th))
