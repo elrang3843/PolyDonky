@@ -708,6 +708,15 @@ public partial class TextBoxOverlay : UserControl
         return (innerW, innerH);
     }
 
+    /// <summary>
+    /// 캐럿 위치 마커 — 리플로우 동안 콘텐츠와 함께 떠다니다가 재분배 후 캐럿 위치를 알려준다.
+    /// PUA(사용자 영역) 코드포인트 3 개로 구성 — 사용자 텍스트와 충돌 가능성이 거의 없고,
+    /// 폭이 0(또는 폴백 글리프) 라 시각 영향 미미. offset 기반 추적으로는
+    /// 단락 경계(엔터 직후) / 다단 fragment 분할에서 위치를 정확히 복원할 수 없어
+    /// "콘텐츠를 따라다니는 마커" 방식으로 대체.
+    /// </summary>
+    private const string CaretMarker = "\u2060\u2060\u2060";
+
     /// <summary>다단 라이브 리플로우 — TextChanged 시 콘텐츠 재분배 + RTB 재구성.</summary>
     private void ScheduleColumnReflow()
     {
@@ -727,78 +736,63 @@ public partial class TextBoxOverlay : UserControl
 
             try
             {
-                // 캐럿을 "전역 텍스트 오프셋"(=모든 단의 텍스트 길이 합산) 으로 추적.
-                int globalCaretChars = ComputeGlobalCaretCharOffset();
+                // 1) 캐럿 위치에 마커 삽입 — 리플로우/재분배 동안 콘텐츠와 함께 이동.
+                bool markerInserted = InsertCaretMarker();
 
-                // 1) 모든 단 파싱 + frag 머지 → 모델 갱신
+                // 2) 모든 단 파싱 + frag 머지 → 모델 갱신
                 SyncMultiColContentToModel();
-                // 2) 새 분배로 다시 채움
+                // 3) 새 분배로 다시 채움
                 _suppressTextChanged = true;
                 try { LoadMultiColContent(); }
                 finally { _suppressTextChanged = false; }
 
-                // 3) 전역 텍스트 오프셋을 새 분배에 매핑해 캐럿 복원 — 입력 텍스트가
-                //    다음 단으로 흘렀다면 캐럿도 다음 단의 같은 글자 직후로 이동.
-                //    동기적 복원 — Input 우선순위 deferral 은 사용자의 다음 keystroke 와
-                //    race 가 생겨 입력 char 가 엉뚱한 단으로 가거나 캐럿이 따라가지 않는 문제 유발.
-                if (globalCaretChars >= 0)
-                    RestoreCaretAtGlobalCharOffset(globalCaretChars);
+                // 4) 마커 위치 찾아 캐럿/포커스 복원 + 마커 제거.
+                if (markerInserted)
+                    RestoreCaretAtMarker();
             }
             catch { /* 실패 시 캐시 유지 */ }
         });
     }
 
-    /// <summary>현재 캐럿의 전역 텍스트 오프셋(모든 단의 가시 문자 누적).</summary>
-    /// <remarks>
-    /// 가시 문자(=Text run 길이) 만 카운트. <c>TextRange.Text</c> 는 단락 경계마다 \r\n 을
-    /// 포함해 길이가 부풀어 <see cref="FindCaretAtCharOffset"/>(가시 문자 기준)와 어긋난다.
-    /// 다단에서 단을 건너갈 때 단마다 \r\n 만큼씩 어긋나 캐럿이 입력 끝이 아닌 중간에 떨어지는 버그.
-    /// </remarks>
-    private int ComputeGlobalCaretCharOffset()
+    /// <summary>활성 단 RTB 의 현재 캐럿 위치에 <see cref="CaretMarker"/> 텍스트 삽입.</summary>
+    private bool InsertCaretMarker()
     {
-        if (MultiColHost.ActiveEditor is null) return -1;
-        int actIdx = MultiColHost.IndexOf(MultiColHost.ActiveEditor);
-        if (actIdx < 0) return -1;
-
-        int total = 0;
-        for (int i = 0; i < actIdx; i++)
-        {
-            var doc = MultiColHost.Editors[i].Document;
-            total += CountVisibleChars(doc.ContentStart, doc.ContentEnd);
-        }
+        var actEd = MultiColHost.ActiveEditor;
+        if (actEd is null) return false;
         try
         {
-            var actEd = MultiColHost.ActiveEditor;
-            total += CountVisibleChars(actEd.Document.ContentStart, actEd.CaretPosition);
-            return total;
+            _suppressTextChanged = true;
+            try
+            {
+                new TextRange(actEd.CaretPosition, actEd.CaretPosition).Text = CaretMarker;
+            }
+            finally { _suppressTextChanged = false; }
+            return true;
         }
-        catch { return -1; }
+        catch { return false; }
     }
 
-    /// <summary>전역 텍스트 오프셋 → (단 인덱스, 단 내 위치) 매핑 후 캐럿/포커스 복원.</summary>
-    private void RestoreCaretAtGlobalCharOffset(int globalOffset)
+    /// <summary>모든 단 RTB 에서 마커를 찾아 첫 발견 위치에 캐럿/포커스 설정 + 마커 제거.</summary>
+    private void RestoreCaretAtMarker()
     {
-        int remaining = globalOffset;
         for (int i = 0; i < MultiColHost.Editors.Count; i++)
         {
             var ed = MultiColHost.Editors[i];
-            int len = CountVisibleChars(ed.Document.ContentStart, ed.Document.ContentEnd);
-            // 캐럿을 이 단에 둘 조건:
-            // 1) remaining 이 단 길이 안쪽이면 무조건 (remaining < len)
-            // 2) 정확히 단 끝(remaining == len)이고 이 단에 콘텐츠가 있고 마지막 단이거나
-            //    다음 단들이 모두 비어있으면 — 콘텐츠 직후가 사용자 의도.
-            //    (다음 단에 콘텐츠가 있으면 "단 사이"이므로 다음 단의 시작이 더 자연스럽다)
-            // 3) 모든 단을 다 소진해도 못 찾으면 폴백 — 마지막 단의 끝.
-            bool atExactEnd = remaining == len && len > 0;
-            bool followingColsEmpty = atExactEnd && AllFollowingColsEmpty(i);
-            if (remaining < len || (atExactEnd && followingColsEmpty))
+            var (start, end) = FindMarker(ed.Document);
+            if (start is not null && end is not null)
             {
-                FocusEditorWithCaret(ed, FindCaretAtCharOffset(ed.Document, remaining));
+                _suppressTextChanged = true;
+                try
+                {
+                    // 마커 텍스트 제거 — TextPointer 는 live 라 삭제 후에도 같은 위치 유지.
+                    new TextRange(start, end).Text = "";
+                }
+                finally { _suppressTextChanged = false; }
+                FocusEditorWithCaret(ed, start);
                 return;
             }
-            remaining -= len;
         }
-        // 폴백 — 마지막 단의 끝으로.
+        // 마커를 못 찾으면 폴백 — 마지막 단 끝(예전 동작 보존).
         if (MultiColHost.Editors.Count > 0)
         {
             var last = MultiColHost.Editors[^1];
@@ -806,45 +800,31 @@ public partial class TextBoxOverlay : UserControl
         }
     }
 
-    private bool AllFollowingColsEmpty(int afterIdx)
+    /// <summary>FlowDocument 안에서 <see cref="CaretMarker"/> 의 시작/끝 TextPointer 를 반환.</summary>
+    private static (TextPointer? start, TextPointer? end) FindMarker(FlowDocument doc)
     {
-        for (int j = afterIdx + 1; j < MultiColHost.Editors.Count; j++)
+        var pointer = doc.ContentStart;
+        while (pointer != null && pointer.CompareTo(doc.ContentEnd) < 0)
         {
-            var d = MultiColHost.Editors[j].Document;
-            if (CountVisibleChars(d.ContentStart, d.ContentEnd) > 0) return false;
-        }
-        return true;
-    }
-
-    /// <summary>start ~ end 사이 가시 문자(Text run 의 길이) 누적. 단락 경계 \r\n 등 미가시 토큰 제외.</summary>
-    private static int CountVisibleChars(TextPointer start, TextPointer end)
-    {
-        if (start == null || end == null || start.CompareTo(end) >= 0) return 0;
-        int count = 0;
-        var p = start;
-        while (p != null && p.CompareTo(end) < 0)
-        {
-            if (p.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+            if (pointer.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
             {
-                int run = p.GetTextRunLength(LogicalDirection.Forward);
-                var nextP = p.GetPositionAtOffset(run, LogicalDirection.Forward);
-                if (nextP == null) break;
-                if (nextP.CompareTo(end) > 0)
+                int run = pointer.GetTextRunLength(LogicalDirection.Forward);
+                string text = pointer.GetTextInRun(LogicalDirection.Forward);
+                int idx = text.IndexOf(CaretMarker, StringComparison.Ordinal);
+                if (idx >= 0)
                 {
-                    // run 이 end 를 넘어가면 end 까지만 카운트
-                    count += p.GetOffsetToPosition(end);
-                    break;
+                    var start = pointer.GetPositionAtOffset(idx, LogicalDirection.Forward);
+                    var end   = pointer.GetPositionAtOffset(idx + CaretMarker.Length, LogicalDirection.Backward);
+                    return (start, end);
                 }
-                count += run;
-                p = nextP;
+                pointer = pointer.GetPositionAtOffset(run, LogicalDirection.Forward) ?? doc.ContentEnd;
             }
             else
             {
-                p = p.GetNextContextPosition(LogicalDirection.Forward);
-                if (p == null) break;
+                pointer = pointer.GetNextContextPosition(LogicalDirection.Forward) ?? doc.ContentEnd;
             }
         }
-        return count;
+        return (null, null);
     }
 
     /// <summary>편집기에 포커스 설정 + 캐럿 위치 적용. SetupColumns 직후 발생할 수 있는 focus race 회피.</summary>
@@ -855,33 +835,6 @@ public partial class TextBoxOverlay : UserControl
         ed.Focus();
         Keyboard.Focus(ed);
         ed.CaretPosition = caret;
-    }
-
-    /// <summary>FlowDocument 내에서 텍스트 문자 offset 위치의 TextPointer 를 찾는다.</summary>
-    private static TextPointer FindCaretAtCharOffset(FlowDocument doc, int charOffset)
-    {
-        if (charOffset <= 0) return doc.ContentStart;
-        var pointer = doc.ContentStart;
-        int consumed = 0;
-        while (pointer != null && pointer.CompareTo(doc.ContentEnd) < 0)
-        {
-            if (pointer.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
-            {
-                int run = pointer.GetTextRunLength(LogicalDirection.Forward);
-                if (consumed + run >= charOffset)
-                {
-                    return pointer.GetPositionAtOffset(charOffset - consumed, LogicalDirection.Forward)
-                           ?? doc.ContentEnd;
-                }
-                consumed += run;
-                pointer = pointer.GetPositionAtOffset(run, LogicalDirection.Forward) ?? doc.ContentEnd;
-            }
-            else
-            {
-                pointer = pointer.GetNextContextPosition(LogicalDirection.Forward) ?? doc.ContentEnd;
-            }
-        }
-        return doc.ContentEnd;
     }
 
     private void OnColumnTextChanged(object? sender, TextChangedEventArgs e)
