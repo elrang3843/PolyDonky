@@ -1,7 +1,10 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using WpfDoc = System.Windows.Documents;
 using System.Windows.Shapes;
 using PolyDonky.Core;
 using WpfMedia = System.Windows.Media;
@@ -32,6 +35,7 @@ public partial class PageFormatWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         PopulateSizeCombo();
+        InitHFToolbar();
         LoadUI();
         if (_initialTab > 0 && _initialTab < MainTabControl.Items.Count)
             MainTabControl.SelectedIndex = _initialTab;
@@ -148,13 +152,13 @@ public partial class PageFormatWindow : Window
             TxtMarginHeader.Text = _settings.MarginHeaderMm.ToString("0.##");
             TxtMarginFooter.Text = _settings.MarginFooterMm.ToString("0.##");
 
-            // 머리말/꼬리말 내용
-            TxtHeaderLeft.Text   = _settings.Header.Left.GetPlainText();
-            TxtHeaderCenter.Text = _settings.Header.Center.GetPlainText();
-            TxtHeaderRight.Text  = _settings.Header.Right.GetPlainText();
-            TxtFooterLeft.Text   = _settings.Footer.Left.GetPlainText();
-            TxtFooterCenter.Text = _settings.Footer.Center.GetPlainText();
-            TxtFooterRight.Text  = _settings.Footer.Right.GetPlainText();
+            // 머리말/꼬리말 내용 — RichTextBox 로드 (Loaded 이후이므로 컨트롤이 존재)
+            LoadSlotToRtb(_settings.Header.Left,   RtbHeaderLeft);
+            LoadSlotToRtb(_settings.Header.Center, RtbHeaderCenter);
+            LoadSlotToRtb(_settings.Header.Right,  RtbHeaderRight);
+            LoadSlotToRtb(_settings.Footer.Left,   RtbFooterLeft);
+            LoadSlotToRtb(_settings.Footer.Center, RtbFooterCenter);
+            LoadSlotToRtb(_settings.Footer.Right,  RtbFooterRight);
 
             // 여백 안내선
             ChkShowMarginGuides.IsChecked = _settings.ShowMarginGuides;
@@ -376,11 +380,256 @@ public partial class PageFormatWindow : Window
             BtnColumnDividerColorPick.Background = new WpfMedia.SolidColorBrush(WpfMedia.Colors.Gray);
     }
 
-    // ── 머리말/꼬리말 ────────────────────────────────────────────
+    // ── 머리말/꼬리말 툴바 ──────────────────────────────────────
 
-    private void OnHeaderFooterChanged(object sender, TextChangedEventArgs e)
+    private RichTextBox? _focusedRtb;
+    private WpfMedia.Color _hfFontColor = WpfMedia.Colors.Black;
+    private bool _suppressFontSizeChange;
+
+    private void InitHFToolbar()
     {
-        // 머리말/꼬리말 UI 편집 기능은 별도 에이전트가 담당 — 현재는 no-op.
+        var sizes = new[] { "6", "7", "8", "9", "10", "10.5", "11", "12",
+                            "14", "16", "18", "20", "22", "24", "28", "36", "48", "72" };
+        foreach (var s in sizes)
+            CboHFFontSize.Items.Add(s);
+        CboHFFontSize.Text = "11";
+
+        var tokens = new (string display, string token)[]
+        {
+            ("{PAGE} — 페이지 번호",     "{PAGE}"),
+            ("{NUMPAGES} — 전체 페이지", "{NUMPAGES}"),
+            ("{DATE} — 날짜",           "{DATE}"),
+            ("{TIME} — 시간",           "{TIME}"),
+            ("{TITLE} — 제목",          "{TITLE}"),
+            ("{AUTHOR} — 작성자",       "{AUTHOR}"),
+            ("{FILENAME} — 파일명",     "{FILENAME}"),
+        };
+        foreach (var (display, token) in tokens)
+            CboHFToken.Items.Add(new ComboBoxItem { Content = display, Tag = token });
+    }
+
+    private void OnRtbGotFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is RichTextBox rtb)
+            _focusedRtb = rtb;
+    }
+
+    private void OnRtbSelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RichTextBox rtb) return;
+        var sel = rtb.Selection;
+
+        var fw = sel.GetPropertyValue(WpfDoc.TextElement.FontWeightProperty);
+        BtnHFBold.IsChecked = fw is FontWeight w && w == FontWeights.Bold;
+
+        var fs = sel.GetPropertyValue(WpfDoc.TextElement.FontStyleProperty);
+        BtnHFItalic.IsChecked = fs is FontStyle st && st == FontStyles.Italic;
+
+        var td = sel.GetPropertyValue(WpfDoc.Inline.TextDecorationsProperty) as TextDecorationCollection;
+        BtnHFUnderline.IsChecked  = td?.Any(d => d.Location == TextDecorationLocation.Underline)     == true;
+        BtnHFStrike.IsChecked     = td?.Any(d => d.Location == TextDecorationLocation.Strikethrough) == true;
+
+        var sz = sel.GetPropertyValue(WpfDoc.TextElement.FontSizeProperty);
+        if (sz is double dip && !double.IsNaN(dip))
+        {
+            _suppressFontSizeChange = true;
+            CboHFFontSize.Text = (dip * 72.0 / 96.0).ToString("0.##");
+            _suppressFontSizeChange = false;
+        }
+
+        var fg = sel.GetPropertyValue(WpfDoc.TextElement.ForegroundProperty) as SolidColorBrush;
+        if (fg is not null)
+        {
+            _hfFontColor = fg.Color;
+            HFColorBar.Fill = new SolidColorBrush(_hfFontColor);
+        }
+    }
+
+    private void OnHFBold(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        WpfDoc.EditingCommands.ToggleBold.Execute(null, _focusedRtb);
+        _focusedRtb.Focus();
+    }
+
+    private void OnHFItalic(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        WpfDoc.EditingCommands.ToggleItalic.Execute(null, _focusedRtb);
+        _focusedRtb.Focus();
+    }
+
+    private void OnHFUnderline(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        WpfDoc.EditingCommands.ToggleUnderline.Execute(null, _focusedRtb);
+        _focusedRtb.Focus();
+    }
+
+    private void OnHFStrikethrough(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        var sel = _focusedRtb.Selection;
+        var td = sel.GetPropertyValue(WpfDoc.Inline.TextDecorationsProperty) as TextDecorationCollection;
+        bool hasStrike = td?.Any(d => d.Location == TextDecorationLocation.Strikethrough) == true;
+        var newDec = new TextDecorationCollection(
+            hasStrike ? (td!.Where(d => d.Location != TextDecorationLocation.Strikethrough))
+                      : (td ?? Enumerable.Empty<TextDecoration>()).Append(TextDecorations.Strikethrough[0]));
+        sel.ApplyPropertyValue(WpfDoc.Inline.TextDecorationsProperty, newDec);
+        _focusedRtb.Focus();
+    }
+
+    private void OnHFFontSizeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFontSizeChange || _focusedRtb is null) return;
+        if (CboHFFontSize.SelectedItem is string s && double.TryParse(s, out double pt) && pt > 0)
+            ApplyFontSize(pt);
+    }
+
+    private void OnHFFontSizeLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        if (double.TryParse(CboHFFontSize.Text, out double pt) && pt > 0)
+            ApplyFontSize(pt);
+    }
+
+    private void ApplyFontSize(double pt)
+    {
+        _focusedRtb?.Selection.ApplyPropertyValue(
+            WpfDoc.TextElement.FontSizeProperty, pt * 96.0 / 72.0);
+        _focusedRtb?.Focus();
+    }
+
+    private void OnHFFontColor(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        var dlg = new System.Windows.Forms.ColorDialog
+        {
+            Color            = System.Drawing.Color.FromArgb(_hfFontColor.A, _hfFontColor.R, _hfFontColor.G, _hfFontColor.B),
+            FullOpen         = true,
+            AllowFullOpen    = true,
+        };
+        if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            var c = dlg.Color;
+            _hfFontColor    = WpfMedia.Color.FromArgb(c.A, c.R, c.G, c.B);
+            HFColorBar.Fill = new SolidColorBrush(_hfFontColor);
+            _focusedRtb.Selection.ApplyPropertyValue(
+                WpfDoc.TextElement.ForegroundProperty, new SolidColorBrush(_hfFontColor));
+            _focusedRtb.Focus();
+        }
+    }
+
+    private void OnInsertToken(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        if (CboHFToken.SelectedItem is ComboBoxItem ci && ci.Tag is string token)
+        {
+            _focusedRtb.Selection.Text = token;
+            _focusedRtb.CaretPosition  = _focusedRtb.Selection.End;
+            _focusedRtb.Focus();
+        }
+    }
+
+    // ── 슬롯 ↔ FlowDocument 변환 ─────────────────────────────────
+
+    private static void LoadSlotToRtb(HeaderFooterSlot slot, RichTextBox rtb)
+    {
+        var fd = new WpfDoc.FlowDocument { PagePadding = new Thickness(0) };
+        if (slot.IsEmpty)
+        {
+            fd.Blocks.Add(new WpfDoc.Paragraph());
+        }
+        else
+        {
+            foreach (var para in slot.Paragraphs)
+            {
+                var wpfPara = new WpfDoc.Paragraph { Margin = new Thickness(0) };
+                foreach (var run in para.Runs)
+                {
+                    var wpfRun = new WpfDoc.Run(run.Text);
+                    ApplyRunStyleToRun(wpfRun, run.Style);
+                    wpfPara.Inlines.Add(wpfRun);
+                }
+                if (!wpfPara.Inlines.Any())
+                    wpfPara.Inlines.Add(new WpfDoc.Run(string.Empty));
+                fd.Blocks.Add(wpfPara);
+            }
+        }
+        rtb.Document = fd;
+    }
+
+    private static HeaderFooterSlot SaveRtbToSlot(RichTextBox rtb)
+    {
+        var slot = new HeaderFooterSlot();
+        foreach (var block in rtb.Document.Blocks)
+        {
+            if (block is not WpfDoc.Paragraph para) continue;
+            var corePara = new PolyDonky.Core.Paragraph();
+            ExtractInlines(para.Inlines, corePara);
+            if (corePara.Runs.Any(r => !string.IsNullOrEmpty(r.Text)))
+                slot.Paragraphs.Add(corePara);
+        }
+        return slot;
+    }
+
+    private static void ExtractInlines(WpfDoc.InlineCollection inlines, PolyDonky.Core.Paragraph para)
+    {
+        foreach (var inline in inlines)
+        {
+            switch (inline)
+            {
+                case WpfDoc.Run run when !string.IsNullOrEmpty(run.Text):
+                    para.Runs.Add(new PolyDonky.Core.Run
+                    {
+                        Text  = run.Text,
+                        Style = ExtractRunStyle(run),
+                    });
+                    break;
+                case WpfDoc.Span span:
+                    ExtractInlines(span.Inlines, para);
+                    break;
+            }
+        }
+    }
+
+    private static PolyDonky.Core.RunStyle ExtractRunStyle(WpfDoc.TextElement elem)
+    {
+        double dip   = (double)elem.GetValue(WpfDoc.TextElement.FontSizeProperty);
+        double pt    = double.IsNaN(dip) ? 11.0 : dip * 72.0 / 96.0;
+        var fw       = (FontWeight)elem.GetValue(WpfDoc.TextElement.FontWeightProperty);
+        var fst      = (FontStyle) elem.GetValue(WpfDoc.TextElement.FontStyleProperty);
+        var ff       = elem.GetValue(WpfDoc.TextElement.FontFamilyProperty) as FontFamily;
+        var fg       = elem.GetValue(WpfDoc.TextElement.ForegroundProperty) as SolidColorBrush;
+        var td       = elem.GetValue(WpfDoc.Inline.TextDecorationsProperty) as TextDecorationCollection;
+        return new PolyDonky.Core.RunStyle
+        {
+            FontSizePt    = pt,
+            FontFamily    = ff?.Source,
+            Bold          = fw == FontWeights.Bold,
+            Italic        = fst == FontStyles.Italic,
+            Underline     = td?.Any(d => d.Location == TextDecorationLocation.Underline)     == true,
+            Strikethrough = td?.Any(d => d.Location == TextDecorationLocation.Strikethrough) == true,
+            Foreground    = fg is not null
+                ? new PolyDonky.Core.Color(fg.Color.R, fg.Color.G, fg.Color.B, fg.Color.A)
+                : null,
+        };
+    }
+
+    private static void ApplyRunStyleToRun(WpfDoc.Run wpfRun, PolyDonky.Core.RunStyle s)
+    {
+        if (s.FontSizePt > 0) wpfRun.FontSize = s.FontSizePt * 96.0 / 72.0;
+        wpfRun.FontWeight = s.Bold   ? FontWeights.Bold  : FontWeights.Normal;
+        wpfRun.FontStyle  = s.Italic ? FontStyles.Italic : FontStyles.Normal;
+        if (!string.IsNullOrEmpty(s.FontFamily))
+            wpfRun.FontFamily = new FontFamily(s.FontFamily);
+        if (s.Foreground is { } fg)
+            wpfRun.Foreground = new SolidColorBrush(
+                WpfMedia.Color.FromArgb(fg.A, fg.R, fg.G, fg.B));
+        var decs = new TextDecorationCollection();
+        if (s.Underline)     decs.Add(TextDecorations.Underline[0]);
+        if (s.Strikethrough) decs.Add(TextDecorations.Strikethrough[0]);
+        if (decs.Count > 0)  wpfRun.TextDecorations = decs;
     }
 
     // ── 미리보기 ─────────────────────────────────────────────────
@@ -518,6 +767,18 @@ public partial class PageFormatWindow : Window
 
     private void OnOk(object sender, RoutedEventArgs e)
     {
+        _settings.Header = new HeaderFooterContent
+        {
+            Left   = SaveRtbToSlot(RtbHeaderLeft),
+            Center = SaveRtbToSlot(RtbHeaderCenter),
+            Right  = SaveRtbToSlot(RtbHeaderRight),
+        };
+        _settings.Footer = new HeaderFooterContent
+        {
+            Left   = SaveRtbToSlot(RtbFooterLeft),
+            Center = SaveRtbToSlot(RtbFooterCenter),
+            Right  = SaveRtbToSlot(RtbFooterRight),
+        };
         ResultSettings = Clone(_settings);
         DialogResult   = true;
     }
