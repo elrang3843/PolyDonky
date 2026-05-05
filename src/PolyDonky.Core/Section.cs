@@ -88,12 +88,51 @@ public enum TextProgression
     Leftward  = 1,  // 왼쪽으로   (가로: 오→왼 / 세로: 행이 오→왼, 전통 CJK)
 }
 
-// ── 머리말·꼬리말 정의 (이번 사이클은 모델만; UI는 다음 사이클) ──────────
+// ── 머리말·꼬리말 정의 ──────────────────────────────────────────────────
+/// <summary>머리말/꼬리말 좌·가운데·오른쪽 각 슬롯 하나. 여러 단락을 담을 수 있다.</summary>
+public sealed class HeaderFooterSlot
+{
+    /// <summary>단락 목록. 보통 1개; 여러 단락도 지원.</summary>
+    public List<Paragraph> Paragraphs { get; set; } = new();
+
+    public bool IsEmpty =>
+        Paragraphs.Count == 0 ||
+        Paragraphs.All(p => p.Runs.Count == 0 ||
+                            p.Runs.All(r => string.IsNullOrEmpty(r.Text)));
+
+    public string GetPlainText() =>
+        string.Join(Environment.NewLine, Paragraphs.Select(p => p.GetPlainText()));
+
+    public HeaderFooterSlot Clone() => new()
+    {
+        Paragraphs = Paragraphs.Select(p => p.Clone()).ToList(),
+    };
+
+    /// <summary>단순 문자열에서 단락 하나짜리 슬롯을 만든다.</summary>
+    public static HeaderFooterSlot FromText(string? text)
+    {
+        var slot = new HeaderFooterSlot();
+        if (!string.IsNullOrEmpty(text))
+            slot.Paragraphs.Add(Paragraph.Of(text));
+        return slot;
+    }
+}
+
+/// <summary>머리말 또는 꼬리말의 좌·가운데·오른쪽 3슬롯 묶음.</summary>
 public sealed class HeaderFooterContent
 {
-    public string? Left   { get; set; }
-    public string? Center { get; set; }
-    public string? Right  { get; set; }
+    public HeaderFooterSlot Left   { get; set; } = new();
+    public HeaderFooterSlot Center { get; set; } = new();
+    public HeaderFooterSlot Right  { get; set; } = new();
+
+    public bool IsEmpty => Left.IsEmpty && Center.IsEmpty && Right.IsEmpty;
+
+    public HeaderFooterContent Clone() => new()
+    {
+        Left   = Left.Clone(),
+        Center = Center.Clone(),
+        Right  = Right.Clone(),
+    };
 }
 
 // ── 페이지 설정 ───────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ using PolyDonky.App.Pagination;
 using PolyDonky.App.Services;
 using PolyDonky.Core;
 using WpfColor = System.Windows.Media.Color;
+using WpfDoc = System.Windows.Documents;
 
 namespace PolyDonky.App.Views;
 
@@ -253,7 +254,7 @@ public static class PageViewBuilder
         ArgumentNullException.ThrowIfNull(geo);
 
         target.Children.Clear();
-        if (page.Header is null && page.Footer is null) return;
+        if ((page.Header is null || page.Header.IsEmpty) && (page.Footer is null || page.Footer.IsEmpty)) return;
 
         var resolvedNow = now ?? DateTime.Now;
         double headerYDip = FlowDocumentBuilder.MmToDip(page.MarginHeaderMm);
@@ -305,31 +306,69 @@ public static class PageViewBuilder
     }
 
     private static void AddSlot(
-        Canvas target,
-        string? template,
+        Canvas                     target,
+        HeaderFooterSlot?          slot,
         HeaderFooterTokens.Context ctx,
-        double topDip,
-        double leftDip,
-        double widthDip,
-        TextAlignment alignment,
-        Brush foreground)
+        double                     topDip,
+        double                     leftDip,
+        double                     widthDip,
+        TextAlignment              alignment,
+        Brush                      defaultForeground)
     {
-        if (string.IsNullOrEmpty(template)) return;
-        var text = HeaderFooterTokens.Resolve(template, ctx);
-        if (string.IsNullOrEmpty(text)) return;
+        if (slot is null || slot.IsEmpty) return;
 
-        var tb = new TextBlock
+        double y = topDip;
+        foreach (var para in slot.Paragraphs)
         {
-            Text             = text,
-            Width            = widthDip,
-            TextAlignment    = alignment,
-            FontSize         = 11,
-            Foreground       = foreground,
-            TextTrimming     = TextTrimming.CharacterEllipsis,
-            IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(tb, leftDip);
-        Canvas.SetTop (tb, topDip);
-        target.Children.Add(tb);
+            if (para.Runs.Count == 0) continue;
+
+            var tb = new TextBlock
+            {
+                Width            = widthDip,
+                TextAlignment    = alignment,
+                TextTrimming     = TextTrimming.CharacterEllipsis,
+                IsHitTestVisible = false,
+                TextWrapping     = TextWrapping.NoWrap,
+            };
+
+            foreach (var run in para.Runs)
+            {
+                var resolvedText = HeaderFooterTokens.Resolve(run.Text, ctx);
+                if (string.IsNullOrEmpty(resolvedText)) continue;
+
+                var wpfRun = new WpfDoc.Run(resolvedText);
+
+                // Apply RunStyle
+                var s = run.Style;
+                if (s.FontSizePt > 0)
+                    wpfRun.FontSize = s.FontSizePt * 96.0 / 72.0;
+                if (!string.IsNullOrEmpty(s.FontFamily))
+                    wpfRun.FontFamily = new FontFamily(s.FontFamily);
+                wpfRun.FontWeight  = s.Bold   ? FontWeights.Bold   : FontWeights.Normal;
+                wpfRun.FontStyle   = s.Italic ? FontStyles.Italic  : FontStyles.Normal;
+
+                if (s.Foreground is { } fg)
+                    wpfRun.Foreground = new SolidColorBrush(WpfColor.FromArgb(fg.A, fg.R, fg.G, fg.B));
+                else
+                    wpfRun.Foreground = defaultForeground;
+
+                var decorations = new TextDecorationCollection();
+                if (s.Underline)     decorations.Add(TextDecorations.Underline[0]);
+                if (s.Strikethrough) decorations.Add(TextDecorations.Strikethrough[0]);
+                if (decorations.Count > 0)
+                    wpfRun.TextDecorations = decorations;
+
+                tb.Inlines.Add(wpfRun);
+            }
+
+            if (!tb.Inlines.Any()) continue;
+
+            Canvas.SetLeft(tb, leftDip);
+            Canvas.SetTop(tb, y);
+            target.Children.Add(tb);
+
+            // Advance y by approximate line height for multi-paragraph slots
+            y += (para.Runs.Max(r => r.Style.FontSizePt) * 96.0 / 72.0) * 1.2;
+        }
     }
 }

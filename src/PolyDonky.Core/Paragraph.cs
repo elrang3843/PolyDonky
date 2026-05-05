@@ -20,6 +20,13 @@ public sealed class Paragraph : Block
         p.AddText(text, style);
         return p;
     }
+
+    public Paragraph Clone() => new()
+    {
+        StyleId = StyleId,
+        Style   = Style.Clone(),
+        Runs    = Runs.Select(r => r.Clone()).ToList(),
+    };
 }
 
 public sealed class ParagraphStyle

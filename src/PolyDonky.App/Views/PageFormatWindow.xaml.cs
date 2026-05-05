@@ -149,12 +149,12 @@ public partial class PageFormatWindow : Window
             TxtMarginFooter.Text = _settings.MarginFooterMm.ToString("0.##");
 
             // 머리말/꼬리말 내용
-            TxtHeaderLeft.Text   = _settings.Header.Left   ?? "";
-            TxtHeaderCenter.Text = _settings.Header.Center ?? "";
-            TxtHeaderRight.Text  = _settings.Header.Right  ?? "";
-            TxtFooterLeft.Text   = _settings.Footer.Left   ?? "";
-            TxtFooterCenter.Text = _settings.Footer.Center ?? "";
-            TxtFooterRight.Text  = _settings.Footer.Right  ?? "";
+            TxtHeaderLeft.Text   = _settings.Header.Left.GetPlainText();
+            TxtHeaderCenter.Text = _settings.Header.Center.GetPlainText();
+            TxtHeaderRight.Text  = _settings.Header.Right.GetPlainText();
+            TxtFooterLeft.Text   = _settings.Footer.Left.GetPlainText();
+            TxtFooterCenter.Text = _settings.Footer.Center.GetPlainText();
+            TxtFooterRight.Text  = _settings.Footer.Right.GetPlainText();
 
             // 여백 안내선
             ChkShowMarginGuides.IsChecked = _settings.ShowMarginGuides;
@@ -380,23 +380,8 @@ public partial class PageFormatWindow : Window
 
     private void OnHeaderFooterChanged(object sender, TextChangedEventArgs e)
     {
-        if (_suppress) return;
-        _settings.Header = new PolyDonky.Core.HeaderFooterContent
-        {
-            Left   = NullIfEmpty(TxtHeaderLeft.Text),
-            Center = NullIfEmpty(TxtHeaderCenter.Text),
-            Right  = NullIfEmpty(TxtHeaderRight.Text),
-        };
-        _settings.Footer = new PolyDonky.Core.HeaderFooterContent
-        {
-            Left   = NullIfEmpty(TxtFooterLeft.Text),
-            Center = NullIfEmpty(TxtFooterCenter.Text),
-            Right  = NullIfEmpty(TxtFooterRight.Text),
-        };
+        // 머리말/꼬리말 UI 편집 기능은 별도 에이전트가 담당 — 현재는 no-op.
     }
-
-    private static string? NullIfEmpty(string s) =>
-        string.IsNullOrEmpty(s) ? null : s;
 
     // ── 미리보기 ─────────────────────────────────────────────────
 
@@ -583,18 +568,8 @@ public partial class PageFormatWindow : Window
         ColumnDividerThicknessPt  = s.ColumnDividerThicknessPt,
         ColumnDividerStyle        = s.ColumnDividerStyle,
         PageNumberStart = s.PageNumberStart,
-        Header          = new HeaderFooterContent
-        {
-            Left   = s.Header.Left,
-            Center = s.Header.Center,
-            Right  = s.Header.Right,
-        },
-        Footer          = new HeaderFooterContent
-        {
-            Left   = s.Footer.Left,
-            Center = s.Footer.Center,
-            Right  = s.Footer.Right,
-        },
+        Header          = s.Header.Clone(),
+        Footer          = s.Footer.Clone(),
         DifferentFirstPage = s.DifferentFirstPage,
         DifferentOddEven   = s.DifferentOddEven,
         ShowMarginGuides   = s.ShowMarginGuides,
