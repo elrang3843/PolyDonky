@@ -12,6 +12,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using PolyDonky.App.Models;
 using PolyDonky.App.Services;
+using PolyDonky.Codecs.Html;
 using PolyDonky.App.Views;
 using PolyDonky.Core;
 using PolyDonky.Iwpf;
@@ -255,6 +256,42 @@ public partial class MainViewModel : ObservableObject
             {
                 writeLock = JsonSerializer.Deserialize<IwpfWriteLock>(wlJson, JsonDefaults.Options);
                 doc.Metadata.Custom.Remove("iwpf.writeLock");
+            }
+
+            // HtmlReader 가 한도 초과로 잘랐다고 표시했으면, 사용자에게 한도 없이 재시도 옵션 제시.
+            bool wasTruncated = doc.Metadata.Custom.TryGetValue("html.truncated", out var tFlag)
+                                && tFlag == "true";
+            if (wasTruncated)
+            {
+                doc.Metadata.Custom.Remove("html.truncated");
+                doc.Metadata.Custom.Remove("html.maxBlocks");
+
+                var ans = MessageBox.Show(
+                    SR.DlgHtmlTruncatedPrompt,
+                    SR.DlgHtmlTruncatedTitle,
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No);
+
+                if (ans == MessageBoxResult.Yes)
+                {
+                    BusyMessage = string.Format(SR.StatusBusyOpen, Path.GetFileName(path));
+                    try
+                    {
+                        // 한도 0 = 무제한. 페이지네이션 시간이 매우 오래 걸릴 수 있다.
+                        var unlimited = new HtmlReader { MaxBlocks = 0 };
+                        doc = await Task.Run(() =>
+                        {
+                            using var fs2 = File.OpenRead(path);
+                            return unlimited.Read(fs2);
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        ReportError(SR.DlgOpenError, ex);
+                        return;
+                    }
+                }
             }
 
             LoadDocument(doc, path, usedPassword, writeLock);

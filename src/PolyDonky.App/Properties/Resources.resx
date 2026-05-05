@@ -119,6 +119,11 @@
   <data name="StatusSaveDone" xml:space="preserve"><value>저장 완료 — {0}</value></data>
   <data name="StatusBusyOpen" xml:space="preserve"><value>열기 중 — {0}</value></data>
   <data name="StatusBusySave" xml:space="preserve"><value>저장 중 — {0}</value></data>
+  <data name="DlgHtmlTruncatedTitle" xml:space="preserve"><value>HTML 잘림</value></data>
+  <data name="DlgHtmlTruncatedPrompt" xml:space="preserve"><value>이 HTML 문서는 블록 수가 한도(10,000)를 초과해 일부만 불러왔습니다.
+
+한도 없이 전체를 다시 불러오시겠습니까?
+(매우 큰 문서는 페이지 정리에 수 분이 걸릴 수 있습니다.)</value></data>
   <data name="StatusInsert" xml:space="preserve"><value>삽입</value></data>
   <data name="StatusOverwrite" xml:space="preserve"><value>수정</value></data>
   <data name="StatusDocClosed" xml:space="preserve"><value>문서를 닫았습니다.</value></data>

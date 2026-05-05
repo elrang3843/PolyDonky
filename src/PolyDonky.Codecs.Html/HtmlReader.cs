@@ -74,6 +74,9 @@ public sealed class HtmlReader : IDocumentReader
             warn.AddText($"[잘림: 원본 HTML 의 블록 수가 한도({maxBlocks:N0})를 초과했습니다]",
                 new RunStyle { Italic = true });
             section.Blocks.Add(warn);
+            // 호출측(메인 앱)이 사용자에게 한도 없이 재시도 안내를 띄울 수 있게 표시.
+            pd.Metadata.Custom["html.truncated"]    = "true";
+            pd.Metadata.Custom["html.maxBlocks"]    = maxBlocks.ToString();
         }
         return pd;
     }
