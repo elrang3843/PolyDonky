@@ -391,6 +391,21 @@ public sealed class HwpxWriter : IDocumentWriter
 
         // masterPageList — required by Hangul Office for page layout.
         // masterPageIDRef="0" in each secPr references this entry.
+        // hh:headerFooter with inline empty paragraphs is REQUIRED — without it Hangul
+        // crashes (null-deref) when it tries to render the header/footer area.
+        var emptyHFPara = new Func<XElement>(() =>
+            new XElement(Hp + "p",
+                new XAttribute("paraPrIDRef", "0"),
+                new XAttribute("styleIDRef",  "0"),
+                new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")),
+                new XElement(Hp + "linesegarray",
+                    new XElement(Hp + "lineseg",
+                        new XAttribute("textpos", "0"), new XAttribute("vertical", "0"),
+                        new XAttribute("height", "1600"), new XAttribute("textHeight", "1000"),
+                        new XAttribute("descent", "250"), new XAttribute("lineSpacing", "0"),
+                        new XAttribute("horzFmt", "0"), new XAttribute("vertFmt", "0"),
+                        new XAttribute("lineBreak", "0")))));
+
         var masterPageList = new XElement(Hh + "masterPageList",
             new XElement(Hh + "masterPage",
                 new XAttribute("id", "0"),
@@ -409,7 +424,13 @@ public sealed class HwpxWriter : IDocumentWriter
                         new XAttribute("bottom", MarginBottom.ToString()),
                         new XAttribute("header", MarginHead.ToString()),
                         new XAttribute("footer", MarginFoot.ToString()),
-                        new XAttribute("gutter", "0")))));
+                        new XAttribute("gutter", "0"))),
+                new XElement(Hh + "headerFooter",
+                    new XAttribute("type", "BOTH_PAGES"),
+                    new XAttribute("headerLen", MarginHead.ToString()),
+                    new XAttribute("footerLen", MarginFoot.ToString()),
+                    new XElement(Hh + "header", emptyHFPara()),
+                    new XElement(Hh + "footer",  emptyHFPara()))));
 
         // docInfo — document summary required before refList.
         var docInfo = new XElement(Hh + "docInfo",
@@ -423,6 +444,7 @@ public sealed class HwpxWriter : IDocumentWriter
 
         var head = new XElement(Hh + "head",
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHh, Hh.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHp, Hp.NamespaceName),
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHc, Hc.NamespaceName),
             new XAttribute("version", HwpxFormat.Version),
             new XAttribute("secCnt", sectionCount.ToString()),
