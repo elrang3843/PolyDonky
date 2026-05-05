@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using PolyDonky.App.Services;
 using PolyDonky.Core;
+using SR = PolyDonky.App.Properties.Resources;
 using Wpf = System.Windows.Documents;
 
 namespace PolyDonky.App.Views;
@@ -45,9 +46,8 @@ public partial class ParaFormatWindow : Window
 
     private void PopulateOutlineLevels()
     {
-        var loc = LocalizedStrings.Instance;
         // 본문 + H1~H6
-        CboOutline.Items.Add(new ComboBoxItem { Content = loc.FormatParaOutlineBody, Tag = OutlineLevel.Body });
+        CboOutline.Items.Add(new ComboBoxItem { Content = SR.FormatParaOutlineBody, Tag = OutlineLevel.Body });
         for (int i = 1; i <= 6; i++)
         {
             CboOutline.Items.Add(new ComboBoxItem { Content = $"H{i}", Tag = (OutlineLevel)i });

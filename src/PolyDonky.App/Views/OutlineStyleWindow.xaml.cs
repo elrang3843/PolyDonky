@@ -6,6 +6,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using PolyDonky.App.Services;
 using PolyDonky.Core;
+using SR = PolyDonky.App.Properties.Resources;
 using Wpf = System.Windows.Documents;
 using WpfMedia = System.Windows.Media;
 
@@ -42,13 +43,12 @@ public partial class OutlineStyleWindow : Window
 
     private void PopulatePresets()
     {
-        var loc = LocalizedStrings.Instance;
         var presetNames = new[]
         {
-            loc.FormatOutlinePresetDefault,
-            loc.FormatOutlinePresetAcademic,
-            loc.FormatOutlinePresetBusiness,
-            loc.FormatOutlinePresetModern,
+            SR.FormatOutlinePresetDefault,
+            SR.FormatOutlinePresetAcademic,
+            SR.FormatOutlinePresetBusiness,
+            SR.FormatOutlinePresetModern,
         };
         foreach (var name in presetNames)
             CboPreset.Items.Add(name);
@@ -62,24 +62,22 @@ public partial class OutlineStyleWindow : Window
 
     private void PopulateLevels()
     {
-        var loc = LocalizedStrings.Instance;
-        CboLevel.Items.Add(new ComboBoxItem { Content = loc.FormatOutlineLevelBody, Tag = OutlineLevel.Body });
+        CboLevel.Items.Add(new ComboBoxItem { Content = SR.FormatOutlineLevelBody, Tag = OutlineLevel.Body });
         for (int i = 1; i <= 6; i++)
             CboLevel.Items.Add(new ComboBoxItem { Content = $"H{i}", Tag = (OutlineLevel)i });
     }
 
     private void PopulateNumberStyles()
     {
-        var loc = LocalizedStrings.Instance;
         var items = new[]
         {
-            (loc.FormatOutlineNumberNone,       NumberingStyle.None),
-            (loc.FormatOutlineNumberDecimal,    NumberingStyle.Decimal),
-            (loc.FormatOutlineNumberAlphaLower, NumberingStyle.AlphaLower),
-            (loc.FormatOutlineNumberAlphaUpper, NumberingStyle.AlphaUpper),
-            (loc.FormatOutlineNumberRomanLower, NumberingStyle.RomanLower),
-            (loc.FormatOutlineNumberRomanUpper, NumberingStyle.RomanUpper),
-            (loc.FormatOutlineNumberHangul,     NumberingStyle.HangulSyllable),
+            (SR.FormatOutlineNumberNone,       NumberingStyle.None),
+            (SR.FormatOutlineNumberDecimal,    NumberingStyle.Decimal),
+            (SR.FormatOutlineNumberAlphaLower, NumberingStyle.AlphaLower),
+            (SR.FormatOutlineNumberAlphaUpper, NumberingStyle.AlphaUpper),
+            (SR.FormatOutlineNumberRomanLower, NumberingStyle.RomanLower),
+            (SR.FormatOutlineNumberRomanUpper, NumberingStyle.RomanUpper),
+            (SR.FormatOutlineNumberHangul,     NumberingStyle.HangulSyllable),
         };
         foreach (var (label, style) in items)
             CboNumberStyle.Items.Add(new ComboBoxItem { Content = label, Tag = style });
