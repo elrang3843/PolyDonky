@@ -84,9 +84,7 @@ public sealed class HwpxWriter : IDocumentWriter
         public IReadOnlyList<RunStyle> RunStyles => _runStyles;
         public IReadOnlyList<ParagraphStyle> ParaStyles => _paraStyles;
 
-        // Real Hancom files use large unique 32-bit IDs for hp:p elements.
-        // Starting above 0 avoids null-pointer treatment of zero in some Hangul builds.
-        public void ResetParaId() => _nextParaId = 1;
+        public void ResetParaId() => _nextParaId = 0;
         public int NextParaId() => _nextParaId++;
 
         private int InternalRegisterFont(string family)
@@ -189,8 +187,6 @@ public sealed class HwpxWriter : IDocumentWriter
         WriteSettingsXml(archive);
         WriteContentHpf(archive, document);
         WriteVersionXml(archive);
-        WritePreviewText(archive, document);
-        WriteContainerRdf(archive);
 
         var ctx = new WriteContext(archive);
 
@@ -253,25 +249,6 @@ public sealed class HwpxWriter : IDocumentWriter
             new XElement(Ha + "HWPApplicationSettings",
                 new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHa, Ha.NamespaceName)));
         WriteXml(archive, HwpxPaths.SettingsXml, doc);
-    }
-
-    private static void WritePreviewText(ZipArchive archive, PolyDonkyument document)
-    {
-        // Hangul requires Preview/PrvText.txt — plain text preview of the document.
-        var sb = new System.Text.StringBuilder();
-        foreach (var section in document.Sections)
-            foreach (var block in section.Blocks)
-                if (block is Paragraph p)
-                    sb.AppendLine(p.GetPlainText());
-        WriteRawText(archive, "Preview/PrvText.txt", sb.ToString(), CompressionLevel.Optimal);
-    }
-
-    private static void WriteContainerRdf(ZipArchive archive)
-    {
-        // META-INF/container.rdf is expected by some Hangul builds.
-        const string rdf = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"/>";
-        WriteRawText(archive, "META-INF/container.rdf", rdf, CompressionLevel.Optimal);
     }
 
     private void WriteContentHpf(ZipArchive archive, PolyDonkyument document)
@@ -380,35 +357,29 @@ public sealed class HwpxWriter : IDocumentWriter
             fontFaces.Add(ff);
         }
 
-        // id=0 — no border/fill (default for characters, tables, paragraphs).
-        // id=1 — no-border page border (referenced by hp:secPr pageBorderFill borderFillIDRef="1").
-        var borderFill0 = new XElement(Hh + "borderFill",
-            new XAttribute("id", "0"),
-            new XAttribute("threeD", "0"), new XAttribute("shadow", "0"),
-            new XAttribute("centerLine", "0"), new XAttribute("breakCellSeparateLine", "0"),
-            new XElement(Hh + "slash",    new XAttribute("type", "NONE"), new XAttribute("Crooked", "0"), new XAttribute("isCounter", "0")),
-            new XElement(Hh + "backSlash",new XAttribute("type", "NONE"), new XAttribute("Crooked", "0"), new XAttribute("isCounter", "0")),
-            new XElement(Hh + "leftBorder",   new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "rightBorder",  new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "topBorder",    new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "bottomBorder", new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "diagonal",     new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "fillInfo", new XElement(Hh + "noFill")));
-        var borderFill1 = new XElement(Hh + "borderFill",
-            new XAttribute("id", "1"),
-            new XAttribute("threeD", "0"), new XAttribute("shadow", "0"),
-            new XAttribute("centerLine", "0"), new XAttribute("breakCellSeparateLine", "0"),
-            new XElement(Hh + "slash",    new XAttribute("type", "NONE"), new XAttribute("Crooked", "0"), new XAttribute("isCounter", "0")),
-            new XElement(Hh + "backSlash",new XAttribute("type", "NONE"), new XAttribute("Crooked", "0"), new XAttribute("isCounter", "0")),
-            new XElement(Hh + "leftBorder",   new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "rightBorder",  new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "topBorder",    new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "bottomBorder", new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "diagonal",     new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "fillInfo", new XElement(Hh + "noFill")));
+        // borderFills — id=0 default (no border, no fill).
         var borderFills = new XElement(Hh + "borderFills",
-            new XAttribute("itemCnt", "2"),
-            borderFill0, borderFill1);
+            new XAttribute("itemCnt", "1"),
+            new XElement(Hh + "borderFill",
+                new XAttribute("id", "0"),
+                new XAttribute("threeD", "0"),
+                new XAttribute("shadow", "0"),
+                new XAttribute("centerLine", "0"),
+                new XAttribute("breakCellSeparateLine", "0"),
+                new XElement(Hh + "slash",
+                    new XAttribute("type", "NONE"),
+                    new XAttribute("Crooked", "0"),
+                    new XAttribute("isCounter", "0")),
+                new XElement(Hh + "backSlash",
+                    new XAttribute("type", "NONE"),
+                    new XAttribute("Crooked", "0"),
+                    new XAttribute("isCounter", "0")),
+                new XElement(Hh + "leftBorder",   new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "rightBorder",  new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "topBorder",    new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "bottomBorder", new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "diagonal",     new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "fillInfo", new XElement(Hh + "noFill"))));
 
         // charProperties — one entry per unique RunStyle
         var charProps = new XElement(Hh + "charProperties",
@@ -452,28 +423,20 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("lockForm", "0")));
         }
 
-        // Real Hancom output order: fontfaces → borderFills → charProperties → tabProperties
-        //   → numberings → paraProperties → (bullets) → styles
+        // KS X 6101 §5 규정 순서: fontfaces → borderFills → charProperties → tabProperties
+        //   → paraProperties → numberings → bullets → styles
         var refList = new XElement(Hh + "refList",
-            fontFaces, borderFills, charProps, tabProperties,
-            numberings, paraProps, bullets, styles);
+            fontFaces, borderFills, charProps, tabProperties, paraProps,
+            numberings, bullets, styles);
 
-        // Per real Hancom output:
-        //   compatibleDocument (with layoutCompatibility child)
-        //   → docOption (with linkinfo child)
-        //   → trackchageConfig (Hancom's intentional typo "trackchage" not "trackChange")
+        // compatibleDocument — required for Hangul 2018+ compatibility flag
         var compatDoc = new XElement(Hh + "compatibleDocument",
-            new XAttribute("targetProgram", "HWP2018"),
-            new XElement(Hh + "layoutCompatibility"));
-        var docOption = new XElement(Hh + "docOption",
-            new XElement(Hh + "linkinfo",
-                new XAttribute("path", ""), new XAttribute("pageInherit", "0"),
-                new XAttribute("footnoteInherit", "0")));
-        var trackCfg = new XElement(Hh + "trackchageConfig",
-            new XAttribute("flags", "56"));
+            new XAttribute("targetProgram", "HWP2018"));
 
         // hh:head version is "1.5" (per real Hancom output), NOT the format version "1.31".
-        // Order: beginNum → refList → compatibleDocument → docOption → trackchageConfig.
+        // Order per real Hancom output: beginNum → refList → compatibleDocument.
+        // hh:docInfo is NOT a valid child of hh:head (we used to add it; removed).
+        // Page layout is specified inline via hp:secPr in section0.xml — no masterPageList needed.
         var head = new XElement(Hh + "head",
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHh, Hh.NamespaceName),
             new XAttribute("version", "1.5"),
@@ -483,9 +446,7 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("endnote", "1"), new XAttribute("pic", "1"),
                 new XAttribute("tbl", "1"), new XAttribute("equation", "1")),
             refList,
-            compatDoc,
-            docOption,
-            trackCfg);
+            compatDoc);
 
         WriteXml(archive, HwpxPaths.HeaderXml, new XDocument(new XDeclaration("1.0", "utf-8", null), head));
     }
@@ -650,28 +611,8 @@ public sealed class HwpxWriter : IDocumentWriter
     }
 
     // Injects an hp:secPr control run as the very first child of the paragraph.
-    // Child element list mirrors a real Hangul-Office-generated file exactly.
     private void PrependSecPrRun(XElement para)
     {
-        var footNoteAutoNum = new XElement(Hp + "autoNumFormat",
-            new XAttribute("type", "DIGIT"), new XAttribute("userChar", ""),
-            new XAttribute("prefixChar", ""), new XAttribute("suffixChar", ")"),
-            new XAttribute("supscript", "0"));
-        var footNoteLine = new XElement(Hp + "noteLine",
-            new XAttribute("length", "-1"), new XAttribute("type", "SOLID"),
-            new XAttribute("width", "0.12 mm"), new XAttribute("color", "#000000"));
-        var footNoteSpacing = new XElement(Hp + "noteSpacing",
-            new XAttribute("betweenNotes", "283"), new XAttribute("belowLine", "567"),
-            new XAttribute("aboveLine", "850"));
-        var footNoteNum = new XElement(Hp + "numbering",
-            new XAttribute("type", "CONTINUOUS"), new XAttribute("newNum", "1"));
-        var footNotePlacement = new XElement(Hp + "placement",
-            new XAttribute("place", "EACH_COLUMN"), new XAttribute("beneathText", "0"));
-
-        var pageBorderOffset = new XElement(Hp + "offset",
-            new XAttribute("left", "1417"), new XAttribute("right", "1417"),
-            new XAttribute("top", "1417"), new XAttribute("bottom", "1417"));
-
         var secPrRun = new XElement(Hp + "run",
             new XAttribute("charPrIDRef", "0"),
             new XElement(Hp + "secPr",
@@ -681,26 +622,10 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("tabStop", "8000"),
                 new XAttribute("tabStopVal", "4000"),
                 new XAttribute("tabStopUnit", "HWPUNIT"),
-                new XAttribute("outlineShapeIDRef", "1"),
+                new XAttribute("outlineShapeIDRef", "0"),
                 new XAttribute("memoShapeIDRef", "0"),
                 new XAttribute("textVerticalWidthHead", "0"),
                 new XAttribute("masterPageCnt", "0"),
-                new XElement(Hp + "grid",
-                    new XAttribute("lineGrid", "0"), new XAttribute("charGrid", "0"),
-                    new XAttribute("wonggojiFormat", "0")),
-                new XElement(Hp + "startNum",
-                    new XAttribute("pageStartsOn", "BOTH"), new XAttribute("page", "0"),
-                    new XAttribute("pic", "0"), new XAttribute("tbl", "0"),
-                    new XAttribute("equation", "0")),
-                new XElement(Hp + "visibility",
-                    new XAttribute("hideFirstHeader", "0"), new XAttribute("hideFirstFooter", "0"),
-                    new XAttribute("hideFirstMasterPage", "0"),
-                    new XAttribute("border", "SHOW_ALL"), new XAttribute("fill", "SHOW_ALL"),
-                    new XAttribute("hideFirstPageNum", "0"), new XAttribute("hideFirstEmptyLine", "0"),
-                    new XAttribute("showLineNumber", "0")),
-                new XElement(Hp + "lineNumberShape",
-                    new XAttribute("restartType", "0"), new XAttribute("countBy", "0"),
-                    new XAttribute("distance", "0"), new XAttribute("startNumber", "0")),
                 new XElement(Hp + "pagePr",
                     new XAttribute("landscape", "WIDELY"),
                     new XAttribute("width",  A4W.ToString()),
@@ -713,50 +638,7 @@ public sealed class HwpxWriter : IDocumentWriter
                         new XAttribute("left",   MarginLeft.ToString()),
                         new XAttribute("right",  MarginRight.ToString()),
                         new XAttribute("top",    MarginTop.ToString()),
-                        new XAttribute("bottom", MarginBottom.ToString()))),
-                new XElement(Hp + "footNotePr",
-                    footNoteAutoNum, footNoteLine, footNoteSpacing, footNoteNum, footNotePlacement),
-                new XElement(Hp + "endNotePr",
-                    new XElement(Hp + "autoNumFormat",
-                        new XAttribute("type", "DIGIT"), new XAttribute("userChar", ""),
-                        new XAttribute("prefixChar", ""), new XAttribute("suffixChar", ")"),
-                        new XAttribute("supscript", "0")),
-                    new XElement(Hp + "noteLine",
-                        new XAttribute("length", "14692344"), new XAttribute("type", "SOLID"),
-                        new XAttribute("width", "0.12 mm"), new XAttribute("color", "#000000")),
-                    new XElement(Hp + "noteSpacing",
-                        new XAttribute("betweenNotes", "0"), new XAttribute("belowLine", "567"),
-                        new XAttribute("aboveLine", "850")),
-                    new XElement(Hp + "numbering",
-                        new XAttribute("type", "CONTINUOUS"), new XAttribute("newNum", "1")),
-                    new XElement(Hp + "placement",
-                        new XAttribute("place", "END_OF_DOCUMENT"), new XAttribute("beneathText", "0"))),
-                new XElement(Hp + "pageBorderFill",
-                    new XAttribute("type", "BOTH"), new XAttribute("borderFillIDRef", "1"),
-                    new XAttribute("textBorder", "PAPER"), new XAttribute("headerInside", "0"),
-                    new XAttribute("footerInside", "0"), new XAttribute("fillArea", "PAPER"),
-                    new XElement(Hp + "offset",
-                        new XAttribute("left", "1417"), new XAttribute("right", "1417"),
-                        new XAttribute("top", "1417"), new XAttribute("bottom", "1417"))),
-                new XElement(Hp + "pageBorderFill",
-                    new XAttribute("type", "EVEN"), new XAttribute("borderFillIDRef", "1"),
-                    new XAttribute("textBorder", "PAPER"), new XAttribute("headerInside", "0"),
-                    new XAttribute("footerInside", "0"), new XAttribute("fillArea", "PAPER"),
-                    new XElement(Hp + "offset",
-                        new XAttribute("left", "1417"), new XAttribute("right", "1417"),
-                        new XAttribute("top", "1417"), new XAttribute("bottom", "1417"))),
-                new XElement(Hp + "pageBorderFill",
-                    new XAttribute("type", "ODD"), new XAttribute("borderFillIDRef", "1"),
-                    new XAttribute("textBorder", "PAPER"), new XAttribute("headerInside", "0"),
-                    new XAttribute("footerInside", "0"), new XAttribute("fillArea", "PAPER"),
-                    new XElement(Hp + "offset",
-                        new XAttribute("left", "1417"), new XAttribute("right", "1417"),
-                        new XAttribute("top", "1417"), new XAttribute("bottom", "1417")))),
-            new XElement(Hp + "ctrl",
-                new XElement(Hp + "colPr",
-                    new XAttribute("id", ""), new XAttribute("type", "NEWSPAPER"),
-                    new XAttribute("layout", "LEFT"), new XAttribute("colCount", "1"),
-                    new XAttribute("sameSz", "1"), new XAttribute("sameGap", "0"))));
+                        new XAttribute("bottom", MarginBottom.ToString())))));
         para.AddFirst(secPrRun);
     }
 
@@ -791,23 +673,21 @@ public sealed class HwpxWriter : IDocumentWriter
             ? p.Runs.Max(r => r.Style.FontSizePt > 0 ? r.Style.FontSizePt : 10.0)
             : 10.0;
         double lsFactor = p.Style.LineHeightFactor > 0 ? p.Style.LineHeightFactor : 1.6;
-        long textH   = (long)Math.Round(maxPt * 100);
-        long vertSz  = (long)Math.Round(textH * lsFactor);
-        long baseline = (long)Math.Round(textH * 0.85);
-        long spacing  = vertSz - textH;
-        long horzSz   = A4W - MarginLeft - MarginRight;
+        long textH  = (long)Math.Round(maxPt * 100);
+        long height = (long)Math.Round(textH * lsFactor);
+        long descent = (long)Math.Round(textH * 0.25);
 
         para.Add(new XElement(Hp + "linesegarray",
             new XElement(Hp + "lineseg",
-                new XAttribute("textpos",   "0"),
-                new XAttribute("vertpos",   "0"),
-                new XAttribute("vertsize",  vertSz.ToString()),
-                new XAttribute("textheight",textH.ToString()),
-                new XAttribute("baseline",  baseline.ToString()),
-                new XAttribute("spacing",   spacing.ToString()),
-                new XAttribute("horzpos",   "0"),
-                new XAttribute("horzsize",  horzSz.ToString()),
-                new XAttribute("flags",     "393216"))));
+                new XAttribute("textpos",    "0"),
+                new XAttribute("vertical",   "0"),
+                new XAttribute("height",     height.ToString()),
+                new XAttribute("textHeight", textH.ToString()),
+                new XAttribute("descent",    descent.ToString()),
+                new XAttribute("lineSpacing","0"),
+                new XAttribute("horzFmt",    "0"),
+                new XAttribute("vertFmt",    "0"),
+                new XAttribute("lineBreak",  "0"))));
 
         return para;
     }
@@ -833,15 +713,11 @@ public sealed class HwpxWriter : IDocumentWriter
             new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")),
             new XElement(Hp + "linesegarray",
                 new XElement(Hp + "lineseg",
-                    new XAttribute("textpos",   "0"),
-                    new XAttribute("vertpos",   "0"),
-                    new XAttribute("vertsize",  "1600"),
-                    new XAttribute("textheight","1000"),
-                    new XAttribute("baseline",  "850"),
-                    new XAttribute("spacing",   "600"),
-                    new XAttribute("horzpos",   "0"),
-                    new XAttribute("horzsize",  (A4W - MarginLeft - MarginRight).ToString()),
-                    new XAttribute("flags",     "393216"))));
+                    new XAttribute("textpos", "0"), new XAttribute("vertical", "0"),
+                    new XAttribute("height", "1600"), new XAttribute("textHeight", "1000"),
+                    new XAttribute("descent", "250"), new XAttribute("lineSpacing", "0"),
+                    new XAttribute("horzFmt", "0"), new XAttribute("vertFmt", "0"),
+                    new XAttribute("lineBreak", "0"))));
 
     // ── opaque island ────────────────────────────────────────────────────────
 
