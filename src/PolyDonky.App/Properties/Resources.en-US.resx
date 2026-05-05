@@ -117,6 +117,8 @@
   <data name="StatusNewDoc" xml:space="preserve"><value>New document created.</value></data>
   <data name="StatusOpenDone" xml:space="preserve"><value>Opened — {0}</value></data>
   <data name="StatusSaveDone" xml:space="preserve"><value>Saved — {0}</value></data>
+  <data name="StatusBusyOpen" xml:space="preserve"><value>Opening — {0}</value></data>
+  <data name="StatusBusySave" xml:space="preserve"><value>Saving — {0}</value></data>
   <data name="StatusInsert" xml:space="preserve"><value>INS</value></data>
   <data name="StatusOverwrite" xml:space="preserve"><value>OVR</value></data>
   <data name="StatusDocClosed" xml:space="preserve"><value>Document closed.</value></data>

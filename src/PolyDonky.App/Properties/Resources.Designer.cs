@@ -105,6 +105,8 @@ namespace PolyDonky.App.Properties
         internal static string StatusNewDoc          => Get(nameof(StatusNewDoc));
         internal static string StatusOpenDone        => Get(nameof(StatusOpenDone));
         internal static string StatusSaveDone        => Get(nameof(StatusSaveDone));
+        internal static string StatusBusyOpen        => Get(nameof(StatusBusyOpen));
+        internal static string StatusBusySave        => Get(nameof(StatusBusySave));
         internal static string StatusInsert          => Get(nameof(StatusInsert));
         internal static string StatusOverwrite       => Get(nameof(StatusOverwrite));
         internal static string StatusDocClosed       => Get(nameof(StatusDocClosed));

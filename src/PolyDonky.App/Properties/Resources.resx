@@ -117,6 +117,8 @@
   <data name="StatusNewDoc" xml:space="preserve"><value>새 문서가 생성되었습니다.</value></data>
   <data name="StatusOpenDone" xml:space="preserve"><value>열기 완료 — {0}</value></data>
   <data name="StatusSaveDone" xml:space="preserve"><value>저장 완료 — {0}</value></data>
+  <data name="StatusBusyOpen" xml:space="preserve"><value>열기 중 — {0}</value></data>
+  <data name="StatusBusySave" xml:space="preserve"><value>저장 중 — {0}</value></data>
   <data name="StatusInsert" xml:space="preserve"><value>삽입</value></data>
   <data name="StatusOverwrite" xml:space="preserve"><value>수정</value></data>
   <data name="StatusDocClosed" xml:space="preserve"><value>문서를 닫았습니다.</value></data>
