@@ -33,6 +33,20 @@ const int ExitOldVersion    = 6;
 
 try { Console.OutputEncoding = Encoding.UTF8; } catch { /* 무시 */ }
 
+// Ctrl+C 시 임시파일 정리 — finally 블록이 실행되지 않는 SIGINT 경로에서도
+// `.tmp-XXXXXXXX` 파일이 남지 않게 한다.
+string? tempCleanupPath = null;
+Console.CancelKeyPress += (_, e) =>
+{
+    if (tempCleanupPath is not null && File.Exists(tempCleanupPath))
+    {
+        try { File.Delete(tempCleanupPath); } catch { /* 무시 */ }
+    }
+    Console.Error.Flush();
+    Console.Out.Flush();
+    e.Cancel = false;  // 정상적으로 프로세스 종료 진행.
+};
+
 if (args.Length == 1 && (args[0] is "--version" or "-v"))
 {
     Console.WriteLine("PolyDonky.Convert.Hwpx 1.0");
@@ -107,7 +121,37 @@ if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
     }
 }
 
+// ── HWPX 사전 검증 (import 만) ───────────────────────────────────────
+if (isImport)
+{
+    if (!HwpxFileChecker.HasValidMimetype(inPath))
+    {
+        Console.Error.WriteLine(
+            $"HWPX 파일이 아닙니다 — `mimetype` 엔트리가 없거나 내용이 '{HwpxFileChecker.ExpectedMimetype}' 가 아닙니다: {inPath}");
+        Console.Error.Flush();
+        return ExitConvertError;
+    }
+
+    if (HwpxFileChecker.IsEncrypted(inPath))
+    {
+        Console.Error.WriteLine(
+            $"암호화된 HWPX 는 지원되지 않습니다: {inPath}\n" +
+            "  먼저 한컴오피스에서 암호를 해제해 다시 저장한 뒤 시도하세요.");
+        Console.Error.Flush();
+        return ExitConvertError;
+    }
+
+    if (!HwpxFileChecker.HasCoreContent(inPath))
+    {
+        Console.Error.WriteLine(
+            $"HWPX 콘텐츠가 비어 있거나 누락되었습니다 (Contents/header.xml 또는 section*.xml 없음): {inPath}");
+        Console.Error.Flush();
+        return ExitConvertError;
+    }
+}
+
 var tempOut = outPath + ".tmp-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+tempCleanupPath = tempOut;
 
 try
 {
@@ -120,10 +164,17 @@ try
             Console.Error.WriteLine(
                 $"지원하지 않는 버전 — HWPX 스키마 {ver}. " +
                 $"PolyDonky 는 HWPX {HwpxVersionPolicy.MinSupportedXmlVersion} 이상(HWP 2014 이후)만 처리합니다.");
+            Console.Error.Flush();
             return ExitOldVersion;
         }
 
-        WriteProgress(0, $"HWPX 읽는 중 (xmlVersion {ver ?? "?"})");
+        // 작성 앱 정보(있으면) — 진행 메시지에 보강.
+        var (app, appVer) = HwpxFileChecker.ReadAppInfo(inPath);
+        var label = app is not null && appVer is not null
+            ? $"HWPX 읽는 중 (xmlVersion {ver ?? "?"}, {app} {appVer})"
+            : $"HWPX 읽는 중 (xmlVersion {ver ?? "?"})";
+        WriteProgress(0, label);
+
         PolyDonkyument doc;
         using (var fs = File.OpenRead(inPath))
             doc = new HwpxReader().Read(fs);
@@ -146,8 +197,10 @@ try
 
     if (File.Exists(outPath)) File.Delete(outPath);
     File.Move(tempOut, outPath);
+    tempCleanupPath = null;  // Move 성공 후엔 SIGINT 핸들러가 outPath 를 지우지 않게 함.
     WriteProgress(100, "완료");
     Console.WriteLine($"OK: {Path.GetFileName(inPath)} → {Path.GetFileName(outPath)}");
+    Console.Out.Flush();
     return ExitOk;
 }
 catch (FileNotFoundException ex)
@@ -193,6 +246,8 @@ catch (Exception ex)
 finally
 {
     try { if (File.Exists(tempOut)) File.Delete(tempOut); } catch { /* 무시 */ }
+    Console.Error.Flush();
+    Console.Out.Flush();
 }
 
 static void WriteProgress(int percent, string message)
@@ -226,5 +281,11 @@ static void PrintHelp()
     Console.WriteLine("  표준 출력에 PROGRESS:<percent>:<message> 형식으로 emit");
     Console.WriteLine();
     Console.WriteLine("출력 안전성:");
-    Console.WriteLine("  임시파일에 쓴 뒤 원자적 rename — 도중 종료 시 반쪽 파일이 남지 않음");
+    Console.WriteLine("  임시파일에 쓴 뒤 원자적 rename — 도중 종료(Ctrl+C 포함) 시 반쪽 파일이 남지 않음");
+    Console.WriteLine();
+    Console.WriteLine("HWPX 사전 검증 (import 시):");
+    Console.WriteLine("  • mimetype 엔트리 존재 + 'application/hwp+zip' 일치");
+    Console.WriteLine("  • 암호화/DRM (META-INF/manifest.xml 의 encryption-data) 거부");
+    Console.WriteLine("  • Contents/header.xml + Contents/section*.xml 존재");
+    Console.WriteLine("  • 작성 앱(application·appVersion) 정보 진행 메시지에 표시");
 }
