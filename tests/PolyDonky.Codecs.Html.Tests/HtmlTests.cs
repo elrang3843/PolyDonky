@@ -357,6 +357,36 @@ public class HtmlTests
         Assert.Contains("<figcaption>캡션</figcaption>", html);
     }
 
+    // ── 안전 한도 (대용량 HTML) ─────────────────────────────────────
+
+    [Fact]
+    public void Reader_BlockLimit_TruncatesAndAppendsWarning()
+    {
+        // 50,000 개의 단락이 있는 거대한 HTML — 기본 한도(10,000) 초과해야 함.
+        var sb = new System.Text.StringBuilder("<html><body>");
+        for (int i = 0; i < 50_000; i++) sb.Append("<p>x</p>");
+        sb.Append("</body></html>");
+
+        var doc = HtmlReader.FromHtml(sb.ToString());
+        var ps  = doc.EnumerateParagraphs().ToList();
+
+        // 한도 + 마지막 경고 단락 = 약 10,001.
+        Assert.True(ps.Count <= 10_001, $"잘림 후 단락 수 {ps.Count} 가 한도(10,001)를 초과");
+        Assert.Contains(ps, p => p.GetPlainText().Contains("잘림") || p.GetPlainText().Contains("초과"));
+    }
+
+    [Fact]
+    public void Reader_CustomMaxBlocks_RespectsCap()
+    {
+        var sb = new System.Text.StringBuilder("<html><body>");
+        for (int i = 0; i < 200; i++) sb.Append("<p>x</p>");
+        sb.Append("</body></html>");
+
+        var doc = HtmlReader.FromHtml(sb.ToString(), maxBlocks: 50);
+        var ps  = doc.EnumerateParagraphs().ToList();
+        Assert.True(ps.Count <= 51, $"단락 수 {ps.Count} 가 50+1 을 초과");
+    }
+
     [Fact]
     public void Writer_EscapesAngleBracketsAndAmpersand()
     {

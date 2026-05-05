@@ -35,16 +35,26 @@ public sealed class HtmlReader : IDocumentReader
 {
     public string FormatId => "html";
 
+    /// <summary>
+    /// 한 문서가 만들어낼 수 있는 최대 블록 수 — 0 또는 음수면 제한 없음.
+    /// 큰 HTML(예: 복잡한 위키 페이지)은 수만 개의 단락을 만들어 WPF FlowDocument 의
+    /// 레이아웃·페이지네이션이 분 단위로 멈출 수 있다 (`GetCharacterRect` 가 전체 측정 강제).
+    /// 기본 10,000 — 한도 도달 시 잘라내고 마지막에 경고 단락을 추가한다.
+    /// </summary>
+    public int MaxBlocks { get; init; } = 10_000;
+
     private static readonly HtmlParser Parser = new();
 
     public PolyDonkyument Read(Stream input)
     {
         ArgumentNullException.ThrowIfNull(input);
         using var sr = new StreamReader(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
-        return FromHtml(sr.ReadToEnd());
+        return FromHtml(sr.ReadToEnd(), MaxBlocks);
     }
 
-    public static PolyDonkyument FromHtml(string source)
+    public static PolyDonkyument FromHtml(string source) => FromHtml(source, maxBlocks: 10_000);
+
+    public static PolyDonkyument FromHtml(string source, int maxBlocks)
     {
         ArgumentNullException.ThrowIfNull(source);
         var doc      = Parser.ParseDocument(source);
@@ -55,17 +65,36 @@ public sealed class HtmlReader : IDocumentReader
         // <body> 가 없는 단편(fragment) 도 안전하게 처리.
         INode root = doc.Body ?? (INode?)doc.DocumentElement ?? doc;
 
-        ProcessChildren(root, section.Blocks, new InlineCtx());
+        var ctx = new InlineCtx { Shared = new ReadShared { MaxBlocks = maxBlocks } };
+        ProcessChildren(root, section.Blocks, ctx);
+
+        if (ctx.Shared.Truncated)
+        {
+            var warn = new Paragraph();
+            warn.AddText($"[잘림: 원본 HTML 의 블록 수가 한도({maxBlocks:N0})를 초과했습니다]",
+                new RunStyle { Italic = true });
+            section.Blocks.Add(warn);
+        }
         return pd;
     }
 
     // ── 처리 컨텍스트 ────────────────────────────────────────────────────
 
+    /// <summary>리더 전체에서 공유되는 상태 — 한도/잘림 플래그.</summary>
+    private sealed class ReadShared
+    {
+        public int  MaxBlocks;
+        public bool Truncated;
+    }
+
     private sealed class InlineCtx
     {
-        public ListMarker? Marker;
-        public int         QuoteLevel;
-        public int         ListLevel;
+        public ListMarker?  Marker;
+        public int          QuoteLevel;
+        public int          ListLevel;
+        public ReadShared   Shared = new();
+        public bool LimitReached(IList<PdBlock> target)
+            => Shared.MaxBlocks > 0 && target.Count >= Shared.MaxBlocks;
     }
 
     private static InlineCtx With(InlineCtx baseCtx, ListMarker? marker = null, int? quote = null, int? listLvl = null)
@@ -74,6 +103,7 @@ public sealed class HtmlReader : IDocumentReader
             Marker     = marker     ?? baseCtx.Marker,
             QuoteLevel = quote      ?? baseCtx.QuoteLevel,
             ListLevel  = listLvl    ?? baseCtx.ListLevel,
+            Shared     = baseCtx.Shared,  // 한도/잘림 플래그는 전체 트리에서 공유.
         };
 
     // ── 블록 처리 ────────────────────────────────────────────────────────
@@ -82,6 +112,7 @@ public sealed class HtmlReader : IDocumentReader
     {
         foreach (var node in parent.ChildNodes)
         {
+            if (ctx.LimitReached(target)) { ctx.Shared.Truncated = true; break; }
             ProcessNode(node, target, ctx);
         }
     }
