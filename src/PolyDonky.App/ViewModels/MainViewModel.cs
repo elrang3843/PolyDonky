@@ -12,7 +12,6 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using PolyDonky.App.Models;
 using PolyDonky.App.Services;
-using PolyDonky.Codecs.Html;
 using PolyDonky.App.Views;
 using PolyDonky.Core;
 using PolyDonky.Iwpf;
@@ -205,13 +204,11 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsBusy) return;  // 동시 열기 가드
 
-        if (KnownFormats.RequiresExternalConverter(path) && !KnownFormats.IsSupportedNatively(path))
+        // CLAUDE.md §3 — 외부 CLI 변환기로 IWPF 우회 처리하는 포맷 (HTML/XML/HWP/DOC 등).
+        // 메인 앱에서 직접 처리 불가 → CLI spawn 후 임시 IWPF 를 읽는다.
+        if (KnownFormats.RequiresExternalConverter(path))
         {
-            var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
-            MessageBox.Show(
-                string.Format(SR.DlgUnsupportedFormat, ext),
-                SR.DlgUnsupportedFormatTitle,
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            await OpenViaExternalConverterAsync(path);
             return;
         }
 
@@ -258,48 +255,70 @@ public partial class MainViewModel : ObservableObject
                 doc.Metadata.Custom.Remove("iwpf.writeLock");
             }
 
-            // HtmlReader 가 한도 초과로 잘랐다고 표시했으면, 사용자에게 한도 없이 재시도 옵션 제시.
-            bool wasTruncated = doc.Metadata.Custom.TryGetValue("html.truncated", out var tFlag)
-                                && tFlag == "true";
-            if (wasTruncated)
-            {
-                doc.Metadata.Custom.Remove("html.truncated");
-                doc.Metadata.Custom.Remove("html.maxBlocks");
-
-                var ans = MessageBox.Show(
-                    SR.DlgHtmlTruncatedPrompt,
-                    SR.DlgHtmlTruncatedTitle,
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning,
-                    MessageBoxResult.No);
-
-                if (ans == MessageBoxResult.Yes)
-                {
-                    BusyMessage = string.Format(SR.StatusBusyOpen, Path.GetFileName(path));
-                    try
-                    {
-                        // 한도 0 = 무제한. 페이지네이션 시간이 매우 오래 걸릴 수 있다.
-                        var unlimited = new HtmlReader { MaxBlocks = 0 };
-                        doc = await Task.Run(() =>
-                        {
-                            using var fs2 = File.OpenRead(path);
-                            return unlimited.Read(fs2);
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        ReportError(SR.DlgOpenError, ex);
-                        return;
-                    }
-                }
-            }
-
             LoadDocument(doc, path, usedPassword, writeLock);
             StatusMessage = BuildOpenStatusMessage(path, doc)
                 + (IsWriteProtected ? "  " + SR.StatusWriteProtectedSuffix : "");
         }
         finally
         {
+            IsBusy      = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// 외부 CLI 변환기로 입력 → 임시 IWPF 변환 후 메인 앱이 IWPF 를 읽는다 (CLAUDE.md §3).
+    /// 변환기 누락 시 안내 메시지를 표시하고 종료.
+    /// </summary>
+    private async Task OpenViaExternalConverterAsync(string sourcePath)
+    {
+        var converter = ExternalConverter.GetConverter(sourcePath);
+        if (converter is null)
+        {
+            var ext = Path.GetExtension(sourcePath).TrimStart('.').ToLowerInvariant();
+            MessageBox.Show(
+                string.Format(SR.DlgUnsupportedFormat, ext),
+                SR.DlgUnsupportedFormatTitle,
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var tempIwpf = ExternalConverter.CreateTempIwpfPath();
+        IsBusy      = true;
+        BusyMessage = string.Format(SR.StatusBusyOpen, Path.GetFileName(sourcePath));
+        try
+        {
+            try
+            {
+                await ExternalConverter.ConvertAsync(converter, sourcePath, tempIwpf);
+            }
+            catch (Exception ex)
+            {
+                ReportError(SR.DlgOpenError, ex);
+                return;
+            }
+
+            PolyDonkyument doc;
+            try
+            {
+                doc = await Task.Run(() =>
+                {
+                    using var fs = File.OpenRead(tempIwpf);
+                    return new IwpfReader().Read(fs);
+                });
+            }
+            catch (Exception ex)
+            {
+                ReportError(SR.DlgOpenError, ex);
+                return;
+            }
+
+            LoadDocument(doc, sourcePath, password: null);
+            StatusMessage = BuildOpenStatusMessage(sourcePath, doc);
+        }
+        finally
+        {
+            try { if (File.Exists(tempIwpf)) File.Delete(tempIwpf); } catch { /* 임시파일 삭제 실패 무시 */ }
             IsBusy      = false;
             BusyMessage = string.Empty;
         }
@@ -864,12 +883,65 @@ public partial class MainViewModel : ObservableObject
         BusyMessage = string.Format(SR.StatusBusySave, Path.GetFileName(path));
         try
         {
-            await Task.Run(() => SaveToCore(path, showProgress: false));
+            // CLAUDE.md §3 — 외부 CLI 위탁 포맷은 임시 IWPF 만들고 CLI 가 최종 변환.
+            if (KnownFormats.RequiresExternalConverter(path))
+            {
+                await SaveViaExternalConverterAsync(path);
+            }
+            else
+            {
+                await Task.Run(() => SaveToCore(path, showProgress: false));
+            }
         }
         finally
         {
             IsBusy      = false;
             BusyMessage = string.Empty;
+        }
+    }
+
+    private async Task SaveViaExternalConverterAsync(string targetPath)
+    {
+        var converter = ExternalConverter.GetConverter(targetPath);
+        if (converter is null)
+        {
+            var ext = Path.GetExtension(targetPath).TrimStart('.').ToLowerInvariant();
+            MessageBox.Show(string.Format(SR.DlgSaveConverterNeeded, ext),
+                SR.DlgSaveConverterTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var tempIwpf = ExternalConverter.CreateTempIwpfPath();
+        try
+        {
+            // 1) 현재 모델을 IWPF 임시파일로 직렬화 (UI 스레드 의존: FlowDocument 파싱).
+            await Task.Run(() => SaveToCore(tempIwpf, showProgress: false));
+            if (!File.Exists(tempIwpf))
+            {
+                ReportError(SR.DlgSaveError, new InvalidOperationException("임시 IWPF 파일 생성 실패"));
+                return;
+            }
+
+            // 2) CLI 가 IWPF → 대상 포맷으로 변환.
+            try
+            {
+                await ExternalConverter.ConvertAsync(converter, tempIwpf, targetPath);
+            }
+            catch (Exception ex)
+            {
+                ReportError(SR.DlgSaveError, ex);
+                return;
+            }
+
+            // CurrentFilePath 는 외부 포맷 그대로 — 다음 저장도 같은 경로에 다시 변환.
+            CurrentFilePath = targetPath;
+            DocumentTitle   = Path.GetFileName(targetPath);
+            HasUnsavedChanges = false;
+            StatusMessage   = string.Format(SR.StatusSaveDone, Path.GetFileName(targetPath));
+        }
+        finally
+        {
+            try { if (File.Exists(tempIwpf)) File.Delete(tempIwpf); } catch { /* 무시 */ }
         }
     }
 

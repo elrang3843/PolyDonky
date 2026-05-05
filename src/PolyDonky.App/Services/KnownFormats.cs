@@ -1,14 +1,11 @@
 using System;
 using System.IO;
 using PolyDonky.Codecs.Docx;
-using PolyDonky.Codecs.Html;
 using PolyDonky.Codecs.Hwpx;
 using PolyDonky.Codecs.Markdown;
 using PolyDonky.Codecs.Text;
 using PolyDonky.Core;
 using PolyDonky.Iwpf;
-using PdXmlReader = PolyDonky.Codecs.Xml.XmlReader;
-using PdXmlWriter = PolyDonky.Codecs.Xml.XmlWriter;
 
 namespace PolyDonky.App.Services;
 
@@ -32,8 +29,7 @@ public static class KnownFormats
             "txt" => new PlainTextReader(),
             "docx" => new DocxReader(),
             "hwpx" => new HwpxReader(),
-            "html" or "htm" => new HtmlReader(),
-            "xml" or "xhtml" => new PdXmlReader(),
+            // html/htm/xml/xhtml 은 메인 앱이 직접 처리하지 않음 — ExternalConverter 가 CLI 를 spawn.
             _ => null,
         };
     }
@@ -47,8 +43,7 @@ public static class KnownFormats
             "txt" => new PlainTextWriter(),
             "docx" => new DocxWriter(),
             "hwpx" => new HwpxWriter(),
-            "html" or "htm" => new HtmlWriter(),
-            "xml" or "xhtml" => new PdXmlWriter(),
+            // html/htm/xml/xhtml — ExternalConverter 가 IWPF 임시파일을 만들어 CLI 로 변환.
             _ => null,
         };
     }
@@ -56,27 +51,32 @@ public static class KnownFormats
     public static bool IsSupportedNatively(string path)
         => PickReader(path) is not null;
 
-    /// <summary>"외부 컨버터 위탁" 대상 — 레거시 바이너리(HWP/DOC) 만 외부 CLI 위탁 유지.</summary>
+    /// <summary>
+    /// 외부 CLI 변환기를 통해 IWPF 로 우회 처리되는 포맷.
+    /// CLAUDE.md §3 — 메인 앱은 IWPF/MD/TXT 와 1급 시민(DOCX/HWPX) 만 직접 처리, 그 외는 별도 CLI.
+    /// </summary>
     public static bool RequiresExternalConverter(string path)
     {
         return GetExtensionId(path) switch
         {
-            "hwp" or "doc" => true,
+            "html" or "htm" or "xml" or "xhtml" => true,
+            "hwp"  or "doc" => true,
             _ => false,
         };
     }
 
     public const string OpenFilter =
-        // 직접 처리
-        "PolyDonky 직접 지원 (IWPF·DOCX·HWPX·HTML·XML·MD·TXT)|*.iwpf;*.docx;*.hwpx;*.html;*.htm;*.xml;*.xhtml;*.md;*.markdown;*.txt|" +
+        // 메인 앱 직접 처리
+        "PolyDonky 직접 지원 (IWPF·DOCX·HWPX·MD·TXT)|*.iwpf;*.docx;*.hwpx;*.md;*.markdown;*.txt|" +
         "PolyDonky 문서 (*.iwpf)|*.iwpf|" +
         "Word DOCX (*.docx)|*.docx|" +
         "한글 HWPX (*.hwpx)|*.hwpx|" +
-        "HTML (*.html;*.htm)|*.html;*.htm|" +
-        "XML / XHTML (*.xml;*.xhtml)|*.xml;*.xhtml|" +
         "Markdown (*.md;*.markdown)|*.md;*.markdown|" +
         "텍스트 (*.txt)|*.txt|" +
-        // 외부 컨버터 위탁
+        // 외부 CLI 변환 후 IWPF 로 읽음 (PolyDonky.Convert.* 실행)
+        "HTML (*.html;*.htm) — 외부 변환|*.html;*.htm|" +
+        "XML / XHTML (*.xml;*.xhtml) — 외부 변환|*.xml;*.xhtml|" +
+        // 외부 변환기 미구현
         "한글 HWP (*.hwp) — 외부 컨버터 필요|*.hwp|" +
         "Word 레거시 (*.doc) — 외부 컨버터 필요|*.doc|" +
         "모든 파일 (*.*)|*.*";
@@ -85,10 +85,11 @@ public static class KnownFormats
         "PolyDonky 문서 (*.iwpf)|*.iwpf|" +
         "Word DOCX (*.docx)|*.docx|" +
         "한글 HWPX (*.hwpx)|*.hwpx|" +
-        "HTML (*.html)|*.html|" +
-        "XML / XHTML (*.xml)|*.xml|" +
         "Markdown (*.md)|*.md|" +
-        "텍스트 (*.txt)|*.txt";
+        "텍스트 (*.txt)|*.txt|" +
+        // 외부 CLI 변환 — 임시 IWPF 만든 후 PolyDonky.Convert.* 가 변환
+        "HTML (*.html) — 외부 변환|*.html|" +
+        "XML / XHTML (*.xml) — 외부 변환|*.xml";
 
     private static string GetExtensionId(string path)
         => Path.GetExtension(path).TrimStart('.').ToLowerInvariant();

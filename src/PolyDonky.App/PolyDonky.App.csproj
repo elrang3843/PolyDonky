@@ -32,9 +32,27 @@
     <ProjectReference Include="..\PolyDonky.Codecs.Markdown\PolyDonky.Codecs.Markdown.csproj" />
     <ProjectReference Include="..\PolyDonky.Codecs.Docx\PolyDonky.Codecs.Docx.csproj" />
     <ProjectReference Include="..\PolyDonky.Codecs.Hwpx\PolyDonky.Codecs.Hwpx.csproj" />
-    <ProjectReference Include="..\PolyDonky.Codecs.Html\PolyDonky.Codecs.Html.csproj" />
-    <ProjectReference Include="..\PolyDonky.Codecs.Xml\PolyDonky.Codecs.Xml.csproj" />
   </ItemGroup>
+
+  <!-- 외부 CLI 변환기 — 빌드 시 빌드 의존성만 (어셈블리 링크 안 함, CLAUDE.md §3 분리 원칙).
+       실제 .dll/.deps.json/.runtimeconfig.json 복사는 BuildExternalConverters 타깃에서 처리. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\tools\PolyDonky.Convert.Html\PolyDonky.Convert.Html.csproj"
+                      ReferenceOutputAssembly="false" Private="false" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="..\..\tools\PolyDonky.Convert.Xml\PolyDonky.Convert.Xml.csproj"
+                      ReferenceOutputAssembly="false" Private="false" SkipGetTargetFrameworkProperties="true" />
+  </ItemGroup>
+
+  <!-- CLI 출력(.dll + 부속 파일) 을 메인 앱 출력 디렉터리로 복사. ExternalConverter 가
+       AppContext.BaseDirectory 에서 PolyDonky.Convert.Html.exe/.dll 등을 찾도록 한다. -->
+  <Target Name="CopyExternalConverters" AfterTargets="Build">
+    <ItemGroup>
+      <_ConvHtmlFiles Include="..\..\tools\PolyDonky.Convert.Html\bin\$(Configuration)\net10.0\**\*.*" />
+      <_ConvXmlFiles  Include="..\..\tools\PolyDonky.Convert.Xml\bin\$(Configuration)\net10.0\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ConvHtmlFiles)" DestinationFolder="$(OutDir)%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_ConvXmlFiles)"  DestinationFolder="$(OutDir)%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
 
   <!-- LICENSE 및 THIRD_PARTY_NOTICES.md 를 어셈블리에 내장 (라이선스 다이얼로그용) -->
   <ItemGroup>

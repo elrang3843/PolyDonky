@@ -141,10 +141,13 @@ tests/                        프로젝트별 xUnit 테스트 (.Tests 짝)
 tools/PolyDonky.SmokeTest/    콘솔 스모크 — 모든 codec + IWPF round-trip 통합 검증
 ```
 
-CLI 변환 모듈 분리 원칙(아키텍처 §3)은 **HWP/DOC/HTML 한정**으로 적용한다.
-1단계 1급 시민인 **HWPX/DOCX는 메인 앱에 직접 링크**되어 있고
-(`PolyDonky.App.csproj` 가 두 codec 을 ProjectReference), 2단계 추가 대상인
-HWP/DOC/HTML 이 별도 CLI 컨버터로 분리될 포맷이다.
+CLI 변환 모듈 분리 원칙(아키텍처 §3) — **포맷별로 별도 CLI 실행 파일**로 분리한다.
+현재 구현된 분리 대상: **HTML / XML(XHTML)** — `tools/PolyDonky.Convert.Html` /
+`tools/PolyDonky.Convert.Xml`. 메인 앱은 `Codecs.Html` / `Codecs.Xml` 을
+ProjectReference 하지 **않으며**, 빌드 시 CLI 출력(.dll + 부속 파일) 이 메인 앱
+출력 디렉터리로 복사되고, 런타임에 `Services/ExternalConverter.cs` 가 spawn 한다.
+HWPX/DOCX 는 1급 시민으로 메인 앱에 직접 링크되어 있다(`PolyDonky.App.csproj` 가 두 codec
+을 ProjectReference). 2단계 추가 대상인 HWP/DOC 도 동일한 별도 CLI 패턴으로 분리할 예정.
 
 ## 빌드·테스트 명령
 
