@@ -35,6 +35,20 @@ const int ExitOldVersion    = 6;
 // Windows cmd.exe 의 기본 cp949 에서 한글 깨짐 방지.
 try { Console.OutputEncoding = Encoding.UTF8; } catch { /* 일부 환경(redirected pipe) 무시 */ }
 
+// Ctrl+C 시 임시파일 정리 — finally 블록이 실행되지 않는 SIGINT 경로에서도
+// `.tmp-XXXXXXXX` 파일이 남지 않게 한다.
+string? tempCleanupPath = null;
+Console.CancelKeyPress += (_, e) =>
+{
+    if (tempCleanupPath is not null && File.Exists(tempCleanupPath))
+    {
+        try { File.Delete(tempCleanupPath); } catch { /* 무시 */ }
+    }
+    Console.Error.Flush();
+    Console.Out.Flush();
+    e.Cancel = false;
+};
+
 if (args.Length == 1 && (args[0] is "--version" or "-v"))
 {
     Console.WriteLine("PolyDonky.Convert.Docx 1.0");
@@ -119,6 +133,7 @@ if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
 // ── 변환 본체 ────────────────────────────────────────────────────────
 // 원자적 쓰기 — 변환 도중 비정상 종료 시 반쪽 출력이 남지 않도록 임시파일 → 최종 이름 이동.
 var tempOut = outPath + ".tmp-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+tempCleanupPath = tempOut;
 
 try
 {
@@ -158,8 +173,10 @@ try
     // 원자적 이동 — 동일 파일 시스템에선 원자적, 그 외는 copy+delete fallback.
     if (File.Exists(outPath)) File.Delete(outPath);
     File.Move(tempOut, outPath);
+    tempCleanupPath = null;  // Move 성공 후엔 SIGINT 핸들러가 outPath 를 지우지 않게 함.
     WriteProgress(100, "완료");
     Console.WriteLine($"OK: {Path.GetFileName(inPath)} → {Path.GetFileName(outPath)}");
+    Console.Out.Flush();
     return ExitOk;
 }
 catch (FileNotFoundException ex)
@@ -214,6 +231,8 @@ finally
 {
     // 임시파일 정리 — File.Move 가 성공했으면 이미 사라졌으므로 Exists 체크가 안전.
     try { if (File.Exists(tempOut)) File.Delete(tempOut); } catch { /* 무시 */ }
+    Console.Error.Flush();
+    Console.Out.Flush();
 }
 
 // ── 진행 막대 출력 ────────────────────────────────────────────────────

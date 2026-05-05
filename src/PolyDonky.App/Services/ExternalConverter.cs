@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace PolyDonky.App.Services;
@@ -11,7 +12,10 @@ namespace PolyDonky.App.Services;
 /// CLI 가 대상 포맷으로 변환).
 ///
 /// 등록된 변환기:
-///   .html / .htm / .xml / .xhtml — `PolyDonky.Convert.Html.exe` / `PolyDonky.Convert.Xml.exe`
+///   .html / .htm    — PolyDonky.Convert.Html
+///   .xml  / .xhtml  — PolyDonky.Convert.Xml
+///   .docx           — PolyDonky.Convert.Docx
+///   .hwpx           — PolyDonky.Convert.Hwpx
 /// </summary>
 public static class ExternalConverter
 {
@@ -70,6 +74,10 @@ public static class ExternalConverter
             UseShellExecute        = false,
             RedirectStandardOutput = true,
             RedirectStandardError  = true,
+            // CLI 가 Console.OutputEncoding=UTF-8 으로 출력하므로 부모도 UTF-8 로 디코딩해야 한다.
+            // 미설정 시 Windows cp949 환경에서 한국어 메시지가 mojibake 됨.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding  = Encoding.UTF8,
             CreateNoWindow         = true,
         };
         if (isDll) psi.ArgumentList.Add(converterPath);
@@ -93,6 +101,8 @@ public static class ExternalConverter
                 int colon = rest.IndexOf(':');
                 if (colon < 0) continue;
                 if (!int.TryParse(rest[..colon], out int percent)) continue;
+                // CLI 측 버그로 0~100 범위 밖 값이 와도 ProgressBar 오버플로 안 되게 클램프.
+                percent = Math.Clamp(percent, 0, 100);
                 progress.Report((percent, rest[(colon + 1)..].ToString()));
             }
         });
