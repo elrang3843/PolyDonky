@@ -59,6 +59,7 @@ namespace PolyDonky.App.Properties
         internal static string MenuFormatChar        => Get(nameof(MenuFormatChar));
         internal static string MenuFormatPara        => Get(nameof(MenuFormatPara));
         internal static string MenuFormatPage        => Get(nameof(MenuFormatPage));
+        internal static string MenuFormatHeaderFooter => Get(nameof(MenuFormatHeaderFooter));
 
         // ── 메뉴: 보기 ─────────────────────────────────────────────
         internal static string MenuView                   => Get(nameof(MenuView));
@@ -326,6 +327,13 @@ namespace PolyDonky.App.Properties
         internal static string PageFormatPaperTab          => Get(nameof(PageFormatPaperTab));
         internal static string PageFormatMarginsTab        => Get(nameof(PageFormatMarginsTab));
         internal static string PageFormatLayoutTab         => Get(nameof(PageFormatLayoutTab));
+        internal static string PageFormatHeaderFooterTab   => Get(nameof(PageFormatHeaderFooterTab));
+        internal static string PageFormatHeaderGroup       => Get(nameof(PageFormatHeaderGroup));
+        internal static string PageFormatFooterGroup       => Get(nameof(PageFormatFooterGroup));
+        internal static string PageFormatHFLeft            => Get(nameof(PageFormatHFLeft));
+        internal static string PageFormatHFCenter          => Get(nameof(PageFormatHFCenter));
+        internal static string PageFormatHFRight           => Get(nameof(PageFormatHFRight));
+        internal static string PageFormatHFTokenHint       => Get(nameof(PageFormatHFTokenHint));
         internal static string PageFormatSizeLabel         => Get(nameof(PageFormatSizeLabel));
         internal static string PageFormatCustomSize        => Get(nameof(PageFormatCustomSize));
         internal static string PageFormatWidthLabel        => Get(nameof(PageFormatWidthLabel));

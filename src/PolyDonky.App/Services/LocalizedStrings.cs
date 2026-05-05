@@ -56,7 +56,8 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string MenuFormat     => SR.MenuFormat;
     public string MenuFormatChar => SR.MenuFormatChar;
     public string MenuFormatPara => SR.MenuFormatPara;
-    public string MenuFormatPage => SR.MenuFormatPage;
+    public string MenuFormatPage         => SR.MenuFormatPage;
+    public string MenuFormatHeaderFooter => SR.MenuFormatHeaderFooter;
 
     // ── 메뉴: 보기 ──────────────────────────────────────────────
     public string MenuView                  => SR.MenuView;
@@ -222,6 +223,13 @@ public sealed class LocalizedStrings : INotifyPropertyChanged
     public string PageFormatPaperTab          => SR.PageFormatPaperTab;
     public string PageFormatMarginsTab        => SR.PageFormatMarginsTab;
     public string PageFormatLayoutTab         => SR.PageFormatLayoutTab;
+    public string PageFormatHeaderFooterTab   => SR.PageFormatHeaderFooterTab;
+    public string PageFormatHeaderGroup       => SR.PageFormatHeaderGroup;
+    public string PageFormatFooterGroup       => SR.PageFormatFooterGroup;
+    public string PageFormatHFLeft            => SR.PageFormatHFLeft;
+    public string PageFormatHFCenter          => SR.PageFormatHFCenter;
+    public string PageFormatHFRight           => SR.PageFormatHFRight;
+    public string PageFormatHFTokenHint       => SR.PageFormatHFTokenHint;
     public string PageFormatSizeLabel         => SR.PageFormatSizeLabel;
     public string PageFormatCustomSize        => SR.PageFormatCustomSize;
     public string PageFormatWidthLabel        => SR.PageFormatWidthLabel;
