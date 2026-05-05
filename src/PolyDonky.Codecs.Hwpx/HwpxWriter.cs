@@ -284,22 +284,61 @@ public sealed class HwpxWriter : IDocumentWriter
 
     // ── header.xml (dynamic registry) ────────────────────────────────────────
 
+    // KS X 6101 language groups — charPr.fontRef has one slot per group.
+    private static readonly string[] FontLangs =
+        { "HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER" };
+
     private void WriteHeaderXml(ZipArchive archive, WriteContext ctx)
     {
-        // fontfaces
-        var fonts = new XElement(Hh + "fontfaces",
-            new XAttribute("itemCnt", ctx.Fonts.Count.ToString()));
-        for (int i = 0; i < ctx.Fonts.Count; i++)
+        // fontfaces — 7 language groups, each carrying the full font registry.
+        // charPr.fontRef references per-language local indices, which match global
+        // IDs because all groups share the same ordered list.
+        var fontFaces = new XElement(Hh + "fontfaces",
+            new XAttribute("itemCnt", (FontLangs.Length).ToString()));
+        foreach (var lang in FontLangs)
         {
-            fonts.Add(new XElement(Hh + "fontface",
-                new XAttribute("lang", "HANGUL"),
-                new XAttribute("count", "1"),
-                new XElement(Hh + "font",
+            var ff = new XElement(Hh + "fontface",
+                new XAttribute("lang", lang),
+                new XAttribute("count", ctx.Fonts.Count.ToString()));
+            for (int i = 0; i < ctx.Fonts.Count; i++)
+            {
+                ff.Add(new XElement(Hh + "font",
                     new XAttribute("id", i.ToString()),
                     new XAttribute("face", ctx.Fonts[i]),
                     new XAttribute("type", "ttf"),
-                    new XAttribute("isEmbedded", "0"))));
+                    new XAttribute("isEmbedded", "0")));
+            }
+            fontFaces.Add(ff);
         }
+
+        // borderFills — id=0 default (no border, no fill). Required by charPr/tc
+        // borderFillIDRef="0" references.
+        var borderFills = new XElement(Hh + "borderFills",
+            new XAttribute("itemCnt", "1"),
+            new XElement(Hh + "borderFill",
+                new XAttribute("id", "0"),
+                new XAttribute("threeD", "0"),
+                new XAttribute("shadow", "0"),
+                new XAttribute("centerLine", "0"),
+                new XAttribute("breakCellSeparateLine", "0"),
+                new XElement(Hh + "slash",       new XAttribute("style", "NONE")),
+                new XElement(Hh + "backSlash",   new XAttribute("style", "NONE")),
+                new XElement(Hh + "leftBorder",  new XAttribute("style", "NONE"), new XAttribute("width", "0.1"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "rightBorder", new XAttribute("style", "NONE"), new XAttribute("width", "0.1"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "topBorder",   new XAttribute("style", "NONE"), new XAttribute("width", "0.1"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "bottomBorder",new XAttribute("style", "NONE"), new XAttribute("width", "0.1"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "diagonal",    new XAttribute("style", "NONE"), new XAttribute("width", "0.1"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "fillInfo", new XElement(Hh + "noFill"))));
+
+        // tabProperties — id=0 default (no custom tab stops). Required by
+        // paraPr tabPrIDRef="0" references.
+        var tabProperties = new XElement(Hh + "tabProperties",
+            new XAttribute("itemCnt", "1"),
+            new XElement(Hh + "tabPr",
+                new XAttribute("id", "0"),
+                new XAttribute("autoTabLeft", "0"),
+                new XAttribute("autoTabRight", "0"),
+                new XElement(Hh + "tabItemList", new XAttribute("itemCnt", "0"))));
 
         // charProperties — one entry per unique RunStyle
         var charProps = new XElement(Hh + "charProperties",
@@ -313,11 +352,11 @@ public sealed class HwpxWriter : IDocumentWriter
         for (int id = 0; id < ctx.ParaStyles.Count; id++)
             paraProps.Add(BuildDynamicParaPr(id, ctx.ParaStyles[id]));
 
-        // styles: 0=Normal, 1~6=Heading1~6 (outline recovery via engName)
+        // styles: 0=바탕글(Normal), 1~6=개요 1~6(Heading1~6)
         var styles = new XElement(Hh + "styles", new XAttribute("itemCnt", "7"));
         styles.Add(new XElement(Hh + "style",
             new XAttribute("id", "0"), new XAttribute("type", "PARA"),
-            new XAttribute("name", "Normal"), new XAttribute("engName", "Normal"),
+            new XAttribute("name", "바탕글"), new XAttribute("engName", "Normal"),
             new XAttribute("paraPrIDRef", "0"), new XAttribute("charPrIDRef", "0"),
             new XAttribute("nextStyleIDRef", "0"), new XAttribute("langID", "1042"),
             new XAttribute("lockForm", "0")));
@@ -325,13 +364,14 @@ public sealed class HwpxWriter : IDocumentWriter
         {
             styles.Add(new XElement(Hh + "style",
                 new XAttribute("id", level.ToString()), new XAttribute("type", "PARA"),
-                new XAttribute("name", $"Heading{level}"), new XAttribute("engName", $"Heading{level}"),
+                new XAttribute("name", $"개요 {level}"), new XAttribute("engName", $"Heading{level}"),
                 new XAttribute("paraPrIDRef", "0"), new XAttribute("charPrIDRef", "0"),
                 new XAttribute("nextStyleIDRef", "0"), new XAttribute("langID", "1042"),
                 new XAttribute("lockForm", "0")));
         }
 
-        var refList = new XElement(Hh + "refList", fonts, charProps, paraProps, styles);
+        var refList = new XElement(Hh + "refList",
+            fontFaces, borderFills, tabProperties, charProps, paraProps, styles);
         var head = new XElement(Hh + "head",
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHh, Hh.NamespaceName),
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHc, Hc.NamespaceName),
@@ -368,6 +408,10 @@ public sealed class HwpxWriter : IDocumentWriter
                                 new XAttribute("shape", "SOLID"),
                                 new XAttribute("color", "#000000")));
         if (s.Strikethrough) el.Add(new XElement(Hh + "strikeout",
+                                new XAttribute("shape", "SOLID"),
+                                new XAttribute("color", "#000000")));
+        if (s.Overline)     el.Add(new XElement(Hh + "overline",
+                                new XAttribute("type", "TOP"),
                                 new XAttribute("shape", "SOLID"),
                                 new XAttribute("color", "#000000")));
         if (s.Superscript)  el.Add(new XElement(Hh + "supScript"));
@@ -486,6 +530,29 @@ public sealed class HwpxWriter : IDocumentWriter
         if (p.Runs.Count == 0)
             para.Add(new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")));
 
+        // hp:linesegarray — required by Hangul Office for line-layout metadata.
+        // Values are approximate; HWP re-calculates on open. Units: hwpunit (1/7200 in).
+        // 1 pt = 100 height-units = (7200/72) = 100 hwpunit — coincidentally the same number.
+        double maxPt = p.Runs.Count > 0
+            ? p.Runs.Max(r => r.Style.FontSizePt > 0 ? r.Style.FontSizePt : 10.0)
+            : 10.0;
+        double lsFactor = p.Style.LineHeightFactor > 0 ? p.Style.LineHeightFactor : 1.6;
+        long textH  = (long)Math.Round(maxPt * 100);
+        long height = (long)Math.Round(textH * lsFactor);
+        long descent = (long)Math.Round(textH * 0.25);
+
+        para.Add(new XElement(Hp + "linesegarray",
+            new XElement(Hp + "lineseg",
+                new XAttribute("textpos",    "0"),
+                new XAttribute("vertical",   "0"),
+                new XAttribute("height",     height.ToString()),
+                new XAttribute("textHeight", textH.ToString()),
+                new XAttribute("descent",    descent.ToString()),
+                new XAttribute("lineSpacing","0"),
+                new XAttribute("horzFmt",    "0"),
+                new XAttribute("vertFmt",    "0"),
+                new XAttribute("lineBreak",  "0"))));
+
         return para;
     }
 
@@ -503,7 +570,14 @@ public sealed class HwpxWriter : IDocumentWriter
         => new(Hp + "p",
             new XAttribute("paraPrIDRef", "0"),
             new XAttribute("styleIDRef", "0"),
-            new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")));
+            new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")),
+            new XElement(Hp + "linesegarray",
+                new XElement(Hp + "lineseg",
+                    new XAttribute("textpos", "0"), new XAttribute("vertical", "0"),
+                    new XAttribute("height", "1600"), new XAttribute("textHeight", "1000"),
+                    new XAttribute("descent", "250"), new XAttribute("lineSpacing", "0"),
+                    new XAttribute("horzFmt", "0"), new XAttribute("vertFmt", "0"),
+                    new XAttribute("lineBreak", "0"))));
 
     // ── opaque island ────────────────────────────────────────────────────────
 
