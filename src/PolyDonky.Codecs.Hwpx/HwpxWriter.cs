@@ -545,23 +545,7 @@ public sealed class HwpxWriter : IDocumentWriter
         var sec = new XElement(Hs + "sec",
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHs, Hs.NamespaceName),
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHp, Hp.NamespaceName),
-            new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHh, Hh.NamespaceName),
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHc, Hc.NamespaceName));
-
-        // secPr — section layout reference. masterPageIDRef must point to a valid
-        // hh:masterPage id in header.xml; without this Hangul Office rejects the file.
-        sec.Add(new XElement(Hh + "secPr",
-            new XAttribute("masterPageIDRef", "0"),
-            new XAttribute("masterPageCnt",   "1"),
-            new XAttribute("hideHeader",      "0"),
-            new XAttribute("hideFooter",      "0"),
-            new XAttribute("hidePageNum",     "0"),
-            new XAttribute("hideEmptyLineFill","0"),
-            new XAttribute("lineGrid",        "0"),
-            new XAttribute("charGrid",        "0"),
-            new XAttribute("snappedGrid",     "0"),
-            new XAttribute("startNum",        sectionIndex == 0 ? "1" : "0"),
-            new XAttribute("pageBreakBefore", "0")));
 
         if (section.Blocks.Count == 0)
         {
