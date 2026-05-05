@@ -303,7 +303,9 @@
                                Margin="0,0,8,0"
                                TextTrimming="CharacterEllipsis"
                                MaxWidth="320" />
-                    <ProgressBar IsIndeterminate="True"
+                    <ProgressBar Value="{Binding BusyProgress}"
+                                 Minimum="0" Maximum="100"
+                                 IsIndeterminate="{Binding BusyProgressIsIndeterminate}"
                                  Width="160" Height="14"
                                  VerticalAlignment="Center" />
                 </StackPanel>

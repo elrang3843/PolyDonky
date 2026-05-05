@@ -45,24 +45,30 @@ try
 {
     if ((inExt is "xml" or "xhtml") && outExt == "iwpf")
     {
+        WriteProgress(0, "XML 읽는 중");
         PolyDonkyument doc;
         using (var fs = File.OpenRead(inPath))
             doc = new PdXmlReader().Read(fs);
 
+        WriteProgress(60, "IWPF 로 변환 중");
         using var ofs = File.Create(outPath);
         new IwpfWriter().Write(doc, ofs);
+        WriteProgress(100, "완료");
         Console.WriteLine($"OK: {Path.GetFileName(inPath)} → {Path.GetFileName(outPath)}");
         return 0;
     }
 
     if (inExt == "iwpf" && (outExt is "xml" or "xhtml"))
     {
+        WriteProgress(0, "IWPF 읽는 중");
         PolyDonkyument doc;
         using (var fs = File.OpenRead(inPath))
             doc = new IwpfReader().Read(fs);
 
+        WriteProgress(60, "XHTML 로 변환 중");
         using var ofs = File.Create(outPath);
         new PdXmlWriter().Write(doc, ofs);
+        WriteProgress(100, "완료");
         Console.WriteLine($"OK: {Path.GetFileName(inPath)} → {Path.GetFileName(outPath)}");
         return 0;
     }
@@ -84,4 +90,10 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"변환 실패: {ex.GetType().Name}: {ex.Message}");
     return 5;
+}
+
+static void WriteProgress(int percent, string message)
+{
+    Console.WriteLine($"PROGRESS:{percent}:{message}");
+    Console.Out.Flush();
 }

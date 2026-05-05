@@ -46,17 +46,16 @@ try
     if ((inExt is "html" or "htm") && outExt == "iwpf")
     {
         // import: HTML → IWPF
-        // 한도 0 = 무제한 — 사용자가 명시적으로 큰 HTML 을 변환하려고 했으므로 잘림 없이 모두 처리.
+        WriteProgress(0, "HTML 읽는 중");
         var reader = new HtmlReader { MaxBlocks = 0 };
         PolyDonkyument doc;
         using (var fs = File.OpenRead(inPath))
             doc = reader.Read(fs);
 
-        // 메인 앱은 페이지네이션 fast-path 를 IWPF 메타데이터로 알아내야 한다 — 표시 보존.
-        // (HtmlReader 가 이미 "pagination.degraded"=true 를 심어둠)
-
+        WriteProgress(60, "IWPF 로 변환 중");
         using var ofs = File.Create(outPath);
         new IwpfWriter().Write(doc, ofs);
+        WriteProgress(100, "완료");
         Console.WriteLine($"OK: {Path.GetFileName(inPath)} → {Path.GetFileName(outPath)}");
         return 0;
     }
@@ -64,12 +63,15 @@ try
     if (inExt == "iwpf" && (outExt is "html" or "htm"))
     {
         // export: IWPF → HTML
+        WriteProgress(0, "IWPF 읽는 중");
         PolyDonkyument doc;
         using (var fs = File.OpenRead(inPath))
             doc = new IwpfReader().Read(fs);
 
+        WriteProgress(60, "HTML 로 변환 중");
         using var ofs = File.Create(outPath);
         new HtmlWriter().Write(doc, ofs);
+        WriteProgress(100, "완료");
         Console.WriteLine($"OK: {Path.GetFileName(inPath)} → {Path.GetFileName(outPath)}");
         return 0;
     }
@@ -91,4 +93,14 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"변환 실패: {ex.GetType().Name}: {ex.Message}");
     return 5;
+}
+
+// ── 진행 막대 출력 ────────────────────────────────────────────────────
+// 메인 앱(Services/ExternalConverter) 가 stdout 을 한 줄씩 읽고 "PROGRESS:" 접두로
+// 시작하는 줄을 파싱해 IProgress 로 보고한다. 콘솔에서 직접 실행해도 사람이 읽을 수 있게
+// 메시지는 평문 그대로 — 메인 앱이 ":" 로 split 해 percent 와 message 를 분리.
+static void WriteProgress(int percent, string message)
+{
+    Console.WriteLine($"PROGRESS:{percent}:{message}");
+    Console.Out.Flush();
 }

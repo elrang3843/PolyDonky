@@ -120,6 +120,7 @@
   <data name="StatusBusyOpen" xml:space="preserve"><value>열기 중 — {0}</value></data>
   <data name="StatusBusySave" xml:space="preserve"><value>저장 중 — {0}</value></data>
   <data name="StatusBusyConvert" xml:space="preserve"><value>변환 중 — {0}</value></data>
+  <data name="StatusBusyConvertProgress" xml:space="preserve"><value>변환 중 ({0}%) {1} — {2}</value></data>
   <data name="StatusConvertedAndOpened" xml:space="preserve"><value>{0} → {1} 변환 완료. 변환된 IWPF 파일을 열었습니다.</value></data>
   <data name="StatusSavedAndConverted" xml:space="preserve"><value>{0} 로 저장하고 {1} 로 변환했습니다.</value></data>
   <data name="DlgConvertOnOpenTitle" xml:space="preserve"><value>외부 포맷 변환</value></data>

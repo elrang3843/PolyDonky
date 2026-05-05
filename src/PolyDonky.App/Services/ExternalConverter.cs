@@ -49,7 +49,15 @@ public static class ExternalConverter
     /// CLI 변환기를 spawn 해 input → output 변환을 수행한다. 백그라운드 스레드에서 호출 권장.
     /// 실패 시 Exception throw — 호출측이 ReportError 등으로 처리.
     /// </summary>
-    public static async Task ConvertAsync(string converterPath, string inputPath, string outputPath)
+    /// <param name="progress">
+    /// CLI 가 stdout 으로 보내는 <c>PROGRESS:&lt;percent&gt;:&lt;message&gt;</c> 줄을 파싱해
+    /// (0~100, 메시지) 로 보고. null 이면 진행 정보 무시.
+    /// </param>
+    public static async Task ConvertAsync(
+        string converterPath,
+        string inputPath,
+        string outputPath,
+        IProgress<(int Percent, string Message)>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(converterPath);
         ArgumentNullException.ThrowIfNull(inputPath);
@@ -71,12 +79,28 @@ public static class ExternalConverter
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException($"외부 변환기 실행 실패: {converterPath}");
 
-        // 출력은 흡수 — 안 흡수하면 PIPE 가 가득 차서 block 될 수 있음.
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        // stdout 을 한 줄씩 읽어 PROGRESS: 라인을 파싱하고 나머지는 흡수.
+        var stdoutTask = Task.Run(async () =>
+        {
+            string? line;
+            while ((line = await proc.StandardOutput.ReadLineAsync().ConfigureAwait(false)) != null)
+            {
+                if (progress is null) continue;
+                if (!line.StartsWith("PROGRESS:", StringComparison.Ordinal)) continue;
+
+                // PROGRESS:<percent>:<message>
+                var rest  = line.AsSpan(9);
+                int colon = rest.IndexOf(':');
+                if (colon < 0) continue;
+                if (!int.TryParse(rest[..colon], out int percent)) continue;
+                progress.Report((percent, rest[(colon + 1)..].ToString()));
+            }
+        });
+
         var stderrTask = proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync().ConfigureAwait(false);
+        await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
-        _ = await stdoutTask.ConfigureAwait(false);
 
         if (proc.ExitCode != 0)
         {

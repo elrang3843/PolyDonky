@@ -108,6 +108,7 @@ namespace PolyDonky.App.Properties
         internal static string StatusBusyOpen        => Get(nameof(StatusBusyOpen));
         internal static string StatusBusySave        => Get(nameof(StatusBusySave));
         internal static string StatusBusyConvert     => Get(nameof(StatusBusyConvert));
+        internal static string StatusBusyConvertProgress => Get(nameof(StatusBusyConvertProgress));
         internal static string StatusConvertedAndOpened => Get(nameof(StatusConvertedAndOpened));
         internal static string StatusSavedAndConverted  => Get(nameof(StatusSavedAndConverted));
         internal static string DlgConvertOnOpenTitle    => Get(nameof(DlgConvertOnOpenTitle));

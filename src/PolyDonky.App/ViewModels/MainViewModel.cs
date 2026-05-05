@@ -95,6 +95,16 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _busyMessage = string.Empty;
 
+    /// <summary>
+    /// 외부 CLI 가 보고하는 진행률 (0~100). -1 이면 진행률 미정 → ProgressBar 가 indeterminate 모드.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BusyProgressIsIndeterminate))]
+    private int _busyProgress = -1;
+
+    /// <summary>BusyProgress 가 음수면 indeterminate. ProgressBar.IsIndeterminate 에 바인딩.</summary>
+    public bool BusyProgressIsIndeterminate => BusyProgress < 0;
+
     // 상태 표시줄 우측 4칸: 메모리·Insert/Overwrite·CapsLock·NumLock.
     // MainWindow code-behind 가 DispatcherTimer 로 1초마다 RefreshSystemKeys/Memory 를 호출한다.
     [ObservableProperty]
@@ -317,13 +327,21 @@ public partial class MainViewModel : ObservableObject
             // Yes → 변환 진행해 덮어쓰기.
         }
 
-        IsBusy      = true;
-        BusyMessage = string.Format(SR.StatusBusyConvert, Path.GetFileName(sourcePath));
+        IsBusy        = true;
+        BusyProgress  = 0;
+        BusyMessage   = string.Format(SR.StatusBusyConvert, Path.GetFileName(sourcePath));
+        var sourceName = Path.GetFileName(sourcePath);
+        var iwpfName   = Path.GetFileName(iwpfPath);
+        var reporter = new Progress<(int Percent, string Message)>(t =>
+        {
+            BusyProgress = t.Percent;
+            BusyMessage  = string.Format(SR.StatusBusyConvertProgress, t.Percent, t.Message, sourceName);
+        });
         try
         {
             try
             {
-                await ExternalConverter.ConvertAsync(converter, sourcePath, iwpfPath);
+                await ExternalConverter.ConvertAsync(converter, sourcePath, iwpfPath, reporter);
             }
             catch (Exception ex)
             {
@@ -334,7 +352,8 @@ public partial class MainViewModel : ObservableObject
             PolyDonkyument doc;
             try
             {
-                BusyMessage = string.Format(SR.StatusBusyOpen, Path.GetFileName(iwpfPath));
+                BusyProgress = -1;  // IWPF 로드 단계는 indeterminate.
+                BusyMessage  = string.Format(SR.StatusBusyOpen, iwpfName);
                 doc = await Task.Run(() =>
                 {
                     using var fs = File.OpenRead(iwpfPath);
@@ -349,13 +368,13 @@ public partial class MainViewModel : ObservableObject
 
             // 정본은 IWPF — CurrentFilePath 가 .iwpf 가 되어 다음 저장은 IWPF 로 직행.
             LoadDocument(doc, iwpfPath, password: null);
-            StatusMessage = string.Format(SR.StatusConvertedAndOpened,
-                Path.GetFileName(sourcePath), Path.GetFileName(iwpfPath));
+            StatusMessage = string.Format(SR.StatusConvertedAndOpened, sourceName, iwpfName);
         }
         finally
         {
-            IsBusy      = false;
-            BusyMessage = string.Empty;
+            IsBusy       = false;
+            BusyProgress = -1;
+            BusyMessage  = string.Empty;
         }
     }
 
@@ -959,10 +978,13 @@ public partial class MainViewModel : ObservableObject
             MessageBoxResult.OK);
         if (promptResult != MessageBoxResult.OK) return;
 
+        var iwpfName   = Path.GetFileName(iwpfPath);
+        var targetName = Path.GetFileName(targetPath);
         try
         {
             // 1) 현재 모델을 같은 이름의 IWPF 정본 파일로 저장 (UI 스레드 — FlowDocument 파싱).
-            BusyMessage = string.Format(SR.StatusBusySave, Path.GetFileName(iwpfPath));
+            BusyProgress = -1;
+            BusyMessage  = string.Format(SR.StatusBusySave, iwpfName);
             await Task.Run(() => SaveToCore(iwpfPath, showProgress: false));
             if (!File.Exists(iwpfPath))
             {
@@ -971,10 +993,16 @@ public partial class MainViewModel : ObservableObject
             }
 
             // 2) CLI 가 IWPF 정본을 외부 포맷으로 변환.
-            BusyMessage = string.Format(SR.StatusBusyConvert, Path.GetFileName(iwpfPath));
+            BusyProgress = 0;
+            BusyMessage  = string.Format(SR.StatusBusyConvert, iwpfName);
+            var reporter = new Progress<(int Percent, string Message)>(t =>
+            {
+                BusyProgress = t.Percent;
+                BusyMessage  = string.Format(SR.StatusBusyConvertProgress, t.Percent, t.Message, targetName);
+            });
             try
             {
-                await ExternalConverter.ConvertAsync(converter, iwpfPath, targetPath);
+                await ExternalConverter.ConvertAsync(converter, iwpfPath, targetPath, reporter);
             }
             catch (Exception ex)
             {
@@ -984,14 +1012,17 @@ public partial class MainViewModel : ObservableObject
 
             // 정본은 IWPF — CurrentFilePath 를 .iwpf 로 갱신해 이후 저장은 IWPF 로 직행.
             CurrentFilePath = iwpfPath;
-            DocumentTitle   = Path.GetFileName(iwpfPath);
+            DocumentTitle   = iwpfName;
             HasUnsavedChanges = false;
-            StatusMessage   = string.Format(SR.StatusSavedAndConverted,
-                Path.GetFileName(iwpfPath), Path.GetFileName(targetPath));
+            StatusMessage   = string.Format(SR.StatusSavedAndConverted, iwpfName, targetName);
         }
         catch (Exception ex)
         {
             ReportError(SR.DlgSaveError, ex);
+        }
+        finally
+        {
+            BusyProgress = -1;
         }
     }
 

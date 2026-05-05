@@ -120,6 +120,7 @@
   <data name="StatusBusyOpen" xml:space="preserve"><value>Opening — {0}</value></data>
   <data name="StatusBusySave" xml:space="preserve"><value>Saving — {0}</value></data>
   <data name="StatusBusyConvert" xml:space="preserve"><value>Converting — {0}</value></data>
+  <data name="StatusBusyConvertProgress" xml:space="preserve"><value>Converting ({0}%) {1} — {2}</value></data>
   <data name="StatusConvertedAndOpened" xml:space="preserve"><value>Converted {0} → {1} and opened the IWPF file.</value></data>
   <data name="StatusSavedAndConverted" xml:space="preserve"><value>Saved {0} and exported {1}.</value></data>
   <data name="DlgConvertOnOpenTitle" xml:space="preserve"><value>External format conversion</value></data>
