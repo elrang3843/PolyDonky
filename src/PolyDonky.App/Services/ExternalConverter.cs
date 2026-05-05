@@ -26,6 +26,8 @@ public static class ExternalConverter
         {
             "html" or "htm"   => "PolyDonky.Convert.Html",
             "xml"  or "xhtml" => "PolyDonky.Convert.Xml",
+            "docx"            => "PolyDonky.Convert.Docx",
+            "hwpx"            => "PolyDonky.Convert.Hwpx",
             _                 => null,
         };
         if (name is null) return null;

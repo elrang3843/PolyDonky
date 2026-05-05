@@ -141,13 +141,21 @@ tests/                        프로젝트별 xUnit 테스트 (.Tests 짝)
 tools/PolyDonky.SmokeTest/    콘솔 스모크 — 모든 codec + IWPF round-trip 통합 검증
 ```
 
-CLI 변환 모듈 분리 원칙(아키텍처 §3) — **포맷별로 별도 CLI 실행 파일**로 분리한다.
-현재 구현된 분리 대상: **HTML / XML(XHTML)** — `tools/PolyDonky.Convert.Html` /
-`tools/PolyDonky.Convert.Xml`. 메인 앱은 `Codecs.Html` / `Codecs.Xml` 을
+CLI 변환 모듈 분리 원칙(아키텍처 §3) — **메인 앱은 IWPF/MD/TXT 만 직접 read/write**,
+그 외 모든 포맷은 **포맷별로 별도 CLI 실행 파일**로 분리한다.
+
+현재 구현된 분리 대상:
+- `tools/PolyDonky.Convert.Html` — HTML ↔ IWPF
+- `tools/PolyDonky.Convert.Xml`  — XML/XHTML ↔ IWPF
+- `tools/PolyDonky.Convert.Docx` — DOCX ↔ IWPF
+- `tools/PolyDonky.Convert.Hwpx` — HWPX ↔ IWPF
+
+메인 앱은 `Codecs.Html`/`Codecs.Xml`/`Codecs.Docx`/`Codecs.Hwpx` 를
 ProjectReference 하지 **않으며**, 빌드 시 CLI 출력(.dll + 부속 파일) 이 메인 앱
 출력 디렉터리로 복사되고, 런타임에 `Services/ExternalConverter.cs` 가 spawn 한다.
-HWPX/DOCX 는 1급 시민으로 메인 앱에 직접 링크되어 있다(`PolyDonky.App.csproj` 가 두 codec
-을 ProjectReference). 2단계 추가 대상인 HWP/DOC 도 동일한 별도 CLI 패턴으로 분리할 예정.
+열기: 입력 → 같은 이름의 정식 `.iwpf` 변환 후 메인 앱이 IWPF 를 읽음 (CurrentFilePath = .iwpf).
+저장: 같은 이름의 IWPF 정본 저장 → CLI 가 외부 포맷으로 변환 (두 파일 모두 디스크에 남음).
+2단계 추가 대상인 HWP/DOC 도 동일한 패턴으로 `tools/PolyDonky.Convert.Hwp` / `Doc` 로 분리할 예정.
 
 ## 빌드·테스트 명령
 
