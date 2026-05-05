@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using PolyDonky.Codecs.Docx;
+using PolyDonky.Codecs.Html;
 using PolyDonky.Codecs.Hwpx;
 using PolyDonky.Codecs.Markdown;
 using PolyDonky.Codecs.Text;
@@ -29,6 +30,7 @@ public static class KnownFormats
             "txt" => new PlainTextReader(),
             "docx" => new DocxReader(),
             "hwpx" => new HwpxReader(),
+            "html" or "htm" => new HtmlReader(),
             _ => null,
         };
     }
@@ -42,6 +44,7 @@ public static class KnownFormats
             "txt" => new PlainTextWriter(),
             "docx" => new DocxWriter(),
             "hwpx" => new HwpxWriter(),
+            "html" or "htm" => new HtmlWriter(),
             _ => null,
         };
     }
@@ -49,43 +52,37 @@ public static class KnownFormats
     public static bool IsSupportedNatively(string path)
         => PickReader(path) is not null;
 
-    /// <summary>"외부 컨버터 위탁" 대상 — Phase D 에서 외부 CLI 호출로 연결.</summary>
-    /// <remarks>
-    /// Phase C 에서 DOCX·HWPX 모두 직접 처리되므로 목록에서 제외.
-    /// 레거시 바이너리(HWP/DOC)와 HTML 만 외부 컨버터 위탁이 유지된다 (Phase D 에서 LibreOffice 등 연결).
-    /// </remarks>
+    /// <summary>"외부 컨버터 위탁" 대상 — 레거시 바이너리(HWP/DOC) 만 외부 CLI 위탁 유지.</summary>
     public static bool RequiresExternalConverter(string path)
     {
         return GetExtensionId(path) switch
         {
-            "hwp" or "doc" or "html" or "htm" => true,
+            "hwp" or "doc" => true,
             _ => false,
         };
     }
 
     public const string OpenFilter =
-        // 직접 처리 (Phase A·C)
-        "PolyDonky 직접 지원 (IWPF·DOCX·HWPX·MD·TXT)|*.iwpf;*.docx;*.hwpx;*.md;*.markdown;*.txt|" +
+        // 직접 처리
+        "PolyDonky 직접 지원 (IWPF·DOCX·HWPX·HTML·MD·TXT)|*.iwpf;*.docx;*.hwpx;*.html;*.htm;*.md;*.markdown;*.txt|" +
         "PolyDonky 문서 (*.iwpf)|*.iwpf|" +
         "Word DOCX (*.docx)|*.docx|" +
         "한글 HWPX (*.hwpx)|*.hwpx|" +
+        "HTML (*.html;*.htm)|*.html;*.htm|" +
         "Markdown (*.md;*.markdown)|*.md;*.markdown|" +
         "텍스트 (*.txt)|*.txt|" +
-        // 외부 컨버터 위탁 (Phase D 이후)
+        // 외부 컨버터 위탁
         "한글 HWP (*.hwp) — 외부 컨버터 필요|*.hwp|" +
         "Word 레거시 (*.doc) — 외부 컨버터 필요|*.doc|" +
-        "HTML (*.html;*.htm) — 외부 컨버터 필요|*.html;*.htm|" +
         "모든 파일 (*.*)|*.*";
 
     public const string SaveFilter =
-        // 직접 처리 (Phase A·C)
         "PolyDonky 문서 (*.iwpf)|*.iwpf|" +
         "Word DOCX (*.docx)|*.docx|" +
         "한글 HWPX (*.hwpx)|*.hwpx|" +
+        "HTML (*.html)|*.html|" +
         "Markdown (*.md)|*.md|" +
-        "텍스트 (*.txt)|*.txt|" +
-        // 외부 컨버터 위탁 (Phase D 이후)
-        "HTML (*.html) — 외부 컨버터 필요|*.html";
+        "텍스트 (*.txt)|*.txt";
 
     private static string GetExtensionId(string path)
         => Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
