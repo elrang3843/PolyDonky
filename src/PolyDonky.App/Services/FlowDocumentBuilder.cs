@@ -89,6 +89,7 @@ public static class FlowDocumentBuilder
             fd.IsColumnWidthFlexible = false;
         }
 
+
         foreach (var section in document.Sections)
         {
             BuildSection(fd, section, outlineStyles);
@@ -490,10 +491,14 @@ public static class FlowDocumentBuilder
         }
 
         var bitmap = new WpfMedia.Imaging.BitmapImage();
+        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+        var imgStream = new MemoryStream(image.Data, writable: false);
         bitmap.BeginInit();
         bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
+        bitmap.StreamSource = imgStream;
         bitmap.EndInit();
+        imgStream.Dispose();
         bitmap.Freeze();
 
         // Image.Tag 에 container 를 저장하지 말 것 — container.Child = image 와 함께 순환 참조가 되어
@@ -540,6 +545,9 @@ public static class FlowDocumentBuilder
                 HorizontalAlignment = imgHA,
             };
         }
+
+        // 그림 제목 래퍼
+        visual = WrapImageWithTitle(visual, image, imgHA);
 
         var marginTopDip    = MmToDip(image.MarginTopMm);
         var marginBottomDip = MmToDip(image.MarginBottomMm);
@@ -631,10 +639,14 @@ public static class FlowDocumentBuilder
         if (image.Data.Length == 0) return null;
 
         var bitmap = new WpfMedia.Imaging.BitmapImage();
+        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+        var imgStream = new MemoryStream(image.Data, writable: false);
         bitmap.BeginInit();
         bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
+        bitmap.StreamSource = imgStream;
         bitmap.EndInit();
+        imgStream.Dispose();
         bitmap.Freeze();
 
         var control = new System.Windows.Controls.Image
@@ -646,6 +658,7 @@ public static class FlowDocumentBuilder
         if (image.HeightMm > 0) control.Height = MmToDip(image.HeightMm);
         if (!string.IsNullOrEmpty(image.Description)) control.ToolTip = image.Description;
 
+        UIElement overlayVisual = control;
         if (!string.IsNullOrEmpty(image.BorderColor) && image.BorderThicknessPt > 0)
         {
             WpfMedia.Brush borderBrush;
@@ -653,7 +666,7 @@ public static class FlowDocumentBuilder
                     (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(image.BorderColor)!); }
             catch { borderBrush = WpfMedia.Brushes.Black; }
 
-            return new System.Windows.Controls.Border
+            overlayVisual = new System.Windows.Controls.Border
             {
                 Child           = control,
                 BorderBrush     = borderBrush,
@@ -661,7 +674,96 @@ public static class FlowDocumentBuilder
             };
         }
 
-        return control;
+        var withTitle = WrapImageWithTitle(overlayVisual, image, HorizontalAlignment.Left);
+        return withTitle as System.Windows.FrameworkElement ?? control;
+    }
+
+    /// <summary>
+    /// 그림 제목(캡션) 표시가 켜져 있으면 image 시각 요소를 Grid 로 감싸 제목을 함께 배치한다.
+    /// 위치(Above/Below/OverlayTop/Middle/Bottom) + 가로 정렬 + X/Y 오프셋(mm)을 적용.
+    /// </summary>
+    private static UIElement WrapImageWithTitle(UIElement imageVisual, ImageBlock image, HorizontalAlignment imgHA)
+    {
+        if (!image.ShowTitle || string.IsNullOrWhiteSpace(image.Title)) return imageVisual;
+
+        var s = image.TitleStyle;
+
+        // 제목 텍스트블록 — RunStyle 기반 (CharFormatWindow 와 모델 공유).
+        WpfMedia.Brush titleFg = s.Foreground is { } fg
+            ? new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(fg.A, fg.R, fg.G, fg.B))
+            : WpfMedia.Brushes.Black;
+        WpfMedia.Brush? titleBg = s.Background is { } bg
+            ? new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(bg.A, bg.R, bg.G, bg.B))
+            : null;
+
+        TextAlignment ta = image.TitleHAlign switch
+        {
+            ImageHAlign.Left   => TextAlignment.Left,
+            ImageHAlign.Right  => TextAlignment.Right,
+            _                  => TextAlignment.Center,
+        };
+        var tb = new System.Windows.Controls.TextBlock
+        {
+            Text          = image.Title,
+            Foreground    = titleFg,
+            FontSize      = PtToDip(s.FontSizePt > 0 ? s.FontSizePt : 10),
+            FontWeight    = s.Bold   ? FontWeights.Bold   : FontWeights.Normal,
+            FontStyle     = s.Italic ? FontStyles.Italic  : FontStyles.Normal,
+            TextWrapping  = TextWrapping.Wrap,
+            TextAlignment = ta,
+        };
+        if (titleBg is not null) tb.Background = titleBg;
+        if (!string.IsNullOrEmpty(s.FontFamily))
+            tb.FontFamily = new WpfMedia.FontFamily(s.FontFamily);
+
+        // 텍스트 장식 (밑줄/취소선/위줄)
+        if (s.Underline || s.Strikethrough || s.Overline)
+        {
+            var decos = new System.Windows.TextDecorationCollection();
+            if (s.Underline)     foreach (var d in System.Windows.TextDecorations.Underline)    decos.Add(d);
+            if (s.Strikethrough) foreach (var d in System.Windows.TextDecorations.Strikethrough) decos.Add(d);
+            if (s.Overline)      foreach (var d in System.Windows.TextDecorations.OverLine)     decos.Add(d);
+            tb.TextDecorations = decos;
+        }
+
+        // 오프셋 — TranslateTransform 으로 적용해 정렬·레이아웃에 영향 없이 미세 이동.
+        if (Math.Abs(image.TitleOffsetXMm) > 0.001 || Math.Abs(image.TitleOffsetYMm) > 0.001)
+        {
+            tb.RenderTransform = new WpfMedia.TranslateTransform(
+                MmToDip(image.TitleOffsetXMm), MmToDip(image.TitleOffsetYMm));
+        }
+
+        var grid = new System.Windows.Controls.Grid { HorizontalAlignment = imgHA };
+
+        bool isOverlay = image.TitlePosition is ImageTitlePosition.OverlayTop
+                                              or ImageTitlePosition.OverlayMiddle
+                                              or ImageTitlePosition.OverlayBottom;
+        if (isOverlay)
+        {
+            // 같은 셀에 그림과 제목이 겹침. VerticalAlignment 로 위/가운데/아래 결정.
+            grid.Children.Add(imageVisual);
+            tb.VerticalAlignment = image.TitlePosition switch
+            {
+                ImageTitlePosition.OverlayTop    => VerticalAlignment.Top,
+                ImageTitlePosition.OverlayBottom => VerticalAlignment.Bottom,
+                _                                => VerticalAlignment.Center,
+            };
+            tb.HorizontalAlignment = HorizontalAlignment.Stretch;
+            grid.Children.Add(tb);
+        }
+        else
+        {
+            grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
+            grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
+            int titleRow = image.TitlePosition == ImageTitlePosition.Above ? 0 : 1;
+            int imageRow = image.TitlePosition == ImageTitlePosition.Above ? 1 : 0;
+            System.Windows.Controls.Grid.SetRow(tb, titleRow);
+            System.Windows.Controls.Grid.SetRow((FrameworkElement)imageVisual, imageRow);
+            tb.HorizontalAlignment = HorizontalAlignment.Stretch;
+            grid.Children.Add(imageVisual);
+            grid.Children.Add(tb);
+        }
+        return grid;
     }
 
     // ── 도형 렌더링 ─────────────────────────────────────────────────────────
@@ -804,26 +906,31 @@ public static class FlowDocumentBuilder
             Stretch         = WpfMedia.Stretch.None,
         };
 
-        // 화살촉 (선 계열 — 열린 선에만)
+        canvas.Children.Add(path);
+
+        // 끝모양 (선 계열 — 열린 선에만); path 추가 후 그 위에 그림
         if (shape.Kind is ShapeKind.Line or ShapeKind.Polyline or ShapeKind.Spline)
         {
-            ApplyArrows(path, shape.StartArrow, shape.EndArrow);
+            var ptsDip = GetPointsDip(shape.Points, wDip, hDip);
+            if (ptsDip.Count < 2 && shape.Kind == ShapeKind.Line)
+            {
+                ptsDip = new List<Point> { new(0, hDip / 2), new(wDip, hDip / 2) };
+            }
+            AddArrowHeads(canvas, shape.StartArrow, shape.EndArrow, shape.EndShapeSizeMm, ptsDip, strokeBrush, strokeDip);
         }
-
-        // 회전
-        if (Math.Abs(shape.RotationAngleDeg) > 0.01)
-        {
-            path.RenderTransformOrigin = new Point(0.5, 0.5);
-            path.RenderTransform = new WpfMedia.RotateTransform(shape.RotationAngleDeg);
-        }
-
-        canvas.Children.Add(path);
 
         // 레이블
         if (!string.IsNullOrWhiteSpace(shape.LabelText))
         {
             var label = BuildShapeLabel(shape, wDip, hDip);
             canvas.Children.Add(label);
+        }
+
+        // 회전 — canvas 전체에 적용해 path·끝모양·레이블이 함께 회전한다.
+        if (Math.Abs(shape.RotationAngleDeg) > 0.01)
+        {
+            canvas.RenderTransformOrigin = new Point(0.5, 0.5);
+            canvas.RenderTransform = new WpfMedia.RotateTransform(shape.RotationAngleDeg);
         }
 
         return canvas;
@@ -841,12 +948,133 @@ public static class FlowDocumentBuilder
         };
     }
 
-    private static void ApplyArrows(WpfShapes.Path path, ShapeArrow start, ShapeArrow end)
+    private static void AddArrowHeads(
+        System.Windows.Controls.Canvas canvas,
+        ShapeArrow start, ShapeArrow end,
+        double endShapeSizeMm,
+        List<Point> ptsDip,
+        WpfMedia.Brush strokeBrush,
+        double strokeDip)
     {
+        if (start == ShapeArrow.None && end == ShapeArrow.None) return;
+        if (ptsDip.Count < 2) return;
+
+        // 사용자가 mm 로 명시한 크기가 있으면 그 값 사용, 아니면 선 두께에 비례 (최소 2.5 mm).
+        double arrowLen  = endShapeSizeMm > 0
+            ? MmToDip(endShapeSizeMm)
+            : Math.Max(strokeDip * 5.0, MmToDip(2.5));
+        double arrowHalf = arrowLen * 0.38;
+
         if (start != ShapeArrow.None)
-            path.Tag = ("arrows", start, end); // stored for hit-test routing; actual markers drawn via decorators
-        // WPF Path 는 built-in 화살촉이 없으므로 여기서는 스타일 힌트만 저장.
-        // 실제 화살촉 렌더링은 후속 사이클(Adorner/Decorator) 에서 구현한다.
+            AddOneArrowHead(canvas, start, ptsDip[0], ptsDip[1], arrowLen, arrowHalf, strokeBrush, strokeDip);
+
+        if (end != ShapeArrow.None)
+        {
+            int n = ptsDip.Count;
+            AddOneArrowHead(canvas, end, ptsDip[n - 1], ptsDip[n - 2], arrowLen, arrowHalf, strokeBrush, strokeDip);
+        }
+    }
+
+    private static void AddOneArrowHead(
+        System.Windows.Controls.Canvas canvas,
+        ShapeArrow kind,
+        Point tip, Point from,
+        double arrowLen, double arrowHalf,
+        WpfMedia.Brush brush,
+        double strokeDip)
+    {
+        double dx  = tip.X - from.X;
+        double dy  = tip.Y - from.Y;
+        double len = Math.Sqrt(dx * dx + dy * dy);
+        if (len < 0.001) return;
+
+        double ux = dx / len;   // 화살 방향 단위 벡터
+        double uy = dy / len;
+        double px = -uy;        // 수직 방향
+        double py =  ux;
+
+        // 삼각형 밑변 중점
+        double bcx = tip.X - ux * arrowLen;
+        double bcy = tip.Y - uy * arrowLen;
+
+        switch (kind)
+        {
+            case ShapeArrow.Open:
+            {
+                var left  = new Point(bcx + px * arrowHalf, bcy + py * arrowHalf);
+                var right = new Point(bcx - px * arrowHalf, bcy - py * arrowHalf);
+                var pg    = new WpfMedia.PathGeometry();
+                var fig   = new WpfMedia.PathFigure { StartPoint = left };
+                fig.Segments.Add(new WpfMedia.LineSegment(tip,   true));
+                fig.Segments.Add(new WpfMedia.LineSegment(right, true));
+                pg.Figures.Add(fig);
+                canvas.Children.Add(new WpfShapes.Path
+                {
+                    Data            = pg,
+                    Stroke          = brush,
+                    StrokeThickness = strokeDip > 0 ? strokeDip : 1.0,
+                    Fill            = WpfMedia.Brushes.Transparent,
+                    StrokeLineJoin  = WpfMedia.PenLineJoin.Miter,
+                });
+                break;
+            }
+            case ShapeArrow.Filled:
+            {
+                var left  = new Point(bcx + px * arrowHalf, bcy + py * arrowHalf);
+                var right = new Point(bcx - px * arrowHalf, bcy - py * arrowHalf);
+                var pg    = new WpfMedia.PathGeometry();
+                var fig   = new WpfMedia.PathFigure { StartPoint = tip, IsClosed = true, IsFilled = true };
+                fig.Segments.Add(new WpfMedia.LineSegment(left,  true));
+                fig.Segments.Add(new WpfMedia.LineSegment(right, true));
+                pg.Figures.Add(fig);
+                canvas.Children.Add(new WpfShapes.Path
+                {
+                    Data            = pg,
+                    Fill            = brush,
+                    Stroke          = brush,
+                    StrokeThickness = 0,
+                });
+                break;
+            }
+            case ShapeArrow.Diamond:
+            {
+                var midLeft  = new Point(bcx + px * arrowHalf,    bcy + py * arrowHalf);
+                var midRight = new Point(bcx - px * arrowHalf,    bcy - py * arrowHalf);
+                var back     = new Point(tip.X - ux * arrowLen * 2, tip.Y - uy * arrowLen * 2);
+                var pg       = new WpfMedia.PathGeometry();
+                var fig      = new WpfMedia.PathFigure { StartPoint = tip, IsClosed = true, IsFilled = true };
+                fig.Segments.Add(new WpfMedia.LineSegment(midLeft,  true));
+                fig.Segments.Add(new WpfMedia.LineSegment(back,     true));
+                fig.Segments.Add(new WpfMedia.LineSegment(midRight, true));
+                pg.Figures.Add(fig);
+                canvas.Children.Add(new WpfShapes.Path
+                {
+                    Data            = pg,
+                    Fill            = brush,
+                    Stroke          = brush,
+                    StrokeThickness = 0,
+                });
+                break;
+            }
+            case ShapeArrow.Circle:
+            {
+                double r   = arrowHalf;
+                double cx  = tip.X - ux * r;
+                double cy  = tip.Y - uy * r;
+                var ellipse = new WpfShapes.Ellipse
+                {
+                    Width           = r * 2,
+                    Height          = r * 2,
+                    Fill            = brush,
+                    Stroke          = brush,
+                    StrokeThickness = 0,
+                };
+                System.Windows.Controls.Canvas.SetLeft(ellipse, cx - r);
+                System.Windows.Controls.Canvas.SetTop (ellipse, cy - r);
+                canvas.Children.Add(ellipse);
+                break;
+            }
+        }
     }
 
     private static System.Windows.Controls.TextBlock BuildShapeLabel(ShapeObject shape, double wDip, double hDip)
@@ -873,24 +1101,56 @@ public static class FlowDocumentBuilder
             catch { }
         }
 
+        WpfMedia.Brush? labelBgBrush = null;
+        if (!string.IsNullOrEmpty(shape.LabelBackgroundColor))
+        {
+            try
+            {
+                var c = (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(shape.LabelBackgroundColor)!;
+                labelBgBrush = new WpfMedia.SolidColorBrush(c);
+            }
+            catch { }
+        }
+
+        TextAlignment textAlign = shape.LabelHAlign switch
+        {
+            ShapeLabelHAlign.Left   => TextAlignment.Left,
+            ShapeLabelHAlign.Right  => TextAlignment.Right,
+            _                       => TextAlignment.Center,
+        };
+
+        double fontDip   = PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10);
+        double lineDip   = fontDip * 1.4;
+
         var tb = new System.Windows.Controls.TextBlock
         {
             Text                = shape.LabelText,
             Foreground          = labelBrush,
-            FontSize            = PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10),
+            FontSize            = fontDip,
             FontWeight          = shape.LabelBold   ? FontWeights.Bold   : FontWeights.Normal,
             FontStyle           = shape.LabelItalic ? FontStyles.Italic  : FontStyles.Normal,
             TextWrapping        = TextWrapping.Wrap,
-            TextAlignment       = TextAlignment.Center,
+            TextAlignment       = textAlign,
             Width               = wDip,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
         };
+        if (labelBgBrush is not null) tb.Background = labelBgBrush;
         if (!string.IsNullOrEmpty(shape.LabelFontFamily))
             tb.FontFamily = new WpfMedia.FontFamily(shape.LabelFontFamily);
 
-        System.Windows.Controls.Canvas.SetLeft(tb, 0);
-        System.Windows.Controls.Canvas.SetTop(tb, (hDip - PtToDip(shape.LabelFontSizePt > 0 ? shape.LabelFontSizePt : 10) * 1.4) / 2.0);
+        // 세로 정렬 — Top/Middle/Bottom 에 따라 Y 위치 계산.
+        double topDip = shape.LabelVAlign switch
+        {
+            ShapeLabelVAlign.Top    => 0,
+            ShapeLabelVAlign.Bottom => Math.Max(0, hDip - lineDip),
+            _                       => Math.Max(0, (hDip - lineDip) / 2.0),
+        };
+
+        // 사용자 지정 오프셋 (mm) 추가 — 정렬 위치에서 추가로 이동.
+        double leftDip = MmToDip(shape.LabelOffsetXMm);
+        topDip       += MmToDip(shape.LabelOffsetYMm);
+
+        System.Windows.Controls.Canvas.SetLeft(tb, leftDip);
+        System.Windows.Controls.Canvas.SetTop (tb, topDip);
         return tb;
     }
 

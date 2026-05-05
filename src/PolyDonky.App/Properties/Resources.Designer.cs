@@ -59,6 +59,22 @@ namespace PolyDonky.App.Properties
         internal static string MenuFormatChar        => Get(nameof(MenuFormatChar));
         internal static string MenuFormatPara        => Get(nameof(MenuFormatPara));
         internal static string MenuFormatPage        => Get(nameof(MenuFormatPage));
+        internal static string MenuFormatHeaderFooter => Get(nameof(MenuFormatHeaderFooter));
+
+        // ── 메뉴: 보기 ─────────────────────────────────────────────
+        internal static string MenuView                   => Get(nameof(MenuView));
+        internal static string MenuViewTypesettingMarks   => Get(nameof(MenuViewTypesettingMarks));
+
+        // ── 조판부호 보기 레이블 ────────────────────────────────────
+        internal static string TyposettingMarkHeader       => Get(nameof(TyposettingMarkHeader));
+        internal static string TyposettingMarkFooter       => Get(nameof(TyposettingMarkFooter));
+        internal static string TyposettingMarkImage        => Get(nameof(TyposettingMarkImage));
+        internal static string TyposettingMarkImageBehind  => Get(nameof(TyposettingMarkImageBehind));
+        internal static string TyposettingMarkShape        => Get(nameof(TyposettingMarkShape));
+        internal static string TyposettingMarkShapeBehind  => Get(nameof(TyposettingMarkShapeBehind));
+        internal static string TyposettingMarkTable        => Get(nameof(TyposettingMarkTable));
+        internal static string TyposettingMarkTableBehind  => Get(nameof(TyposettingMarkTableBehind));
+        internal static string TyposettingMarkTextBox      => Get(nameof(TyposettingMarkTextBox));
 
         // ── 메뉴: 도구 ─────────────────────────────────────────────
         internal static string MenuTools             => Get(nameof(MenuTools));
@@ -90,6 +106,22 @@ namespace PolyDonky.App.Properties
         internal static string StatusNewDoc          => Get(nameof(StatusNewDoc));
         internal static string StatusOpenDone        => Get(nameof(StatusOpenDone));
         internal static string StatusSaveDone        => Get(nameof(StatusSaveDone));
+        internal static string StatusBusyOpen        => Get(nameof(StatusBusyOpen));
+        internal static string StatusBusySave        => Get(nameof(StatusBusySave));
+        internal static string StatusBusyConvert     => Get(nameof(StatusBusyConvert));
+        internal static string StatusBusyConvertProgress => Get(nameof(StatusBusyConvertProgress));
+        internal static string StatusConvertedAndOpened => Get(nameof(StatusConvertedAndOpened));
+        internal static string StatusSavedAndConverted  => Get(nameof(StatusSavedAndConverted));
+        internal static string DlgConvertOnOpenTitle    => Get(nameof(DlgConvertOnOpenTitle));
+        internal static string DlgConvertOnOpenPrompt   => Get(nameof(DlgConvertOnOpenPrompt));
+        internal static string DlgConvertOnSaveTitle    => Get(nameof(DlgConvertOnSaveTitle));
+        internal static string DlgConvertOnSavePrompt   => Get(nameof(DlgConvertOnSavePrompt));
+        internal static string DlgConvertOverwriteTitle  => Get(nameof(DlgConvertOverwriteTitle));
+        internal static string DlgConvertOverwritePrompt => Get(nameof(DlgConvertOverwritePrompt));
+        internal static string DlgUnsupportedVersionTitle  => Get(nameof(DlgUnsupportedVersionTitle));
+        internal static string DlgUnsupportedVersionPrompt => Get(nameof(DlgUnsupportedVersionPrompt));
+        internal static string DlgHtmlTruncatedTitle => Get(nameof(DlgHtmlTruncatedTitle));
+        internal static string DlgHtmlTruncatedPrompt => Get(nameof(DlgHtmlTruncatedPrompt));
         internal static string StatusInsert          => Get(nameof(StatusInsert));
         internal static string StatusOverwrite       => Get(nameof(StatusOverwrite));
         internal static string StatusDocClosed       => Get(nameof(StatusDocClosed));
@@ -295,6 +327,13 @@ namespace PolyDonky.App.Properties
         internal static string PageFormatPaperTab          => Get(nameof(PageFormatPaperTab));
         internal static string PageFormatMarginsTab        => Get(nameof(PageFormatMarginsTab));
         internal static string PageFormatLayoutTab         => Get(nameof(PageFormatLayoutTab));
+        internal static string PageFormatHeaderFooterTab   => Get(nameof(PageFormatHeaderFooterTab));
+        internal static string PageFormatHeaderGroup       => Get(nameof(PageFormatHeaderGroup));
+        internal static string PageFormatFooterGroup       => Get(nameof(PageFormatFooterGroup));
+        internal static string PageFormatHFLeft            => Get(nameof(PageFormatHFLeft));
+        internal static string PageFormatHFCenter          => Get(nameof(PageFormatHFCenter));
+        internal static string PageFormatHFRight           => Get(nameof(PageFormatHFRight));
+        internal static string PageFormatHFTokenHint       => Get(nameof(PageFormatHFTokenHint));
         internal static string PageFormatSizeLabel         => Get(nameof(PageFormatSizeLabel));
         internal static string PageFormatCustomSize        => Get(nameof(PageFormatCustomSize));
         internal static string PageFormatWidthLabel        => Get(nameof(PageFormatWidthLabel));
@@ -310,8 +349,18 @@ namespace PolyDonky.App.Properties
         internal static string PageFormatMarginRight       => Get(nameof(PageFormatMarginRight));
         internal static string PageFormatMarginHeader      => Get(nameof(PageFormatMarginHeader));
         internal static string PageFormatMarginFooter      => Get(nameof(PageFormatMarginFooter));
+        internal static string MenuEditImport              => Get(nameof(MenuEditImport));
+        internal static string MenuEditExport              => Get(nameof(MenuEditExport));
         internal static string PageFormatColumns           => Get(nameof(PageFormatColumns));
         internal static string PageFormatColumnGap         => Get(nameof(PageFormatColumnGap));
+        internal static string PageFormatColumnDividerVisible    => Get(nameof(PageFormatColumnDividerVisible));
+        internal static string PageFormatColumnDividerColor      => Get(nameof(PageFormatColumnDividerColor));
+        internal static string PageFormatColumnDividerThickness  => Get(nameof(PageFormatColumnDividerThickness));
+        internal static string PageFormatColumnDividerStyle      => Get(nameof(PageFormatColumnDividerStyle));
+        internal static string ColumnDividerStyleNone            => Get(nameof(ColumnDividerStyleNone));
+        internal static string ColumnDividerStyleSolid           => Get(nameof(ColumnDividerStyleSolid));
+        internal static string ColumnDividerStyleDashed          => Get(nameof(ColumnDividerStyleDashed));
+        internal static string ColumnDividerStyleDotted          => Get(nameof(ColumnDividerStyleDotted));
         internal static string PageFormatPageNumberStart   => Get(nameof(PageFormatPageNumberStart));
         internal static string PageFormatShowMarginGuides  => Get(nameof(PageFormatShowMarginGuides));
         internal static string PageFormatPreviewGroup      => Get(nameof(PageFormatPreviewGroup));

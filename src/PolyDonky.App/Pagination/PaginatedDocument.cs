@@ -8,11 +8,13 @@ namespace PolyDonky.App.Pagination;
 /// </summary>
 public sealed class BlockOnPage
 {
-    public required Block Source    { get; init; }
-    public int            PageIndex { get; init; }
+    public required Block Source      { get; init; }
+    public int            PageIndex   { get; init; }
+    /// <summary>다단 문서에서의 단 인덱스 (0-based). 단일 단이면 항상 0.</summary>
+    public int            ColumnIndex { get; init; }
 
     /// <summary>
-    /// 페이지 본문 영역(padding 제외) 기준 경계 상자 (DIP).
+    /// 단 본문 영역(padding·단 간격 제외) 기준 경계 상자 (DIP).
     /// 오프스크린 RichTextBox 연속 스크롤 공간 기준이므로 FlowDocument 실제 페이지 좌표와
     /// 미묘하게 다를 수 있다. 측정 실패 시 <see cref="Rect.Empty"/>.
     /// </summary>
