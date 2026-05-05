@@ -473,35 +473,9 @@ public partial class OutlineStyleWindow : Window
         return t.StartsWith('#') ? t : '#' + t;
     }
 
-    private static PolyDonky.Core.RunStyle CloneRunStyle(PolyDonky.Core.RunStyle s) => new()
-    {
-        FontFamily     = s.FontFamily,
-        FontSizePt     = s.FontSizePt,
-        Bold           = s.Bold,
-        Italic         = s.Italic,
-        Underline      = s.Underline,
-        Strikethrough  = s.Strikethrough,
-        Overline       = s.Overline,
-        Superscript    = s.Superscript,
-        Subscript      = s.Subscript,
-        Foreground     = s.Foreground,
-        Background     = s.Background,
-        WidthPercent   = s.WidthPercent,
-        LetterSpacingPx = s.LetterSpacingPx,
-    };
+    private static PolyDonky.Core.RunStyle CloneRunStyle(PolyDonky.Core.RunStyle s) => s.Clone();
 
-    private static PolyDonky.Core.ParagraphStyle CloneParagraphStyle(PolyDonky.Core.ParagraphStyle s) => new()
-    {
-        Alignment        = s.Alignment,
-        LineHeightFactor = s.LineHeightFactor,
-        SpaceBeforePt    = s.SpaceBeforePt,
-        SpaceAfterPt     = s.SpaceAfterPt,
-        IndentFirstLineMm = s.IndentFirstLineMm,
-        IndentLeftMm     = s.IndentLeftMm,
-        IndentRightMm    = s.IndentRightMm,
-        Outline          = s.Outline,
-        ListMarker       = s.ListMarker,
-    };
+    private static PolyDonky.Core.ParagraphStyle CloneParagraphStyle(PolyDonky.Core.ParagraphStyle s) => s.Clone();
 
     private static OutlineStyleSet DeepClone(OutlineStyleSet src)
     {

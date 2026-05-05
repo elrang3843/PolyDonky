@@ -27,6 +27,15 @@ namespace PolyDonky.App.Pagination;
 public static class FlowDocumentPaginationAdapter
 {
     /// <summary>
+    /// 정밀 페이지 매핑(블록별 GetCharacterRect)을 시도할 최대 블록 수.
+    /// 이 값을 초과하면 <see cref="MapBodyBlocksToPages"/> 가 fast-path 로 빠져
+    /// 전체 FlowDocument 측정·블록별 좌표 조회를 건너뛴다(매우 큰 HTML 등에서 분 단위 멈춤 방지).
+    /// fast-path 결과는 모든 블록을 page 0 에 일괄 배정 — 페이지 구분이 정확하지 않지만
+    /// 문서를 즉시 표시할 수 있어 "최소한 본다" 는 UX 가 보장된다.
+    /// </summary>
+    public const int MaxBlocksForPreciseMapping = 2_500;
+
+    /// <summary>
     /// 문서를 페이지 단위로 분할해 <see cref="PaginatedDocument"/> 로 반환한다.
     /// </summary>
     /// <param name="document">분할할 문서.</param>
@@ -43,6 +52,15 @@ public static class FlowDocumentPaginationAdapter
             ?? document.Sections.FirstOrDefault()?.Page
             ?? new PageSettings();
         var geo = new PageGeometry(page);
+
+        // 코덱이 fast-path 를 요청한 경우(예: HTML/XML 리더) 정밀 측정 일체를 건너뛴다.
+        // FlowDocument 빌드 → 모든 본문 블록을 page 0 에 배정한 단일 페이지 문서 반환.
+        bool degraded = document.Metadata.Custom.TryGetValue("pagination.degraded", out var d)
+                        && d == "true";
+        if (degraded)
+        {
+            return BuildDegradedPaginatedDocument(document, page);
+        }
 
         // 1. FlowDocument 빌드 (PageHeight·PagePadding 으로 paginator 페이지 구분 설정)
         var fd = FlowDocumentBuilder.Build(document);
@@ -137,6 +155,24 @@ public static class FlowDocumentPaginationAdapter
 
         int    colCount  = geo.ColumnCount;
         double colWidth  = geo.ColWidthDip;
+
+        // ── Fast path — 매우 큰 문서는 정밀 매핑을 건너뛴다 ─────────────────
+        // FlattenBlocks 를 한 번 평탄화해 카운트만 본 뒤, 임계 초과면 모든 블록을 page 0 에 배정.
+        // WPF FlowDocument 의 Measure/UpdateLayout 은 블록 수가 많을수록 슈퍼리니어로 느려지며,
+        // 위키 페이지 등 큰 HTML 은 여기서 분 단위로 UI 가 멈춘다. fast-path 는 정확한 페이지
+        // 경계를 잃지만 — 페이지 수는 ComputePageCountSync 결과를 그대로 사용 — 문서를 즉시
+        // 표시할 수 있게 한다.
+        var flat = FlattenBlocks(fd.Blocks).ToList();
+        if (flat.Count > MaxBlocksForPreciseMapping)
+        {
+            foreach (var wpfBlock in flat)
+            {
+                if (wpfBlock.Tag is not Block coreBlock) continue;
+                if (IsOverlayMode(coreBlock)) continue;
+                result.Add((0, 0, coreBlock, Rect.Empty));
+            }
+            return result;
+        }
 
         // 오프스크린 RichTextBox — 측정 폭은 단 폭(colWidth).
         // 다단일 때 전체 본문 폭으로 측정하면 줄바꿈이 적게 일어나
@@ -346,6 +382,9 @@ public static class FlowDocumentPaginationAdapter
         // 이어지는 조각의 문단 앞뒤 간격은 제거 (시각적 연속성)
         second.Style.SpaceBeforePt = 0;
         first.Style.SpaceAfterPt  = 0;
+        // 두 번째 조각은 목록 마커를 반복 표시하지 않는다 — 한 단락이 두 페이지에 걸쳐 있을 때 불릿/번호는
+        // 첫 줄에서만 보여야 한다. QuoteLevel·CodeLanguage 등 단락 전체에 적용되는 속성은 둘 다 보존.
+        second.Style.ListMarker = null;
 
         int remaining = charOffset;
         bool inSecond = false;
@@ -354,7 +393,7 @@ public static class FlowDocumentPaginationAdapter
         {
             if (inSecond)
             {
-                second.Runs.Add(CloneRunForSplit(run));
+                second.Runs.Add(run.Clone());
                 continue;
             }
 
@@ -362,20 +401,25 @@ public static class FlowDocumentPaginationAdapter
 
             if (remaining <= 0)
             {
-                second.Runs.Add(CloneRunForSplit(run));
+                second.Runs.Add(run.Clone());
                 inSecond = true;
             }
             else if (remaining >= text.Length)
             {
-                first.Runs.Add(CloneRunForSplit(run));
+                first.Runs.Add(run.Clone());
                 remaining -= text.Length;
             }
             else // 0 < remaining < text.Length: run 을 둘로 쪼갬
             {
-                first.Runs.Add(new Run
-                    { Text = text[..remaining], Style = CloneRunStyleForSplit(run.Style) });
-                second.Runs.Add(new Run
-                    { Text = text[remaining..], Style = CloneRunStyleForSplit(run.Style) });
+                // Run.Clone() 으로 모든 필드 복사 (Url 등 누락 방지) 후 텍스트만 분할.
+                var firstRun  = run.Clone();
+                firstRun.Text = text[..remaining];
+                first.Runs.Add(firstRun);
+
+                var secondRun  = run.Clone();
+                secondRun.Text = text[remaining..];
+                second.Runs.Add(secondRun);
+
                 remaining = 0;
                 inSecond  = true;
             }
@@ -389,45 +433,13 @@ public static class FlowDocumentPaginationAdapter
         Id      = id,
         Status  = p.Status,
         StyleId = p.StyleId,
-        Style   = new ParagraphStyle
-        {
-            Alignment         = p.Style.Alignment,
-            LineHeightFactor  = p.Style.LineHeightFactor,
-            SpaceBeforePt     = p.Style.SpaceBeforePt,
-            SpaceAfterPt      = p.Style.SpaceAfterPt,
-            IndentFirstLineMm = p.Style.IndentFirstLineMm,
-            IndentLeftMm      = p.Style.IndentLeftMm,
-            IndentRightMm     = p.Style.IndentRightMm,
-            Outline           = p.Style.Outline,
-        },
+        // ParagraphStyle.Clone() 으로 모든 필드 복사 — 이전 자체 구현은 ListMarker / QuoteLevel /
+        // CodeLanguage / IsThematicBreak 누락. 호출측에서 second.Style.ListMarker = null 로 마커 제거.
+        Style   = p.Style.Clone(),
     };
 
-    private static Run CloneRunForSplit(Run r) => new()
-    {
-        Text              = r.Text,
-        Style             = CloneRunStyleForSplit(r.Style),
-        LatexSource       = r.LatexSource,
-        IsDisplayEquation = r.IsDisplayEquation,
-        EmojiKey          = r.EmojiKey,
-        EmojiAlignment    = r.EmojiAlignment,
-    };
-
-    private static RunStyle CloneRunStyleForSplit(RunStyle s) => new()
-    {
-        FontFamily      = s.FontFamily,
-        FontSizePt      = s.FontSizePt,
-        Bold            = s.Bold,
-        Italic          = s.Italic,
-        Underline       = s.Underline,
-        Strikethrough   = s.Strikethrough,
-        Overline        = s.Overline,
-        Superscript     = s.Superscript,
-        Subscript       = s.Subscript,
-        Foreground      = s.Foreground,
-        Background      = s.Background,
-        WidthPercent    = s.WidthPercent,
-        LetterSpacingPx = s.LetterSpacingPx,
-    };
+    // Run/RunStyle 복제는 Core 의 정식 Clone() 메서드 사용 — 이전에 이 파일에 있던 자체 구현은
+    // Url 등 새로 추가된 필드를 빠뜨려 페이지네이션 분할 시 하이퍼링크가 사라지는 버그가 있었다.
 
     /// <summary>
     /// fd.Blocks 를 재귀적으로 열거한다.
@@ -554,6 +566,63 @@ public static class FlowDocumentPaginationAdapter
     };
 
     // ── PaginatedPage 조립 ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// 페이지네이션 fast-path — 정밀 측정 없이 모든 본문 블록을 page 0 에 일괄 배정.
+    /// HTML/XML 같이 본문 블록이 매우 많은 코덱이 사용 (Metadata.Custom["pagination.degraded"]="true").
+    /// 페이지 경계는 부정확하지만 분 단위 hang 없이 즉시 표시 가능.
+    /// </summary>
+    private static PaginatedDocument BuildDegradedPaginatedDocument(PolyDonkyument document, PageSettings page)
+    {
+        var bodyBlocks = new List<BlockOnPage>();
+        foreach (var section in document.Sections)
+        {
+            foreach (var b in section.Blocks)
+            {
+                if (b is null) continue;
+                if (IsOverlayMode(b)) continue;
+                bodyBlocks.Add(new BlockOnPage
+                {
+                    Source        = b,
+                    PageIndex     = 0,
+                    ColumnIndex   = 0,
+                    BodyLocalRect = Rect.Empty,
+                });
+            }
+        }
+
+        var overlayAssignments = CollectOverlayBlocks(document);
+        int pageCount = 1;
+        if (overlayAssignments.Count > 0)
+            pageCount = Math.Max(pageCount, overlayAssignments.Max(o => o.pageIdx) + 1);
+
+        var pages = new PaginatedPage[pageCount];
+        for (int i = 0; i < pageCount; i++)
+        {
+            pages[i] = new PaginatedPage
+            {
+                PageIndex     = i,
+                BodyBlocks    = i == 0 ? bodyBlocks.ToArray() : Array.Empty<BlockOnPage>(),
+                OverlayBlocks = overlayAssignments
+                    .Where(o => o.pageIdx == i)
+                    .Select(o => new OverlayOnPage
+                    {
+                        Source          = o.coreBlock,
+                        AnchorPageIndex = i,
+                        XMm             = o.xMm,
+                        YMm             = o.yMm,
+                    })
+                    .ToArray(),
+            };
+        }
+
+        return new PaginatedDocument
+        {
+            Source       = document,
+            PageSettings = page,
+            Pages        = pages,
+        };
+    }
 
     private static IReadOnlyList<PaginatedPage> BuildPages(
         int                                                                    pageCount,

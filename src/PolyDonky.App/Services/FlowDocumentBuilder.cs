@@ -491,10 +491,14 @@ public static class FlowDocumentBuilder
         }
 
         var bitmap = new WpfMedia.Imaging.BitmapImage();
+        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+        var imgStream = new MemoryStream(image.Data, writable: false);
         bitmap.BeginInit();
         bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
+        bitmap.StreamSource = imgStream;
         bitmap.EndInit();
+        imgStream.Dispose();
         bitmap.Freeze();
 
         // Image.Tag 에 container 를 저장하지 말 것 — container.Child = image 와 함께 순환 참조가 되어
@@ -635,10 +639,14 @@ public static class FlowDocumentBuilder
         if (image.Data.Length == 0) return null;
 
         var bitmap = new WpfMedia.Imaging.BitmapImage();
+        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+        var imgStream = new MemoryStream(image.Data, writable: false);
         bitmap.BeginInit();
         bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = new MemoryStream(image.Data, writable: false);
+        bitmap.StreamSource = imgStream;
         bitmap.EndInit();
+        imgStream.Dispose();
         bitmap.Freeze();
 
         var control = new System.Windows.Controls.Image

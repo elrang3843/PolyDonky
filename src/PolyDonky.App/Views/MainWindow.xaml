@@ -293,6 +293,26 @@
             <Separator DockPanel.Dock="Right"
                        Visibility="{Binding IsWriteProtected, Converter={StaticResource BoolToVis}}" />
 
+            <!-- 진행 막대 — 파일 열기/저장 등 백그라운드 I/O 중에만 보임. -->
+            <StatusBarItem DockPanel.Dock="Right"
+                           Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding BusyMessage}"
+                               Foreground="{DynamicResource OnSurfaceMuted}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="320" />
+                    <ProgressBar Value="{Binding BusyProgress}"
+                                 Minimum="0" Maximum="100"
+                                 IsIndeterminate="{Binding BusyProgressIsIndeterminate}"
+                                 Width="160" Height="14"
+                                 VerticalAlignment="Center" />
+                </StackPanel>
+            </StatusBarItem>
+            <Separator DockPanel.Dock="Right"
+                       Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
+
             <!-- 좌측 — 가변 너비. LastChildFill=True 로 남은 가로 공간을 모두 차지. -->
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}"

@@ -36,40 +36,10 @@ internal sealed class HwpxHeader
     public HwpxStyleDef? GetStyle(int? styleId)
         => styleId is { } id && Styles.TryGetValue(id, out var s) ? s : null;
 
-    public static RunStyle CloneRunStyle(RunStyle s) => new()
-    {
-        FontFamily = s.FontFamily,
-        FontSizePt = s.FontSizePt,
-        Bold = s.Bold,
-        Italic = s.Italic,
-        Underline = s.Underline,
-        Strikethrough = s.Strikethrough,
-        Overline = s.Overline,
-        Superscript = s.Superscript,
-        Subscript = s.Subscript,
-        Foreground = s.Foreground,
-        Background = s.Background,
-        WidthPercent = s.WidthPercent,
-        LetterSpacingPx = s.LetterSpacingPx,
-    };
+    // Core 의 정식 RunStyle.Clone() 사용 — 시그니처는 backward-compat 유지.
+    public static RunStyle CloneRunStyle(RunStyle s) => s.Clone();
 
-    public static ParagraphStyle CloneParagraphStyle(ParagraphStyle s) => new()
-    {
-        Alignment = s.Alignment,
-        LineHeightFactor = s.LineHeightFactor,
-        SpaceBeforePt = s.SpaceBeforePt,
-        SpaceAfterPt = s.SpaceAfterPt,
-        IndentFirstLineMm = s.IndentFirstLineMm,
-        IndentLeftMm = s.IndentLeftMm,
-        IndentRightMm = s.IndentRightMm,
-        Outline = s.Outline,
-        ListMarker = s.ListMarker is null ? null : new ListMarker
-        {
-            Kind = s.ListMarker.Kind,
-            Level = s.ListMarker.Level,
-            OrderedNumber = s.ListMarker.OrderedNumber,
-        },
-    };
+    public static ParagraphStyle CloneParagraphStyle(ParagraphStyle s) => s.Clone();
 }
 
 /// <summary>HWPX style 정의 — paragraph 의 styleIDRef 가 가리킨다.</summary>

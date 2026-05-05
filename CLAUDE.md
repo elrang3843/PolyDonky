@@ -130,6 +130,8 @@ src/
   PolyDonky.Codecs.Markdown/  MD codec (Markdig)
   PolyDonky.Codecs.Docx/      DOCX codec (DocumentFormat.OpenXml) — 1급 시민, 메인 앱 직접 처리
   PolyDonky.Codecs.Hwpx/      HWPX codec (자체 구현, KS X 6101) — 1급 시민
+  PolyDonky.Codecs.Html/      HTML5 codec (AngleSharp) — 메인 앱 직접 처리
+  PolyDonky.Codecs.Xml/       XML / XHTML5 codec (Codecs.Html 위에 polyglot serializer)
   PolyDonky.App/              WPF 데스크톱 앱 (AssemblyName=PolyDonky)
                               MVVM (CommunityToolkit.Mvvm), Views/ViewModels/Services/Themes
                               FlowDocument 기반 에디터 — FlowDocumentBuilder/Parser/Search,
@@ -139,10 +141,21 @@ tests/                        프로젝트별 xUnit 테스트 (.Tests 짝)
 tools/PolyDonky.SmokeTest/    콘솔 스모크 — 모든 codec + IWPF round-trip 통합 검증
 ```
 
-CLI 변환 모듈 분리 원칙(아키텍처 §3)은 **HWP/DOC/HTML 한정**으로 적용한다.
-1단계 1급 시민인 **HWPX/DOCX는 메인 앱에 직접 링크**되어 있고
-(`PolyDonky.App.csproj` 가 두 codec 을 ProjectReference), 2단계 추가 대상인
-HWP/DOC/HTML 이 별도 CLI 컨버터로 분리될 포맷이다.
+CLI 변환 모듈 분리 원칙(아키텍처 §3) — **메인 앱은 IWPF/MD/TXT 만 직접 read/write**,
+그 외 모든 포맷은 **포맷별로 별도 CLI 실행 파일**로 분리한다.
+
+현재 구현된 분리 대상:
+- `tools/PolyDonky.Convert.Html` — HTML ↔ IWPF
+- `tools/PolyDonky.Convert.Xml`  — XML/XHTML ↔ IWPF
+- `tools/PolyDonky.Convert.Docx` — DOCX ↔ IWPF
+- `tools/PolyDonky.Convert.Hwpx` — HWPX ↔ IWPF
+
+메인 앱은 `Codecs.Html`/`Codecs.Xml`/`Codecs.Docx`/`Codecs.Hwpx` 를
+ProjectReference 하지 **않으며**, 빌드 시 CLI 출력(.dll + 부속 파일) 이 메인 앱
+출력 디렉터리로 복사되고, 런타임에 `Services/ExternalConverter.cs` 가 spawn 한다.
+열기: 입력 → 같은 이름의 정식 `.iwpf` 변환 후 메인 앱이 IWPF 를 읽음 (CurrentFilePath = .iwpf).
+저장: 같은 이름의 IWPF 정본 저장 → CLI 가 외부 포맷으로 변환 (두 파일 모두 디스크에 남음).
+2단계 추가 대상인 HWP/DOC 도 동일한 패턴으로 `tools/PolyDonky.Convert.Hwp` / `Doc` 로 분리할 예정.
 
 ## 빌드·테스트 명령
 
