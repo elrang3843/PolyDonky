@@ -466,30 +466,11 @@ public sealed class MarkdownReader : IDocumentReader
 
     private static RunStyle MonoStyle() => new() { FontFamily = "Consolas, D2Coding, monospace" };
 
-    private static RunStyle Clone(RunStyle s) => new()
-    {
-        FontFamily      = s.FontFamily,
-        FontSizePt      = s.FontSizePt,
-        Bold            = s.Bold,
-        Italic          = s.Italic,
-        Underline       = s.Underline,
-        Strikethrough   = s.Strikethrough,
-        Overline        = s.Overline,
-        Superscript     = s.Superscript,
-        Subscript       = s.Subscript,
-        Foreground      = s.Foreground,
-        Background      = s.Background,
-        WidthPercent    = s.WidthPercent,
-        LetterSpacingPx = s.LetterSpacingPx,
-    };
+    // Core 의 정식 RunStyle.Clone() 사용.
+    private static RunStyle Clone(RunStyle s) => s.Clone();
 
-    private static ListMarker? CloneMarker(ListMarker? m) => m is null ? null : new ListMarker
-    {
-        Kind          = m.Kind,
-        Level         = m.Level,
-        OrderedNumber = m.OrderedNumber,
-        Checked       = m.Checked,
-    };
+    // Core 의 정식 ListMarker.Clone() 사용.
+    private static ListMarker? CloneMarker(ListMarker? m) => m?.Clone();
 
     private static string GuessMediaType(string? url)
     {

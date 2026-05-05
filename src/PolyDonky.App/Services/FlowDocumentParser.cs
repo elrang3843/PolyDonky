@@ -416,16 +416,8 @@ public static class FlowDocumentParser
                 // Tag 에 원본 PolyDonky Run 이 있으면 직접 회수. 없으면 시각 트리에서 추출.
                 if (iuc.Tag is Run origRun)
                 {
-                    // 수식·이모지 Run 은 LatexSource / IsDisplayEquation / EmojiKey 보존
-                    p.Runs.Add(new Run
-                    {
-                        Text              = origRun.Text,
-                        Style             = Clone(origRun.Style),
-                        LatexSource       = origRun.LatexSource,
-                        IsDisplayEquation = origRun.IsDisplayEquation,
-                        EmojiKey          = origRun.EmojiKey,
-                        EmojiAlignment    = origRun.EmojiAlignment,
-                    });
+                    // Run.Clone() 으로 모든 필드 복사 — 이전 자체 구현은 Url 누락.
+                    p.Runs.Add(origRun.Clone());
                 }
                 else if (iuc.Child is System.Windows.Controls.StackPanel panel)
                 {
@@ -713,23 +705,8 @@ public static class FlowDocumentParser
         return ib;
     }
 
-    private static RunStyle Clone(RunStyle s) => new()
-    {
-        FontFamily = s.FontFamily,
-        FontSizePt = s.FontSizePt,
-        Bold = s.Bold,
-        Italic = s.Italic,
-        Underline = s.Underline,
-        Strikethrough = s.Strikethrough,
-        Overline = s.Overline,
-        Superscript = s.Superscript,
-        Subscript = s.Subscript,
-        Foreground = s.Foreground,
-        Background = s.Background,
-        WidthPercent = s.WidthPercent,
-        LetterSpacingPx = s.LetterSpacingPx,
-    };
-
+    // Core 의 정식 RunStyle.Clone() 사용 — 자체 구현 시 새 필드(Url 등) 누락 위험.
+    private static RunStyle Clone(RunStyle s) => s.Clone();
     private static Paragraph CloneShallow(Paragraph original)
     {
         var p = new Paragraph

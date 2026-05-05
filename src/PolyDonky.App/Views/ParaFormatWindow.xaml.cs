@@ -219,18 +219,7 @@ public partial class ParaFormatWindow : Window
         if (CboOutline.SelectedItem is ComboBoxItem ci && ci.Tag is OutlineLevel ol) s.Outline = ol;
     }
 
-    private static ParagraphStyle CloneParagraphStyle(ParagraphStyle s) => new()
-    {
-        Alignment        = s.Alignment,
-        LineHeightFactor = s.LineHeightFactor,
-        SpaceBeforePt    = s.SpaceBeforePt,
-        SpaceAfterPt     = s.SpaceAfterPt,
-        IndentFirstLineMm = s.IndentFirstLineMm,
-        IndentLeftMm     = s.IndentLeftMm,
-        IndentRightMm    = s.IndentRightMm,
-        Outline          = s.Outline,
-        ListMarker       = s.ListMarker,
-    };
+    private static ParagraphStyle CloneParagraphStyle(ParagraphStyle s) => s.Clone();
 
     // ── 선택 영역 단락에 적용 (RichTextBox 모드) ────────────────
 

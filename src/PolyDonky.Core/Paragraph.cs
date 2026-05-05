@@ -43,6 +43,23 @@ public sealed class ParagraphStyle
 
     /// <summary>구분선(thematic break / horizontal rule) 단락. true 이면 본문이 무시되고 가로선만 그려진다.</summary>
     public bool IsThematicBreak { get; set; }
+
+    /// <summary>모든 필드를 복사한 깊은 복제본 — ListMarker 도 새 인스턴스로.</summary>
+    public ParagraphStyle Clone() => new()
+    {
+        Alignment         = Alignment,
+        LineHeightFactor  = LineHeightFactor,
+        SpaceBeforePt     = SpaceBeforePt,
+        SpaceAfterPt      = SpaceAfterPt,
+        IndentFirstLineMm = IndentFirstLineMm,
+        IndentLeftMm      = IndentLeftMm,
+        IndentRightMm     = IndentRightMm,
+        Outline           = Outline,
+        ListMarker        = ListMarker?.Clone(),
+        QuoteLevel        = QuoteLevel,
+        CodeLanguage      = CodeLanguage,
+        IsThematicBreak   = IsThematicBreak,
+    };
 }
 
 public enum Alignment
@@ -77,6 +94,15 @@ public sealed class ListMarker
 
     /// <summary>GFM 작업 목록(task list) 체크 상태. null = 작업 목록 아님, true = `[x]`, false = `[ ]`.</summary>
     public bool? Checked { get; set; }
+
+    /// <summary>모든 필드를 복사한 깊은 복제본.</summary>
+    public ListMarker Clone() => new()
+    {
+        Kind          = Kind,
+        Level         = Level,
+        OrderedNumber = OrderedNumber,
+        Checked       = Checked,
+    };
 }
 
 public enum ListKind

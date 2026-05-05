@@ -22,6 +22,18 @@ public sealed class Run
     /// <summary>하이퍼링크 URL. null/빈 문자열이면 일반 텍스트.
     /// Markdown 의 [text](url), 자동 링크 등에서 사용.</summary>
     public string? Url { get; set; }
+
+    /// <summary>모든 필드를 복사한 깊은 복제본 — Style 도 새 인스턴스로.</summary>
+    public Run Clone() => new()
+    {
+        Text              = Text,
+        Style             = Style.Clone(),
+        LatexSource       = LatexSource,
+        IsDisplayEquation = IsDisplayEquation,
+        EmojiKey          = EmojiKey,
+        EmojiAlignment    = EmojiAlignment,
+        Url               = Url,
+    };
 }
 
 /// <summary>이모지 인라인 이미지의 기준선 정렬.</summary>
@@ -46,6 +58,24 @@ public sealed class RunStyle
 
     /// <summary>한글 조판: 자간 (px 단위). 0 = 표준.</summary>
     public double LetterSpacingPx { get; set; }
+
+    /// <summary>모든 필드를 복사한 깊은 복제본.</summary>
+    public RunStyle Clone() => new()
+    {
+        FontFamily      = FontFamily,
+        FontSizePt      = FontSizePt,
+        Bold            = Bold,
+        Italic          = Italic,
+        Underline       = Underline,
+        Strikethrough   = Strikethrough,
+        Overline        = Overline,
+        Superscript     = Superscript,
+        Subscript       = Subscript,
+        Foreground      = Foreground,
+        Background      = Background,
+        WidthPercent    = WidthPercent,
+        LetterSpacingPx = LetterSpacingPx,
+    };
 }
 
 public readonly record struct Color(byte R, byte G, byte B, byte A = 255)

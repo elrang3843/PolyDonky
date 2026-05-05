@@ -382,6 +382,9 @@ public static class FlowDocumentPaginationAdapter
         // 이어지는 조각의 문단 앞뒤 간격은 제거 (시각적 연속성)
         second.Style.SpaceBeforePt = 0;
         first.Style.SpaceAfterPt  = 0;
+        // 두 번째 조각은 목록 마커를 반복 표시하지 않는다 — 한 단락이 두 페이지에 걸쳐 있을 때 불릿/번호는
+        // 첫 줄에서만 보여야 한다. QuoteLevel·CodeLanguage 등 단락 전체에 적용되는 속성은 둘 다 보존.
+        second.Style.ListMarker = null;
 
         int remaining = charOffset;
         bool inSecond = false;
@@ -390,7 +393,7 @@ public static class FlowDocumentPaginationAdapter
         {
             if (inSecond)
             {
-                second.Runs.Add(CloneRunForSplit(run));
+                second.Runs.Add(run.Clone());
                 continue;
             }
 
@@ -398,20 +401,25 @@ public static class FlowDocumentPaginationAdapter
 
             if (remaining <= 0)
             {
-                second.Runs.Add(CloneRunForSplit(run));
+                second.Runs.Add(run.Clone());
                 inSecond = true;
             }
             else if (remaining >= text.Length)
             {
-                first.Runs.Add(CloneRunForSplit(run));
+                first.Runs.Add(run.Clone());
                 remaining -= text.Length;
             }
             else // 0 < remaining < text.Length: run 을 둘로 쪼갬
             {
-                first.Runs.Add(new Run
-                    { Text = text[..remaining], Style = CloneRunStyleForSplit(run.Style) });
-                second.Runs.Add(new Run
-                    { Text = text[remaining..], Style = CloneRunStyleForSplit(run.Style) });
+                // Run.Clone() 으로 모든 필드 복사 (Url 등 누락 방지) 후 텍스트만 분할.
+                var firstRun  = run.Clone();
+                firstRun.Text = text[..remaining];
+                first.Runs.Add(firstRun);
+
+                var secondRun  = run.Clone();
+                secondRun.Text = text[remaining..];
+                second.Runs.Add(secondRun);
+
                 remaining = 0;
                 inSecond  = true;
             }
@@ -425,45 +433,13 @@ public static class FlowDocumentPaginationAdapter
         Id      = id,
         Status  = p.Status,
         StyleId = p.StyleId,
-        Style   = new ParagraphStyle
-        {
-            Alignment         = p.Style.Alignment,
-            LineHeightFactor  = p.Style.LineHeightFactor,
-            SpaceBeforePt     = p.Style.SpaceBeforePt,
-            SpaceAfterPt      = p.Style.SpaceAfterPt,
-            IndentFirstLineMm = p.Style.IndentFirstLineMm,
-            IndentLeftMm      = p.Style.IndentLeftMm,
-            IndentRightMm     = p.Style.IndentRightMm,
-            Outline           = p.Style.Outline,
-        },
+        // ParagraphStyle.Clone() 으로 모든 필드 복사 — 이전 자체 구현은 ListMarker / QuoteLevel /
+        // CodeLanguage / IsThematicBreak 누락. 호출측에서 second.Style.ListMarker = null 로 마커 제거.
+        Style   = p.Style.Clone(),
     };
 
-    private static Run CloneRunForSplit(Run r) => new()
-    {
-        Text              = r.Text,
-        Style             = CloneRunStyleForSplit(r.Style),
-        LatexSource       = r.LatexSource,
-        IsDisplayEquation = r.IsDisplayEquation,
-        EmojiKey          = r.EmojiKey,
-        EmojiAlignment    = r.EmojiAlignment,
-    };
-
-    private static RunStyle CloneRunStyleForSplit(RunStyle s) => new()
-    {
-        FontFamily      = s.FontFamily,
-        FontSizePt      = s.FontSizePt,
-        Bold            = s.Bold,
-        Italic          = s.Italic,
-        Underline       = s.Underline,
-        Strikethrough   = s.Strikethrough,
-        Overline        = s.Overline,
-        Superscript     = s.Superscript,
-        Subscript       = s.Subscript,
-        Foreground      = s.Foreground,
-        Background      = s.Background,
-        WidthPercent    = s.WidthPercent,
-        LetterSpacingPx = s.LetterSpacingPx,
-    };
+    // Run/RunStyle 복제는 Core 의 정식 Clone() 메서드 사용 — 이전에 이 파일에 있던 자체 구현은
+    // Url 등 새로 추가된 필드를 빠뜨려 페이지네이션 분할 시 하이퍼링크가 사라지는 버그가 있었다.
 
     /// <summary>
     /// fd.Blocks 를 재귀적으로 열거한다.
