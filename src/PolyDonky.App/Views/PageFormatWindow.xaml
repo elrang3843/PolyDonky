@@ -359,6 +359,13 @@
                                 Margin="0,0,0,8"
                                 Padding="4,3">
                             <WrapPanel Orientation="Horizontal">
+                                <ComboBox x:Name="CboHFFontFamily"
+                                          Width="130" Height="22" Margin="1,0"
+                                          IsEditable="True"
+                                          ToolTip="{Binding PageFormatHFToolbarFontFamily, Source={x:Static svc:LocalizedStrings.Instance}}"
+                                          SelectionChanged="OnHFFontFamilyChanged"
+                                          LostFocus="OnHFFontFamilyLostFocus"/>
+                                <Separator Margin="4,1"/>
                                 <ToggleButton x:Name="BtnHFBold"
                                               Width="24" Height="22" Margin="1,0"
                                               ToolTip="{Binding PageFormatHFToolbarBold, Source={x:Static svc:LocalizedStrings.Instance}}"

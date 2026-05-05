@@ -385,9 +385,16 @@ public partial class PageFormatWindow : Window
     private RichTextBox? _focusedRtb;
     private WpfMedia.Color _hfFontColor = WpfMedia.Colors.Black;
     private bool _suppressFontSizeChange;
+    private bool _suppressFontFamilyChange;
 
     private void InitHFToolbar()
     {
+        foreach (var ff in Fonts.SystemFontFamilies
+                                .Select(f => f.Source)
+                                .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase))
+            CboHFFontFamily.Items.Add(ff);
+        CboHFFontFamily.Text = "맑은 고딕";
+
         var sizes = new[] { "6", "7", "8", "9", "10", "10.5", "11", "12",
                             "14", "16", "18", "20", "22", "24", "28", "36", "48", "72" };
         foreach (var s in sizes)
@@ -437,12 +444,47 @@ public partial class PageFormatWindow : Window
             _suppressFontSizeChange = false;
         }
 
+        var ff = sel.GetPropertyValue(WpfDoc.TextElement.FontFamilyProperty) as FontFamily;
+        if (ff is not null)
+        {
+            _suppressFontFamilyChange = true;
+            CboHFFontFamily.Text = ff.Source;
+            _suppressFontFamilyChange = false;
+        }
+
         var fg = sel.GetPropertyValue(WpfDoc.TextElement.ForegroundProperty) as SolidColorBrush;
         if (fg is not null)
         {
             _hfFontColor = fg.Color;
             HFColorBar.Fill = new SolidColorBrush(_hfFontColor);
         }
+    }
+
+    private void OnHFFontFamilyChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFontFamilyChange || _focusedRtb is null) return;
+        if (CboHFFontFamily.SelectedItem is string name && !string.IsNullOrWhiteSpace(name))
+            ApplyFontFamily(name);
+    }
+
+    private void OnHFFontFamilyLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_focusedRtb is null) return;
+        var name = CboHFFontFamily.Text;
+        if (!string.IsNullOrWhiteSpace(name))
+            ApplyFontFamily(name);
+    }
+
+    private void ApplyFontFamily(string name)
+    {
+        try
+        {
+            var ff = new FontFamily(name);
+            _focusedRtb?.Selection.ApplyPropertyValue(
+                WpfDoc.TextElement.FontFamilyProperty, ff);
+            _focusedRtb?.Focus();
+        }
+        catch (ArgumentException) { }
     }
 
     private void OnHFBold(object sender, RoutedEventArgs e)

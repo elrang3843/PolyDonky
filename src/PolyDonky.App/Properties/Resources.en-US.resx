@@ -387,6 +387,7 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="PageFormatHFCenter"           xml:space="preserve"><value>Center</value></data>
   <data name="PageFormatHFRight"            xml:space="preserve"><value>Right</value></data>
   <data name="PageFormatHFTokenHint"        xml:space="preserve"><value>Available tokens: {PAGE} {NUMPAGES} {DATE} {TIME} {TITLE} {AUTHOR} {FILENAME}</value></data>
+  <data name="PageFormatHFToolbarFontFamily" xml:space="preserve"><value>Font</value></data>
   <data name="PageFormatHFToolbarBold"      xml:space="preserve"><value>Bold (Ctrl+B)</value></data>
   <data name="PageFormatHFToolbarItalic"    xml:space="preserve"><value>Italic (Ctrl+I)</value></data>
   <data name="PageFormatHFToolbarUnderline" xml:space="preserve"><value>Underline (Ctrl+U)</value></data>
