@@ -279,12 +279,13 @@ public sealed class HwpxWriter : IDocumentWriter
             spine.Add(new XElement(Opf + "itemref", new XAttribute("idref", id)));
         }
 
+        // Hancom Office uses opf:title/opf:language (NOT dc:) and an empty version="" attribute.
         var metadata = new XElement(Opf + "metadata");
         if (!string.IsNullOrEmpty(document.Metadata.Title))
-            metadata.Add(new XElement(Dc + "title", document.Metadata.Title));
+            metadata.Add(new XElement(Opf + "title", document.Metadata.Title));
         if (!string.IsNullOrEmpty(document.Metadata.Author))
-            metadata.Add(new XElement(Dc + "creator", document.Metadata.Author));
-        metadata.Add(new XElement(Dc + "language", document.Metadata.Language ?? "ko"));
+            metadata.Add(new XElement(Opf + "creator", document.Metadata.Author));
+        metadata.Add(new XElement(Opf + "language", document.Metadata.Language ?? "ko"));
         metadata.Add(new XElement(Opf + "meta",
             new XAttribute("name", "producer"),
             new XAttribute("content", $"{HwpxFormat.ProducedBy}/{HwpxFormat.Version}")));
@@ -292,7 +293,7 @@ public sealed class HwpxWriter : IDocumentWriter
         var package = new XElement(Opf + "package",
             new XAttribute(XNamespace.Xmlns + "opf", Opf.NamespaceName),
             new XAttribute(XNamespace.Xmlns + "dc",  Dc.NamespaceName),
-            new XAttribute("version", HwpxFormat.Version),
+            new XAttribute("version", string.Empty),
             new XAttribute("unique-identifier", "polydoc-id"),
             metadata, manifest, spine);
 
@@ -301,19 +302,20 @@ public sealed class HwpxWriter : IDocumentWriter
 
     private void WriteVersionXml(ZipArchive archive)
     {
-        // KS X 6101: "tagetApplication" is the canonical (intentionally misspelled) attribute name.
-        var doc = new XDocument(new XDeclaration("1.0", "utf-8", null),
+        // Values cloned from a real Hancom-Office-generated version.xml.
+        // Hancom outputs majorXX="5" minor="0" micro="5" xmlVersion="1.4" (not 1.5, not 1.31).
+        var doc = new XDocument(new XDeclaration("1.0", "UTF-8", "yes"),
             new XElement(Hv + "HCFVersion",
                 new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHv, Hv.NamespaceName),
-                new XAttribute("tagetApplication", "WORDPROCESSOR"),
+                new XAttribute("targetApplication", "WORDPROCESSOR"),
                 new XAttribute("major", "5"),
-                new XAttribute("minor", "1"),
-                new XAttribute("micro", "1"),
+                new XAttribute("minor", "0"),
+                new XAttribute("micro", "5"),
                 new XAttribute("buildNumber", "0"),
-                new XAttribute("os", "10"),
-                new XAttribute("xmlVersion", "1.5"),
+                new XAttribute("os", "1"),
+                new XAttribute("xmlVersion", "1.4"),
                 new XAttribute("application", "Hancom Office Hangul"),
-                new XAttribute("appVersion", "12.0.0.0")));
+                new XAttribute("appVersion", $"{HwpxFormat.ProducedBy} {HwpxFormat.Version}")));
         WriteXml(archive, HwpxPaths.VersionXml, doc);
     }
 
@@ -427,26 +429,18 @@ public sealed class HwpxWriter : IDocumentWriter
             fontFaces, borderFills, charProps, tabProperties, paraProps,
             numberings, bullets, styles);
 
-        // docInfo — document metadata
-        var docInfo = new XElement(Hh + "docInfo",
-            new XElement(Hh + "summary",
-                new XElement(Hh + "title"),
-                new XElement(Hh + "subject"),
-                new XElement(Hh + "author"),
-                new XElement(Hh + "date", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss")),
-                new XElement(Hh + "keyword"),
-                new XElement(Hh + "comment")));
-
         // compatibleDocument — required for Hangul 2018+ compatibility flag
         var compatDoc = new XElement(Hh + "compatibleDocument",
             new XAttribute("targetProgram", "HWP2018"));
 
-        // page layout is now specified inline via hp:secPr in section0.xml — no masterPageList needed
+        // hh:head version is "1.5" (per real Hancom output), NOT the format version "1.31".
+        // Order per real Hancom output: beginNum → refList → compatibleDocument.
+        // hh:docInfo is NOT a valid child of hh:head (we used to add it; removed).
+        // Page layout is specified inline via hp:secPr in section0.xml — no masterPageList needed.
         var head = new XElement(Hh + "head",
             new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHh, Hh.NamespaceName),
-            new XAttribute("version", HwpxFormat.Version),
+            new XAttribute("version", "1.5"),
             new XAttribute("secCnt", sectionCount.ToString()),
-            docInfo,
             new XElement(Hh + "beginNum",
                 new XAttribute("page", "1"), new XAttribute("footnote", "1"),
                 new XAttribute("endnote", "1"), new XAttribute("pic", "1"),
@@ -633,7 +627,7 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("textVerticalWidthHead", "0"),
                 new XAttribute("masterPageCnt", "0"),
                 new XElement(Hp + "pagePr",
-                    new XAttribute("landscape", "PORTRAIT"),
+                    new XAttribute("landscape", "WIDELY"),
                     new XAttribute("width",  A4W.ToString()),
                     new XAttribute("height", A4H.ToString()),
                     new XAttribute("gutterType", "LEFT_ONLY"),
