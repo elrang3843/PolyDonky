@@ -247,10 +247,7 @@ public sealed class HwpxWriter : IDocumentWriter
             spine.Add(new XElement(Opf + "itemref", new XAttribute("idref", id)));
         }
 
-        // Declare xmlns:dc here; do NOT re-declare xmlns:opf (it inherits the default
-        // namespace from <package>), otherwise LINQ to XML serializes <opf:metadata>.
-        var metadata = new XElement(Opf + "metadata",
-            new XAttribute(XNamespace.Xmlns + "dc", Dc.NamespaceName));
+        var metadata = new XElement(Opf + "metadata");
         if (!string.IsNullOrEmpty(document.Metadata.Title))
             metadata.Add(new XElement(Dc + "title", document.Metadata.Title));
         if (!string.IsNullOrEmpty(document.Metadata.Author))
@@ -260,7 +257,11 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("name", "producer"),
             new XAttribute("content", $"{HwpxFormat.ProducedBy}/{HwpxFormat.Version}")));
 
+        // 실제 한컴 HWPX 와 동일하게 opf:/dc: 모두 root 에서 prefix 로 선언 — 일부 strict 파서는
+        // default namespace 보다 prefix 매칭을 우선해서 OPF 요소를 인식 못 하는 케이스가 있음.
         var package = new XElement(Opf + "package",
+            new XAttribute(XNamespace.Xmlns + "opf", Opf.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "dc",  Dc.NamespaceName),
             new XAttribute("version", HwpxFormat.Version),
             new XAttribute("unique-identifier", "polydoc-id"),
             metadata, manifest, spine);
@@ -270,14 +271,15 @@ public sealed class HwpxWriter : IDocumentWriter
 
     private void WriteVersionXml(ZipArchive archive)
     {
+        // version.xml 의 HCFVersion 은 본문 hwpml 네임스페이스가 아닌 별도 schema 네임스페이스를 쓴다.
         var doc = new XDocument(new XDeclaration("1.0", "utf-8", null),
-            new XElement(XName.Get("HCFVersion", HwpxNamespaces.Hancom + "version"),
+            new XElement(XName.Get("HCFVersion", HwpxNamespaces.HcfVersion),
                 new XAttribute("targetApplication", "WORDPROCESSOR"),
                 new XAttribute("major", "5"),
-                new XAttribute("minor", "1"),
-                new XAttribute("micro", "1"),
+                new XAttribute("minor", "0"),
+                new XAttribute("micro", "5"),
                 new XAttribute("buildNumber", "0"),
-                new XAttribute("os", "0"),
+                new XAttribute("os", "windows"),
                 new XAttribute("xmlVersion", HwpxFormat.Version)));
         WriteXml(archive, HwpxPaths.VersionXml, doc);
     }
