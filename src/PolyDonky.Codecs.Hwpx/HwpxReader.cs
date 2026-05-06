@@ -301,9 +301,13 @@ public sealed class HwpxReader : IDocumentReader
                 {
                     continue;
                 }
-                // 한컴 hwpx 의 spine 은 본문 sections 외에 스크립트(.js)·이미지 등도 참조할 수 있어
-                // 우리는 .xml 항목만 section 후보로 채택. (LoadXml 실패가 status 메시지에 노이즈로 뜨는 것 방지.)
+                // 한컴 hwpx 의 spine 은 header.xml + 본문 sections + 기타(.js·이미지) 를 참조할 수 있어
+                // .xml 항목만 section 후보로 채택하되, header.xml 은 구조 파일이므로 제외.
                 if (!href.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (System.IO.Path.GetFileName(href).Equals("header.xml", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
