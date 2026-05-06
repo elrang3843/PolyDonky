@@ -71,6 +71,9 @@ public sealed class HwpxWriter : IDocumentWriter
     {
         private int _nextImageId = 1;
         private int _nextParaId = 0;
+        private long _nextObjId  = 2042848500;
+        private int  _nextZOrder = 0;
+        private long _nextInstId = 969106680;
         private readonly Dictionary<string, string> _imageIdByHash = new(StringComparer.Ordinal);
         // Registration order, for binDataList in header.xml + opf:item entries in content.hpf.
         private readonly List<BinDataInfo> _binData = new();
@@ -101,7 +104,10 @@ public sealed class HwpxWriter : IDocumentWriter
         public IReadOnlyList<ParagraphStyle> ParaStyles => _paraStyles;
 
         public void ResetParaId() => _nextParaId = 0;
-        public int NextParaId() => _nextParaId++;
+        public int  NextParaId()  => _nextParaId++;
+        public long NextObjId()   => _nextObjId++;
+        public int  NextZOrder()  => _nextZOrder++;
+        public long NextInstId()  => _nextInstId++;
 
         private int InternalRegisterFont(string family)
         {
@@ -826,11 +832,12 @@ public sealed class HwpxWriter : IDocumentWriter
     {
         XElement para = block switch
         {
-            Paragraph p    => BuildParagraph(p, ctx),
-            Table t        => BuildTableHostingParagraph(t, ctx),
-            ImageBlock img => BuildImageHostingParagraph(img, ctx),
-            OpaqueBlock op => BuildOpaqueHostingParagraph(op, ctx),
-            _              => BuildEmptyParagraph(ctx),
+            Paragraph p     => BuildParagraph(p, ctx),
+            Table t         => BuildTableHostingParagraph(t, ctx),
+            ImageBlock img  => BuildImageHostingParagraph(img, ctx),
+            ShapeObject sh  => BuildShapeHostingParagraph(sh, ctx),
+            OpaqueBlock op  => BuildOpaqueHostingParagraph(op, ctx),
+            _               => BuildEmptyParagraph(ctx),
         };
         if (injectSecPr) { PrependSecPrRun(para); injectSecPr = false; }
         target.Add(para);
@@ -1226,7 +1233,9 @@ public sealed class HwpxWriter : IDocumentWriter
         var run = new XElement(Hp + "run", new XAttribute("charPrIDRef", "0"));
         if (image.Data.Length > 0)
             run.Add(BuildPicture(image, ctx));
-        return new XElement(Hp + "p",
+        run.Add(new XElement(Hp + "t"));
+
+        var para = new XElement(Hp + "p",
             new XAttribute("id",          ctx.NextParaId().ToString()),
             new XAttribute("paraPrIDRef", "0"),
             new XAttribute("styleIDRef",  "0"),
@@ -1234,6 +1243,8 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("columnBreak", "0"),
             new XAttribute("merged",      "0"),
             run);
+        para.Add(BuildLineseg(10.0, 1.6));
+        return para;
     }
 
     private XElement BuildPicture(ImageBlock image, WriteContext ctx)
@@ -1242,23 +1253,211 @@ public sealed class HwpxWriter : IDocumentWriter
         long w = (long)Math.Round((image.WidthMm  > 0 ? image.WidthMm  : 80) / HwpUnitToMm);
         long h = (long)Math.Round((image.HeightMm > 0 ? image.HeightMm : 60) / HwpUnitToMm);
 
+        // 외곽 속성과 sz/pos/outMargin 이 없으면 한컴 오피스가 거부.
+        // treatAsChar="1" 로 인라인 배치 — 위치 계산 불필요.
         return new XElement(Hp + "pic",
-            new XElement(Hp + "offset",       new XAttribute("x", "0"), new XAttribute("y", "0")),
-            new XElement(Hp + "orgSz",         new XAttribute("width", w.ToString()), new XAttribute("height", h.ToString())),
-            new XElement(Hp + "curSz",         new XAttribute("width", w.ToString()), new XAttribute("height", h.ToString())),
-            new XElement(Hp + "flip",          new XAttribute("horizontal", "0"), new XAttribute("vertical", "0")),
-            new XElement(Hp + "rotationInfo",  new XAttribute("angle", "0"), new XAttribute("centerX", "0"), new XAttribute("centerY", "0")),
+            new XAttribute("id",            ctx.NextObjId().ToString()),
+            new XAttribute("zOrder",        ctx.NextZOrder().ToString()),
+            new XAttribute("numberingType", "PICTURE"),
+            new XAttribute("textWrap",      "TOP_AND_BOTTOM"),
+            new XAttribute("textFlow",      "BOTH_SIDES"),
+            new XAttribute("lock",          "0"),
+            new XAttribute("dropcapstyle",  "None"),
+            new XAttribute("href",          ""),
+            new XAttribute("groupLevel",    "0"),
+            new XAttribute("instid",        ctx.NextInstId().ToString()),
+            new XAttribute("ratio",         "0"),
+            new XAttribute("reverse",       "0"),
+
+            new XElement(Hp + "offset", new XAttribute("x", "0"), new XAttribute("y", "0")),
+            new XElement(Hp + "orgSz",  new XAttribute("width", w.ToString()), new XAttribute("height", h.ToString())),
+            new XElement(Hp + "curSz",  new XAttribute("width", w.ToString()), new XAttribute("height", h.ToString())),
+            new XElement(Hp + "flip",   new XAttribute("horizontal", "0"), new XAttribute("vertical", "0")),
+            new XElement(Hp + "rotationInfo",
+                new XAttribute("angle",       "0"),
+                new XAttribute("centerX",     (w / 2).ToString()),
+                new XAttribute("centerY",     (h / 2).ToString()),
+                new XAttribute("rotateimage", "1")),
+            new XElement(Hp + "renderingInfo",
+                new XElement(Hc + "transMatrix",
+                    new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
+                    new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0")),
+                new XElement(Hc + "scaMatrix",
+                    new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
+                    new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0")),
+                new XElement(Hc + "rotMatrix",
+                    new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
+                    new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0"))),
             new XElement(Hp + "imgClip",
-                new XAttribute("left", "0"), new XAttribute("top", "0"),
-                new XAttribute("right", "0"), new XAttribute("bottom", "0")),
+                new XAttribute("left", "0"), new XAttribute("top",    "0"),
+                new XAttribute("right","0"), new XAttribute("bottom", "0")),
             new XElement(Hp + "inMargin",
-                new XAttribute("left", "0"), new XAttribute("right", "0"),
-                new XAttribute("top", "0"), new XAttribute("bottom", "0")),
+                new XAttribute("left", "0"), new XAttribute("right",  "0"),
+                new XAttribute("top",  "0"), new XAttribute("bottom", "0")),
             new XElement(Hp + "img",
                 new XAttribute("binaryItemIDRef", binId),
-                new XAttribute("bright", "0"),
+                new XAttribute("bright",   "0"),
                 new XAttribute("contrast", "0"),
-                new XAttribute("effect", "REAL_PIC"),
-                new XAttribute("alpha", "0")));
+                new XAttribute("effect",   "REAL_PIC"),
+                new XAttribute("alpha",    "0")),
+            new XElement(Hp + "sz",
+                new XAttribute("width",       w.ToString()),
+                new XAttribute("widthRelTo",  "ABSOLUTE"),
+                new XAttribute("height",      h.ToString()),
+                new XAttribute("heightRelTo", "ABSOLUTE"),
+                new XAttribute("protect",     "0")),
+            new XElement(Hp + "pos",
+                new XAttribute("treatAsChar",     "1"),
+                new XAttribute("affectLSpacing",  "0"),
+                new XAttribute("flowWithText",    "1"),
+                new XAttribute("allowOverlap",    "0"),
+                new XAttribute("holdAnchorAndSO", "0"),
+                new XAttribute("vertRelTo",       "PARA"),
+                new XAttribute("horzRelTo",       "PARA"),
+                new XAttribute("vertAlign",       "TOP"),
+                new XAttribute("horzAlign",       "LEFT"),
+                new XAttribute("vertOffset",      "0"),
+                new XAttribute("horzOffset",      "0")),
+            new XElement(Hp + "outMargin",
+                new XAttribute("left", "0"), new XAttribute("right",  "0"),
+                new XAttribute("top",  "0"), new XAttribute("bottom", "0")));
+    }
+
+    // ── shape (PolyDonky 네이티브 ShapeObject → HWPX hp:line/hp:rect/...) ────────
+
+    private XElement BuildShapeHostingParagraph(ShapeObject shape, WriteContext ctx)
+    {
+        var run = new XElement(Hp + "run", new XAttribute("charPrIDRef", "0"));
+        run.Add(BuildShape(shape, ctx));
+        run.Add(new XElement(Hp + "t"));
+
+        var para = new XElement(Hp + "p",
+            new XAttribute("id",          ctx.NextParaId().ToString()),
+            new XAttribute("paraPrIDRef", "0"),
+            new XAttribute("styleIDRef",  "0"),
+            new XAttribute("pageBreak",   "0"),
+            new XAttribute("columnBreak", "0"),
+            new XAttribute("merged",      "0"),
+            run);
+        para.Add(BuildLineseg(10.0, 1.6));
+        return para;
+    }
+
+    private XElement BuildShape(ShapeObject shape, WriteContext ctx)
+    {
+        // 종류별 매핑: Line → hp:line, Rectangle/RoundedRect → hp:rect,
+        // Ellipse → hp:ellipse, 그 외 → hp:rect placeholder.
+        string elemName = shape.Kind switch
+        {
+            ShapeKind.Line     => "line",
+            ShapeKind.Ellipse  => "ellipse",
+            _                  => "rect", // Rectangle 등 폴백
+        };
+
+        long w = (long)Math.Round((shape.WidthMm  > 0 ? shape.WidthMm  : 40) / HwpUnitToMm);
+        long h = (long)Math.Round((shape.HeightMm > 0 ? shape.HeightMm : 30) / HwpUnitToMm);
+        if (w <= 0) w = 1000;
+        if (h <= 0) h = 1;
+
+        // 선·테두리 색·두께.
+        string strokeColor = string.IsNullOrEmpty(shape.StrokeColor) ? "#000000" : shape.StrokeColor;
+        long strokeWidth   = Math.Max(1, (long)Math.Round(shape.StrokeThicknessPt * 100));
+        string strokeStyle = shape.StrokeThicknessPt > 0 ? "SOLID" : "NONE";
+
+        var elem = new XElement(Hp + elemName,
+            new XAttribute("id",            ctx.NextObjId().ToString()),
+            new XAttribute("zOrder",        ctx.NextZOrder().ToString()),
+            new XAttribute("numberingType", "NONE"),
+            new XAttribute("textWrap",      "TOP_AND_BOTTOM"),
+            new XAttribute("textFlow",      "BOTH_SIDES"),
+            new XAttribute("lock",          "0"),
+            new XAttribute("dropcapstyle",  "None"),
+            new XAttribute("href",          ""),
+            new XAttribute("groupLevel",    "0"),
+            new XAttribute("instid",        ctx.NextInstId().ToString()),
+            new XAttribute("isReverseHV",   "0"),
+
+            new XElement(Hp + "offset", new XAttribute("x", "0"), new XAttribute("y", "0")),
+            new XElement(Hp + "orgSz",  new XAttribute("width", w.ToString()), new XAttribute("height", h.ToString())),
+            new XElement(Hp + "curSz",  new XAttribute("width", w.ToString()), new XAttribute("height", h.ToString())),
+            new XElement(Hp + "flip",   new XAttribute("horizontal", "0"), new XAttribute("vertical", "0")),
+            new XElement(Hp + "rotationInfo",
+                new XAttribute("angle",       "0"),
+                new XAttribute("centerX",     (w / 2).ToString()),
+                new XAttribute("centerY",     (h / 2).ToString()),
+                new XAttribute("rotateimage", "1")),
+            new XElement(Hp + "renderingInfo",
+                new XElement(Hc + "transMatrix",
+                    new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
+                    new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0")),
+                new XElement(Hc + "scaMatrix",
+                    new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
+                    new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0")),
+                new XElement(Hc + "rotMatrix",
+                    new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
+                    new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0"))),
+            new XElement(Hp + "lineShape",
+                new XAttribute("color",        strokeColor),
+                new XAttribute("width",        strokeWidth.ToString()),
+                new XAttribute("style",        strokeStyle),
+                new XAttribute("endCap",       "FLAT"),
+                new XAttribute("headStyle",    "NORMAL"),
+                new XAttribute("tailStyle",    "NORMAL"),
+                new XAttribute("headfill",     "1"),
+                new XAttribute("tailfill",     "1"),
+                new XAttribute("headSz",       "SMALL_SMALL"),
+                new XAttribute("tailSz",       "SMALL_SMALL"),
+                new XAttribute("outlineStyle", "NORMAL"),
+                new XAttribute("alpha",        "0")),
+            new XElement(Hp + "shadow",
+                new XAttribute("type",    "NONE"),
+                new XAttribute("color",   "#B2B2B2"),
+                new XAttribute("offsetX", "0"),
+                new XAttribute("offsetY", "0"),
+                new XAttribute("alpha",   "0")));
+
+        // Line 만 startPt/endPt 좌표 추가.
+        if (shape.Kind == ShapeKind.Line)
+        {
+            // Points[0] = 시작, Points[1] = 끝 (mm). 없으면 좌상단→우하단 기본.
+            double sx = 0, sy = 0, ex = shape.WidthMm, ey = shape.HeightMm;
+            if (shape.Points.Count >= 2)
+            {
+                sx = shape.Points[0].X; sy = shape.Points[0].Y;
+                ex = shape.Points[1].X; ey = shape.Points[1].Y;
+            }
+            long sxU = (long)Math.Round(sx / HwpUnitToMm);
+            long syU = (long)Math.Round(sy / HwpUnitToMm);
+            long exU = (long)Math.Round(ex / HwpUnitToMm);
+            long eyU = (long)Math.Round(ey / HwpUnitToMm);
+            elem.Add(new XElement(Hc + "startPt",
+                new XAttribute("x", sxU.ToString()), new XAttribute("y", syU.ToString())));
+            elem.Add(new XElement(Hc + "endPt",
+                new XAttribute("x", exU.ToString()), new XAttribute("y", eyU.ToString())));
+        }
+
+        elem.Add(new XElement(Hp + "sz",
+            new XAttribute("width",       w.ToString()),
+            new XAttribute("widthRelTo",  "ABSOLUTE"),
+            new XAttribute("height",      h.ToString()),
+            new XAttribute("heightRelTo", "ABSOLUTE"),
+            new XAttribute("protect",     "0")));
+        elem.Add(new XElement(Hp + "pos",
+            new XAttribute("treatAsChar",     "1"),
+            new XAttribute("affectLSpacing",  "0"),
+            new XAttribute("flowWithText",    "1"),
+            new XAttribute("allowOverlap",    "0"),
+            new XAttribute("holdAnchorAndSO", "0"),
+            new XAttribute("vertRelTo",       "PARA"),
+            new XAttribute("horzRelTo",       "PARA"),
+            new XAttribute("vertAlign",       "TOP"),
+            new XAttribute("horzAlign",       "LEFT"),
+            new XAttribute("vertOffset",      "0"),
+            new XAttribute("horzOffset",      "0")));
+        elem.Add(new XElement(Hp + "outMargin",
+            new XAttribute("left", "0"), new XAttribute("right",  "0"),
+            new XAttribute("top",  "0"), new XAttribute("bottom", "0")));
+
+        return elem;
     }
 }
