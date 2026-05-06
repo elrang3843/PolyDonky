@@ -806,7 +806,27 @@ public sealed class HwpxWriter : IDocumentWriter
         // Without it Hangul Office rejects the file with "파일을 읽거나 저장하는데 오류가 있습니다".
         bool injectSecPr = true;
 
-        if (section.Blocks.Count == 0)
+        // 도형(ShapeObject) 은 anchored overlay 로 출력되지만 hosting paragraph 의
+        // 위치가 anchor 의 페이지를 결정한다. IWPF 문서 순서상 마지막에 두면 host
+        // paragraph 가 마지막 페이지로 밀려 도형이 그 페이지에 그려진다.
+        // 사용자 보고: 도형이 다음 페이지로 넘어감 — 모든 도형의 anchor 가 끝쪽
+        // 페이지에 놓이기 때문.
+        // 해결: AnchorPageIndex==0 인 도형을 첫 비-도형 단락 직후로 재배치.
+        // 첫 단락은 secPr 을 보유해야 해서 도형으로 대체 안 함 — 두번째 위치부터
+        // 도형 삽입. 결과적으로 도형 anchor 는 page 1 첫 단락 다음에 위치.
+        var blocks = section.Blocks.ToList();
+        var page0Shapes = blocks
+            .OfType<ShapeObject>()
+            .Where(s => s.AnchorPageIndex == 0)
+            .ToList();
+        if (page0Shapes.Count > 0 && blocks.Count > page0Shapes.Count)
+        {
+            foreach (var s in page0Shapes) blocks.Remove(s);
+            // 첫 비-도형 블록 직후 (인덱스 1) 에 도형들을 삽입.
+            blocks.InsertRange(1, page0Shapes);
+        }
+
+        if (blocks.Count == 0)
         {
             var para = BuildEmptyParagraph(ctx);
             if (injectSecPr) PrependSecPrRun(para);
@@ -814,7 +834,7 @@ public sealed class HwpxWriter : IDocumentWriter
         }
         else
         {
-            foreach (var block in section.Blocks)
+            foreach (var block in blocks)
                 AppendBlock(sec, block, ctx, ref injectSecPr);
         }
 
