@@ -384,11 +384,13 @@ public sealed class HwpxWriter : IDocumentWriter
 
         // Embedded images registered by PreRegisterImages. Hangul rejects the package
         // if BinData/* files exist on disk but aren't listed in the manifest.
+        // 실 한컴 파일은 isEmbeded="1" 속성을 포함 (오타 그대로 — 한 'd').
         foreach (var bd in ctx.BinData)
             manifest.Add(new XElement(Opf + "item",
                 new XAttribute("id",         bd.Id),
                 new XAttribute("href",       bd.ZipPath),
-                new XAttribute("media-type", bd.MediaType)));
+                new XAttribute("media-type", bd.MediaType),
+                new XAttribute("isEmbeded",  "1")));
 
         var spine = new XElement(Opf + "spine");
         // Header in spine with linear="yes" (matches real Hancom format)
@@ -1288,6 +1290,25 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XElement(Hc + "rotMatrix",
                     new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
                     new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0"))),
+            new XElement(Hp + "lineShape",
+                new XAttribute("color",        "#000000"),
+                new XAttribute("width",        "0"),
+                new XAttribute("style",        "NONE"),
+                new XAttribute("endCap",       "FLAT"),
+                new XAttribute("headStyle",    "NORMAL"),
+                new XAttribute("tailStyle",    "NORMAL"),
+                new XAttribute("headfill",     "1"),
+                new XAttribute("tailfill",     "1"),
+                new XAttribute("headSz",       "SMALL_SMALL"),
+                new XAttribute("tailSz",       "SMALL_SMALL"),
+                new XAttribute("outlineStyle", "NORMAL"),
+                new XAttribute("alpha",        "0")),
+            new XElement(Hp + "shadow",
+                new XAttribute("type",    "NONE"),
+                new XAttribute("color",   "#B2B2B2"),
+                new XAttribute("offsetX", "0"),
+                new XAttribute("offsetY", "0"),
+                new XAttribute("alpha",   "0")),
             new XElement(Hp + "imgClip",
                 new XAttribute("left", "0"), new XAttribute("top",    "0"),
                 new XAttribute("right","0"), new XAttribute("bottom", "0")),
