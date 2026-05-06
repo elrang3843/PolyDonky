@@ -601,23 +601,11 @@ public sealed class HwpxWriter : IDocumentWriter
 
         // KS X 6101 §5 order: fontfaces → borderFills → charProperties → tabProperties
         //   → paraProperties → numberings → bullets → styles
-        // binDataList — required when document has embedded images.
-        // <hp:img binaryItemIDRef="N"> resolves via <hh:binData id="N"> here.
-        XElement? binDataList = null;
-        if (ctx.BinData.Count > 0)
-        {
-            binDataList = new XElement(Hh + "binDataList",
-                new XAttribute("itemCnt", ctx.BinData.Count.ToString()));
-            foreach (var bd in ctx.BinData)
-                binDataList.Add(new XElement(Hh + "binData",
-                    new XAttribute("id",   bd.Id),     // matches binaryItemIDRef in <hp:img>
-                    new XAttribute("type", "EMBEDDING"),
-                    new XAttribute("name", bd.ZipPath)));
-        }
-
-        var refList = new XElement(Hh + "refList");
-        if (binDataList is not null) refList.Add(binDataList);
-        refList.Add(fontFaces, borderFills, charProps, tabProperties, paraProps,
+        // 주의: 실 한컴 파일에는 hh:binDataList 가 없다. binaryItemIDRef 는
+        // content.hpf 의 opf:item id (예: "image1") 로 직접 해석된다.
+        // binDataList 를 추가하면 한컴이 파일을 거부하므로 생략.
+        var refList = new XElement(Hh + "refList",
+            fontFaces, borderFills, charProps, tabProperties, paraProps,
             numberings, bullets, styles);
 
         // Real Hancom: targetProgram="HWP201X" with <hh:layoutCompatibility/> child.
