@@ -22,6 +22,18 @@ public sealed class HwpxWriter : IDocumentWriter
     private static readonly XNamespace Ha = HwpxNamespaces.Application;
     private static readonly XNamespace Hv = HwpxNamespaces.HcfVersion;
 
+    // Additional namespaces found in real Hancom-generated files
+    private static readonly XNamespace Hp10 = "http://www.hancom.co.kr/hwpml/2016/paragraph";
+    private static readonly XNamespace HpfSchema = "http://www.hancom.co.kr/schema/2011/hpf";
+    private static readonly XNamespace HwpUnitChar = "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar";
+    private static readonly XNamespace Hm = "http://www.hancom.co.kr/hwpml/2011/master-page";
+    private static readonly XNamespace Hhs = "http://www.hancom.co.kr/hwpml/2011/history";
+    private static readonly XNamespace OoxmlChart = "http://www.hancom.co.kr/hwpml/2016/ooxmlchart";
+    private static readonly XNamespace Epub = "http://www.idpf.org/2007/ops";
+    private static readonly XNamespace Config = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
+    private static readonly XNamespace Rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+    private static readonly XNamespace PkgMeta = "http://www.hancom.co.kr/hwpml/2016/meta/pkg#";
+
     // ── key types for dynamic registry ──────────────────────────────────────
 
     private readonly record struct RunStyleKey(
@@ -183,10 +195,12 @@ public sealed class HwpxWriter : IDocumentWriter
         using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
         WriteRawText(archive, HwpxPaths.Mimetype, HwpxPaths.MimetypeContent, CompressionLevel.NoCompression);
         WriteContainerXml(archive);
+        WriteContainerRdf(archive, document);
         WriteManifestXml(archive);
         WriteSettingsXml(archive);
         WriteContentHpf(archive, document);
         WriteVersionXml(archive);
+        WritePreviewText(archive, document);
 
         var ctx = new WriteContext(archive);
 
@@ -224,14 +238,69 @@ public sealed class HwpxWriter : IDocumentWriter
 
     private void WriteContainerXml(ZipArchive archive)
     {
+        // Real Hancom format: ocf: prefix, xmlns:hpf extra ns, THREE rootfiles.
+        var ocf = XNamespace.Get("urn:oasis:names:tc:opendocument:xmlns:container");
         var doc = new XDocument(new XDeclaration("1.0", "utf-8", null),
-            new XElement(OpfContainer + "container",
-                new XAttribute("version", "1.0"),
-                new XElement(OpfContainer + "rootfiles",
-                    new XElement(OpfContainer + "rootfile",
+            new XElement(ocf + "container",
+                new XAttribute(XNamespace.Xmlns + "ocf", ocf.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "hpf", HpfSchema.NamespaceName),
+                new XElement(ocf + "rootfiles",
+                    new XElement(ocf + "rootfile",
                         new XAttribute("full-path", HwpxPaths.ContentHpf),
-                        new XAttribute("media-type", "application/hwpml-package+xml")))));
+                        new XAttribute("media-type", "application/hwpml-package+xml")),
+                    new XElement(ocf + "rootfile",
+                        new XAttribute("full-path", "Preview/PrvText.txt"),
+                        new XAttribute("media-type", "text/plain")),
+                    new XElement(ocf + "rootfile",
+                        new XAttribute("full-path", "META-INF/container.rdf"),
+                        new XAttribute("media-type", "application/rdf+xml")))));
         WriteXml(archive, HwpxPaths.ContainerXml, doc);
+    }
+
+    private void WriteContainerRdf(ZipArchive archive, PolyDonkyument document)
+    {
+        // RDF metadata describing which files are the header and section files.
+        // Use plain string URIs for rdf:resource values (not XNamespace + localname notation).
+        int sectionCount = Math.Max(document.Sections.Count, 1);
+        const string PkgNs = "http://www.hancom.co.kr/hwpml/2016/meta/pkg#";
+
+        var rdf = new XElement(Rdf + "RDF",
+            new XAttribute(XNamespace.Xmlns + "rdf", Rdf.NamespaceName));
+
+        // Header file descriptor
+        rdf.Add(new XElement(Rdf + "Description",
+            new XAttribute(Rdf + "about", ""),
+            new XElement(PkgMeta + "hasPart",
+                new XAttribute(XNamespace.Xmlns + "ns0", PkgNs),
+                new XAttribute(Rdf + "resource", "Contents/header.xml"))));
+        rdf.Add(new XElement(Rdf + "Description",
+            new XAttribute(Rdf + "about", "Contents/header.xml"),
+            new XElement(Rdf + "type",
+                new XAttribute(Rdf + "resource", PkgNs + "HeaderFile"))));
+
+        // Section file descriptors
+        for (int i = 0; i < sectionCount; i++)
+        {
+            var sectionPath = HwpxPaths.SectionXml(i);
+            rdf.Add(new XElement(Rdf + "Description",
+                new XAttribute(Rdf + "about", ""),
+                new XElement(PkgMeta + "hasPart",
+                    new XAttribute(XNamespace.Xmlns + "ns0", PkgNs),
+                    new XAttribute(Rdf + "resource", sectionPath))));
+            rdf.Add(new XElement(Rdf + "Description",
+                new XAttribute(Rdf + "about", sectionPath),
+                new XElement(Rdf + "type",
+                    new XAttribute(Rdf + "resource", PkgNs + "SectionFile"))));
+        }
+
+        // Document type descriptor
+        rdf.Add(new XElement(Rdf + "Description",
+            new XAttribute(Rdf + "about", ""),
+            new XElement(Rdf + "type",
+                new XAttribute(Rdf + "resource", PkgNs + "Document"))));
+
+        WriteXml(archive, "META-INF/container.rdf",
+            new XDocument(new XDeclaration("1.0", "utf-8", null), rdf));
     }
 
     private void WriteManifestXml(ZipArchive archive)
@@ -239,62 +308,80 @@ public sealed class HwpxWriter : IDocumentWriter
         // ODF-style empty manifest — required by Hangul's package validator.
         var ns = XNamespace.Get("urn:oasis:names:tc:opendocument:xmlns:manifest:1.0");
         var doc = new XDocument(new XDeclaration("1.0", "utf-8", null),
-            new XElement(ns + "manifest"));
+            new XElement(ns + "manifest",
+                new XAttribute(XNamespace.Xmlns + "odf", ns.NamespaceName)));
         WriteXml(archive, HwpxPaths.ManifestXml, doc);
     }
 
     private void WriteSettingsXml(ZipArchive archive)
     {
+        // Real Hancom uses ha:HWPApplicationSetting (singular, not plural) with config ns.
         var doc = new XDocument(new XDeclaration("1.0", "utf-8", null),
-            new XElement(Ha + "HWPApplicationSettings",
-                new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHa, Ha.NamespaceName)));
+            new XElement(Ha + "HWPApplicationSetting",
+                new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHa, Ha.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "config", Config.NamespaceName)));
         WriteXml(archive, HwpxPaths.SettingsXml, doc);
     }
 
     private void WriteContentHpf(ZipArchive archive, PolyDonkyument document)
     {
-        // hrefs are relative to the location of content.hpf (Contents/), so section0.xml not Contents/section0.xml.
-        // settings.xml is at root, so go up one level with "../".
-        var manifest = new XElement(Opf + "manifest",
-            new XElement(Opf + "item",
-                new XAttribute("id", "header"),
-                new XAttribute("href", "header.xml"),
-                new XAttribute("media-type", "application/xml")),
-            new XElement(Opf + "item",
-                new XAttribute("id", "settings"),
-                new XAttribute("href", "../settings.xml"),
-                new XAttribute("media-type", "application/xml")));
-
-        // spine: only content sections (not header — header is structural, not a body section)
-        var spine = new XElement(Opf + "spine");
-
+        // All paths in manifest are ABSOLUTE from ZIP root (not relative to content.hpf location).
+        // Real Hancom includes header in spine with linear="yes", sections without.
         int sectionCount = Math.Max(document.Sections.Count, 1);
+
+        var manifest = new XElement(Opf + "manifest");
+        manifest.Add(new XElement(Opf + "item",
+            new XAttribute("id", "header"),
+            new XAttribute("href", "Contents/header.xml"),
+            new XAttribute("media-type", "application/xml")));
+        manifest.Add(new XElement(Opf + "item",
+            new XAttribute("id", "settings"),
+            new XAttribute("href", "settings.xml"),
+            new XAttribute("media-type", "application/xml")));
+
+        var spine = new XElement(Opf + "spine");
+        // Header in spine with linear="yes" (matches real Hancom format)
+        spine.Add(new XElement(Opf + "itemref",
+            new XAttribute("idref", "header"),
+            new XAttribute("linear", "yes")));
+
         for (int i = 0; i < sectionCount; i++)
         {
             var id = $"section{i}";
             manifest.Add(new XElement(Opf + "item",
                 new XAttribute("id", id),
-                new XAttribute("href", $"section{i}.xml"),
+                new XAttribute("href", $"Contents/section{i}.xml"),
                 new XAttribute("media-type", "application/xml")));
             spine.Add(new XElement(Opf + "itemref", new XAttribute("idref", id)));
         }
 
-        // Hancom Office uses opf:title/opf:language (NOT dc:) and an empty version="" attribute.
         var metadata = new XElement(Opf + "metadata");
         if (!string.IsNullOrEmpty(document.Metadata.Title))
             metadata.Add(new XElement(Opf + "title", document.Metadata.Title));
         if (!string.IsNullOrEmpty(document.Metadata.Author))
             metadata.Add(new XElement(Opf + "creator", document.Metadata.Author));
         metadata.Add(new XElement(Opf + "language", document.Metadata.Language ?? "ko"));
-        metadata.Add(new XElement(Opf + "meta",
-            new XAttribute("name", "producer"),
-            new XAttribute("content", $"{HwpxFormat.ProducedBy}/{HwpxFormat.Version}")));
 
+        // All namespaces that real Hancom includes on opf:package root
         var package = new XElement(Opf + "package",
-            new XAttribute(XNamespace.Xmlns + "opf", Opf.NamespaceName),
-            new XAttribute(XNamespace.Xmlns + "dc",  Dc.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "ha",   Ha.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hp",   Hp.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hp10", Hp10.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hs",   Hs.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hc",   Hc.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hh",   Hh.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hhs",  Hhs.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hm",   Hm.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hpf",  HpfSchema.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "dc",   Dc.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "opf",  Opf.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "ooxmlchart", OoxmlChart.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "hwpunitchar", HwpUnitChar.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "epub", Epub.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "config", Config.NamespaceName),
             new XAttribute("version", string.Empty),
-            new XAttribute("unique-identifier", "polydoc-id"),
+            new XAttribute("unique-identifier", string.Empty),
+            new XAttribute("id", string.Empty),
             metadata, manifest, spine);
 
         WriteXml(archive, HwpxPaths.ContentHpf, new XDocument(new XDeclaration("1.0", "utf-8", null), package));
@@ -302,21 +389,32 @@ public sealed class HwpxWriter : IDocumentWriter
 
     private void WriteVersionXml(ZipArchive archive)
     {
-        // Values cloned from a real Hancom-Office-generated version.xml.
-        // Hancom outputs majorXX="5" minor="0" micro="5" xmlVersion="1.4" (not 1.5, not 1.31).
+        // "tagetApplication" is the actual Hancom typo in the real format — must match exactly.
         var doc = new XDocument(new XDeclaration("1.0", "UTF-8", "yes"),
             new XElement(Hv + "HCFVersion",
                 new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHv, Hv.NamespaceName),
-                new XAttribute("targetApplication", "WORDPROCESSOR"),
+                new XAttribute("tagetApplication", "WORDPROCESSOR"),
                 new XAttribute("major", "5"),
-                new XAttribute("minor", "0"),
-                new XAttribute("micro", "5"),
-                new XAttribute("buildNumber", "0"),
+                new XAttribute("minor", "1"),
+                new XAttribute("micro", "0"),
+                new XAttribute("buildNumber", "1"),
                 new XAttribute("os", "1"),
                 new XAttribute("xmlVersion", "1.4"),
                 new XAttribute("application", "Hancom Office Hangul"),
                 new XAttribute("appVersion", $"{HwpxFormat.ProducedBy} {HwpxFormat.Version}")));
         WriteXml(archive, HwpxPaths.VersionXml, doc);
+    }
+
+    private void WritePreviewText(ZipArchive archive, PolyDonkyument document)
+    {
+        var text = new StringBuilder();
+        foreach (var section in document.Sections)
+            foreach (var block in section.Blocks)
+                if (block is Paragraph p)
+                    text.AppendLine(p.GetPlainText());
+        WriteRawText(archive, "Preview/PrvText.txt",
+            text.Length > 0 ? text.ToString() : string.Empty,
+            CompressionLevel.Optimal);
     }
 
     // ── header.xml (dynamic registry) ────────────────────────────────────────
@@ -335,6 +433,27 @@ public sealed class HwpxWriter : IDocumentWriter
     private const long MarginBottom = 4961;   // ~17.5 mm
     private const long MarginHead   = 4252;   // ~15 mm
     private const long MarginFoot   = 4252;   // ~15 mm
+    // Content area width (used for lineseg horzsize)
+    private const long ContentWidth = A4W - MarginLeft - MarginRight; // = 42522
+
+    // Shared namespace declarations for header/section XML root elements (matching real Hancom)
+    private static XAttribute[] AllNamespaceAttrs() => [
+        new(XNamespace.Xmlns + "ha",          Ha.NamespaceName),
+        new(XNamespace.Xmlns + "hp",          Hp.NamespaceName),
+        new(XNamespace.Xmlns + "hp10",        Hp10.NamespaceName),
+        new(XNamespace.Xmlns + "hs",          Hs.NamespaceName),
+        new(XNamespace.Xmlns + "hc",          Hc.NamespaceName),
+        new(XNamespace.Xmlns + "hh",          Hh.NamespaceName),
+        new(XNamespace.Xmlns + "hhs",         Hhs.NamespaceName),
+        new(XNamespace.Xmlns + "hm",          Hm.NamespaceName),
+        new(XNamespace.Xmlns + "hpf",         HpfSchema.NamespaceName),
+        new(XNamespace.Xmlns + "dc",          Dc.NamespaceName),
+        new(XNamespace.Xmlns + "opf",         Opf.NamespaceName),
+        new(XNamespace.Xmlns + "ooxmlchart",  OoxmlChart.NamespaceName),
+        new(XNamespace.Xmlns + "hwpunitchar", HwpUnitChar.NamespaceName),
+        new(XNamespace.Xmlns + "epub",        Epub.NamespaceName),
+        new(XNamespace.Xmlns + "config",      Config.NamespaceName),
+    ];
 
     private void WriteHeaderXml(ZipArchive archive, WriteContext ctx, int sectionCount)
     {
@@ -343,9 +462,10 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("itemCnt", FontLangs.Length.ToString()));
         foreach (var lang in FontLangs)
         {
+            // Real Hancom uses fontCnt (not count) attribute name.
             var ff = new XElement(Hh + "fontface",
                 new XAttribute("lang", lang),
-                new XAttribute("count", ctx.Fonts.Count.ToString()));
+                new XAttribute("fontCnt", ctx.Fonts.Count.ToString()));
             for (int i = 0; i < ctx.Fonts.Count; i++)
             {
                 ff.Add(new XElement(Hh + "font",
@@ -357,14 +477,15 @@ public sealed class HwpxWriter : IDocumentWriter
             fontFaces.Add(ff);
         }
 
-        // borderFills — id=0 default (no border, no fill).
+        // borderFills — IDs start from 1 (real Hancom format is 1-indexed).
+        // id=1 = default "no border, no fill" entry referenced by all basic elements.
         var borderFills = new XElement(Hh + "borderFills",
             new XAttribute("itemCnt", "1"),
             new XElement(Hh + "borderFill",
-                new XAttribute("id", "0"),
+                new XAttribute("id", "1"),
                 new XAttribute("threeD", "0"),
                 new XAttribute("shadow", "0"),
-                new XAttribute("centerLine", "0"),
+                new XAttribute("centerLine", "NONE"),
                 new XAttribute("breakCellSeparateLine", "0"),
                 new XElement(Hh + "slash",
                     new XAttribute("type", "NONE"),
@@ -378,8 +499,9 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XElement(Hh + "rightBorder",  new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
                 new XElement(Hh + "topBorder",    new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
                 new XElement(Hh + "bottomBorder", new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-                new XElement(Hh + "diagonal",     new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
-                new XElement(Hh + "fillInfo", new XElement(Hh + "noFill"))));
+                // Real Hancom always has diagonal type="SOLID" even for no-border fills.
+                new XElement(Hh + "diagonal",     new XAttribute("type", "SOLID"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000"))));
+        // Note: no hh:fillInfo / hh:noFill — real Hancom omits fill element when there is no fill.
 
         // charProperties — one entry per unique RunStyle
         var charProps = new XElement(Hh + "charProperties",
@@ -401,52 +523,65 @@ public sealed class HwpxWriter : IDocumentWriter
         for (int id = 0; id < ctx.ParaStyles.Count; id++)
             paraProps.Add(BuildDynamicParaPr(id, ctx.ParaStyles[id]));
 
-        // numberings and bullets — empty lists (no ordered/unordered list styles)
+        // numberings and bullets — empty lists
         var numberings = new XElement(Hh + "numberings", new XAttribute("itemCnt", "0"));
         var bullets     = new XElement(Hh + "bullets",    new XAttribute("itemCnt", "0"));
 
         // styles: 0=바탕글(Normal), 1~6=개요 1~6(Heading1~6)
+        // Real Hancom uses langID (not langIDRef).
         var styles = new XElement(Hh + "styles", new XAttribute("itemCnt", "7"));
         styles.Add(new XElement(Hh + "style",
             new XAttribute("id", "0"), new XAttribute("type", "PARA"),
             new XAttribute("name", "바탕글"), new XAttribute("engName", "Normal"),
             new XAttribute("paraPrIDRef", "0"), new XAttribute("charPrIDRef", "0"),
-            new XAttribute("nextStyleIDRef", "0"), new XAttribute("langIDRef", "1042"),
+            new XAttribute("nextStyleIDRef", "0"), new XAttribute("langID", "1042"),
             new XAttribute("lockForm", "0")));
         for (int level = 1; level <= 6; level++)
         {
             styles.Add(new XElement(Hh + "style",
                 new XAttribute("id", level.ToString()), new XAttribute("type", "PARA"),
-                new XAttribute("name", $"개요 {level}"), new XAttribute("engName", $"Heading{level}"),
+                new XAttribute("name", $"개요 {level}"), new XAttribute("engName", $"Outline {level}"),
                 new XAttribute("paraPrIDRef", "0"), new XAttribute("charPrIDRef", "0"),
-                new XAttribute("nextStyleIDRef", "0"), new XAttribute("langIDRef", "1042"),
+                new XAttribute("nextStyleIDRef", "0"), new XAttribute("langID", "1042"),
                 new XAttribute("lockForm", "0")));
         }
 
-        // KS X 6101 §5 규정 순서: fontfaces → borderFills → charProperties → tabProperties
+        // KS X 6101 §5 order: fontfaces → borderFills → charProperties → tabProperties
         //   → paraProperties → numberings → bullets → styles
         var refList = new XElement(Hh + "refList",
             fontFaces, borderFills, charProps, tabProperties, paraProps,
             numberings, bullets, styles);
 
-        // compatibleDocument — required for Hangul 2018+ compatibility flag
+        // Real Hancom: targetProgram="HWP201X" with <hh:layoutCompatibility/> child.
         var compatDoc = new XElement(Hh + "compatibleDocument",
-            new XAttribute("targetProgram", "HWP2018"));
+            new XAttribute("targetProgram", "HWP201X"),
+            new XElement(Hh + "layoutCompatibility"));
 
-        // hh:head version is "1.5" (per real Hancom output), NOT the format version "1.31".
-        // Order per real Hancom output: beginNum → refList → compatibleDocument.
-        // hh:docInfo is NOT a valid child of hh:head (we used to add it; removed).
-        // Page layout is specified inline via hp:secPr in section0.xml — no masterPageList needed.
-        var head = new XElement(Hh + "head",
-            new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHh, Hh.NamespaceName),
-            new XAttribute("version", "1.5"),
-            new XAttribute("secCnt", sectionCount.ToString()),
-            new XElement(Hh + "beginNum",
-                new XAttribute("page", "1"), new XAttribute("footnote", "1"),
-                new XAttribute("endnote", "1"), new XAttribute("pic", "1"),
-                new XAttribute("tbl", "1"), new XAttribute("equation", "1")),
-            refList,
-            compatDoc);
+        // docOption and trackchageConfig required by real Hancom format.
+        var docOption = new XElement(Hh + "docOption",
+            new XElement(Hh + "linkinfo",
+                new XAttribute("path", ""),
+                new XAttribute("pageInherit", "0"),
+                new XAttribute("footnoteInherit", "0")));
+
+        var trackChange = new XElement(Hh + "trackchageConfig",
+            new XAttribute("flags", "56"));
+
+        // hh:head version="1.4" (real Hancom value, not "1.5" which was wrong).
+        // Order per real Hancom: beginNum → refList → compatibleDocument → docOption → trackchageConfig.
+        var nsAttrs = AllNamespaceAttrs();
+        var head = new XElement(Hh + "head");
+        head.Add(new XAttribute("version", "1.4"));
+        head.Add(new XAttribute("secCnt", sectionCount.ToString()));
+        foreach (var a in nsAttrs) head.Add(a);
+        head.Add(new XElement(Hh + "beginNum",
+            new XAttribute("page", "1"), new XAttribute("footnote", "1"),
+            new XAttribute("endnote", "1"), new XAttribute("pic", "1"),
+            new XAttribute("tbl", "1"), new XAttribute("equation", "1")));
+        head.Add(refList);
+        head.Add(compatDoc);
+        head.Add(docOption);
+        head.Add(trackChange);
 
         WriteXml(archive, HwpxPaths.HeaderXml, new XDocument(new XDeclaration("1.0", "utf-8", null), head));
     }
@@ -464,7 +599,7 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("useFontSpace", "0"),
             new XAttribute("useKerning", "0"),
             new XAttribute("symMark", "NONE"),
-            new XAttribute("borderFillIDRef", "0"));
+            new XAttribute("borderFillIDRef", "1")); // 1-indexed
 
         if (s.Bold)          el.Add(new XElement(Hh + "bold"));
         if (s.Italic)        el.Add(new XElement(Hh + "italic"));
@@ -492,7 +627,6 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("symbol",   fontId),
             new XAttribute("user",     fontId)));
 
-        // Required child elements for KS X 6101 charPr completeness
         el.Add(new XElement(Hh + "ratio",   new XAttribute("value", "100")));
         el.Add(new XElement(Hh + "spacing", new XAttribute("value", "0")));
         el.Add(new XElement(Hh + "relSz",   new XAttribute("size", "100")));
@@ -505,21 +639,66 @@ public sealed class HwpxWriter : IDocumentWriter
     {
         var alignStr = s.Alignment switch
         {
-            Alignment.Center                        => "CENTER",
-            Alignment.Right                         => "RIGHT",
+            Alignment.Center                            => "CENTER",
+            Alignment.Right                             => "RIGHT",
             Alignment.Justify or Alignment.Distributed => "JUSTIFY",
-            _                                       => "LEFT",
+            _                                           => "LEFT",
         };
 
         long lineSpacingPct = (long)Math.Round(s.LineHeightFactor * 100);
         if (lineSpacingPct <= 0) lineSpacingPct = 160;
+
+        long indentHwp = (long)Math.Round(s.IndentFirstLineMm / HwpUnitToMm);
+        long leftHwp   = (long)Math.Round(s.IndentLeftMm      / HwpUnitToMm);
+        long rightHwp  = (long)Math.Round(s.IndentRightMm     / HwpUnitToMm);
+        long prevHwp   = (long)Math.Round(s.SpaceBeforePt * 100);
+        long nextHwp   = (long)Math.Round(s.SpaceAfterPt  * 100);
+
+        // Real Hancom wraps margin + lineSpacing in hp:switch/hp:case/hp:default
+        // to support both HwpUnitChar (character-unit indents) and legacy HWPUNIT modes.
+        var marginElem = new XElement(Hh + "margin",
+            new XElement(Hc + "intent", new XAttribute("value", indentHwp.ToString()), new XAttribute("unit", "HWPUNIT")),
+            new XElement(Hc + "left",   new XAttribute("value", leftHwp.ToString()),   new XAttribute("unit", "HWPUNIT")),
+            new XElement(Hc + "right",  new XAttribute("value", rightHwp.ToString()),  new XAttribute("unit", "HWPUNIT")),
+            new XElement(Hc + "prev",   new XAttribute("value", prevHwp.ToString()),   new XAttribute("unit", "HWPUNIT")),
+            new XElement(Hc + "next",   new XAttribute("value", nextHwp.ToString()),   new XAttribute("unit", "HWPUNIT")));
+
+        var lineSpacingElem = new XElement(Hh + "lineSpacing",
+            new XAttribute("type", "PERCENT"),
+            new XAttribute("value", lineSpacingPct.ToString()),
+            new XAttribute("unit", "HWPUNIT"));
+
+        var switchElem = new XElement(Hp + "switch",
+            new XElement(Hp + "case",
+                new XAttribute(Hp + "required-namespace", HwpUnitChar.NamespaceName),
+                new XElement(Hh + "margin",
+                    new XElement(Hc + "intent", new XAttribute("value", indentHwp.ToString()), new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "left",   new XAttribute("value", leftHwp.ToString()),   new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "right",  new XAttribute("value", rightHwp.ToString()),  new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "prev",   new XAttribute("value", prevHwp.ToString()),   new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "next",   new XAttribute("value", nextHwp.ToString()),   new XAttribute("unit", "HWPUNIT"))),
+                new XElement(Hh + "lineSpacing",
+                    new XAttribute("type", "PERCENT"),
+                    new XAttribute("value", lineSpacingPct.ToString()),
+                    new XAttribute("unit", "HWPUNIT"))),
+            new XElement(Hp + "default",
+                new XElement(Hh + "margin",
+                    new XElement(Hc + "intent", new XAttribute("value", indentHwp.ToString()), new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "left",   new XAttribute("value", leftHwp.ToString()),   new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "right",  new XAttribute("value", rightHwp.ToString()),  new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "prev",   new XAttribute("value", prevHwp.ToString()),   new XAttribute("unit", "HWPUNIT")),
+                    new XElement(Hc + "next",   new XAttribute("value", nextHwp.ToString()),   new XAttribute("unit", "HWPUNIT"))),
+                new XElement(Hh + "lineSpacing",
+                    new XAttribute("type", "PERCENT"),
+                    new XAttribute("value", lineSpacingPct.ToString()),
+                    new XAttribute("unit", "HWPUNIT"))));
 
         return new XElement(Hh + "paraPr",
             new XAttribute("id", id.ToString()),
             new XAttribute("tabPrIDRef", "0"),
             new XAttribute("condense", "0"),
             new XAttribute("fontLineHeight", "0"),
-            new XAttribute("snapToGrid", "0"),
+            new XAttribute("snapToGrid", "1"),
             new XAttribute("suppressLineNumbers", "0"),
             new XAttribute("checked", "0"),
             new XElement(Hh + "align",
@@ -529,6 +708,7 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("type", "NONE"),
                 new XAttribute("idRef", "0"),
                 new XAttribute("level", "0")),
+            // Real Hancom: lineWrap="BREAK" not columnBreakBefore="0"
             new XElement(Hh + "breakSetting",
                 new XAttribute("breakLatinWord", "KEEP_WORD"),
                 new XAttribute("breakNonLatinWord", "KEEP_WORD"),
@@ -536,21 +716,13 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("keepWithNext", "0"),
                 new XAttribute("keepLines", "0"),
                 new XAttribute("pageBreakBefore", "0"),
-                new XAttribute("columnBreakBefore", "0")),
+                new XAttribute("lineWrap", "BREAK")),
             new XElement(Hh + "autoSpacing",
                 new XAttribute("eAsianEng", "0"),
                 new XAttribute("eAsianNum", "0")),
-            new XElement(Hh + "margin",
-                new XAttribute("indent", ((long)Math.Round(s.IndentFirstLineMm / HwpUnitToMm)).ToString()),
-                new XAttribute("left",   ((long)Math.Round(s.IndentLeftMm      / HwpUnitToMm)).ToString()),
-                new XAttribute("right",  ((long)Math.Round(s.IndentRightMm     / HwpUnitToMm)).ToString()),
-                new XAttribute("prev",   ((long)Math.Round(s.SpaceBeforePt * 100)).ToString()),
-                new XAttribute("next",   ((long)Math.Round(s.SpaceAfterPt  * 100)).ToString())),
-            new XElement(Hh + "lineSpacing",
-                new XAttribute("type", "PERCENT"),
-                new XAttribute("value", lineSpacingPct.ToString())),
+            switchElem,
             new XElement(Hh + "border",
-                new XAttribute("borderFillIDRef", "0"),
+                new XAttribute("borderFillIDRef", "1"), // 1-indexed
                 new XAttribute("offsetLeft", "0"),
                 new XAttribute("offsetRight", "0"),
                 new XAttribute("offsetTop", "0"),
@@ -565,10 +737,10 @@ public sealed class HwpxWriter : IDocumentWriter
     {
         ctx.ResetParaId();
 
-        var sec = new XElement(Hs + "sec",
-            new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHs, Hs.NamespaceName),
-            new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHp, Hp.NamespaceName),
-            new XAttribute(XNamespace.Xmlns + HwpxNamespaces.PrefixHc, Hc.NamespaceName));
+        // Include all namespace declarations on hs:sec root (matches real Hancom format).
+        var nsAttrs = AllNamespaceAttrs();
+        var sec = new XElement(Hs + "sec");
+        foreach (var a in nsAttrs) sec.Add(a);
 
         // secPr must be the first run of the first paragraph of the first section (KS X 6101).
         bool injectSecPr = sectionIndex == 0;
@@ -610,35 +782,149 @@ public sealed class HwpxWriter : IDocumentWriter
         AppendBlock(target, block, ctx, ref dummy);
     }
 
-    // Injects an hp:secPr control run as the very first child of the paragraph.
+    // Injects the full hp:secPr control run as the very first child of the paragraph.
+    // Structure per real Hancom format: secPr + ctrl in same run.
     private void PrependSecPrRun(XElement para)
     {
+        var secPr = new XElement(Hp + "secPr",
+            new XAttribute("id", ""),
+            new XAttribute("textDirection", "HORIZONTAL"),
+            new XAttribute("spaceColumns", "1134"),
+            new XAttribute("tabStop", "8000"),
+            new XAttribute("tabStopVal", "4000"),
+            new XAttribute("tabStopUnit", "HWPUNIT"),
+            new XAttribute("outlineShapeIDRef", "1"), // 1-indexed, matches borderFill IDs
+            new XAttribute("memoShapeIDRef", "0"),
+            new XAttribute("textVerticalWidthHead", "0"),
+            new XAttribute("masterPageCnt", "0"),
+            // Ordered children per real Hancom: grid, startNum, visibility, lineNumberShape,
+            // pagePr, footNotePr, endNotePr, pageBorderFill×3
+            new XElement(Hp + "grid",
+                new XAttribute("lineGrid", "0"),
+                new XAttribute("charGrid", "0"),
+                new XAttribute("wonggojiFormat", "0")),
+            new XElement(Hp + "startNum",
+                new XAttribute("pageStartsOn", "BOTH"),
+                new XAttribute("page", "0"),
+                new XAttribute("pic", "0"),
+                new XAttribute("tbl", "0"),
+                new XAttribute("equation", "0")),
+            new XElement(Hp + "visibility",
+                new XAttribute("hideFirstHeader", "0"),
+                new XAttribute("hideFirstFooter", "0"),
+                new XAttribute("hideFirstMasterPage", "0"),
+                new XAttribute("border", "SHOW_ALL"),
+                new XAttribute("fill", "SHOW_ALL"),
+                new XAttribute("hideFirstPageNum", "0"),
+                new XAttribute("hideFirstEmptyLine", "0"),
+                new XAttribute("showLineNumber", "0")),
+            new XElement(Hp + "lineNumberShape",
+                new XAttribute("restartType", "0"),
+                new XAttribute("countBy", "0"),
+                new XAttribute("distance", "0"),
+                new XAttribute("startNumber", "0")),
+            new XElement(Hp + "pagePr",
+                new XAttribute("landscape", "WIDELY"),
+                new XAttribute("width",  A4W.ToString()),
+                new XAttribute("height", A4H.ToString()),
+                new XAttribute("gutterType", "LEFT_ONLY"),
+                new XElement(Hp + "margin",
+                    new XAttribute("header", MarginHead.ToString()),
+                    new XAttribute("footer", MarginFoot.ToString()),
+                    new XAttribute("gutter", "0"),
+                    new XAttribute("left",   MarginLeft.ToString()),
+                    new XAttribute("right",  MarginRight.ToString()),
+                    new XAttribute("top",    MarginTop.ToString()),
+                    new XAttribute("bottom", MarginBottom.ToString()))),
+            new XElement(Hp + "footNotePr",
+                new XElement(Hp + "autoNumFormat",
+                    new XAttribute("type", "DIGIT"),
+                    new XAttribute("userChar", ""),
+                    new XAttribute("prefixChar", ""),
+                    new XAttribute("suffixChar", ")"),
+                    new XAttribute("supscript", "0")),
+                new XElement(Hp + "noteLine",
+                    new XAttribute("length", "-1"),
+                    new XAttribute("type", "SOLID"),
+                    new XAttribute("width", "0.12 mm"),
+                    new XAttribute("color", "#000000")),
+                new XElement(Hp + "noteSpacing",
+                    new XAttribute("betweenNotes", "283"),
+                    new XAttribute("belowLine", "567"),
+                    new XAttribute("aboveLine", "850")),
+                new XElement(Hp + "numbering",
+                    new XAttribute("type", "CONTINUOUS"),
+                    new XAttribute("newNum", "1")),
+                new XElement(Hp + "placement",
+                    new XAttribute("place", "EACH_COLUMN"),
+                    new XAttribute("beneathText", "0"))),
+            new XElement(Hp + "endNotePr",
+                new XElement(Hp + "autoNumFormat",
+                    new XAttribute("type", "DIGIT"),
+                    new XAttribute("userChar", ""),
+                    new XAttribute("prefixChar", ""),
+                    new XAttribute("suffixChar", ")"),
+                    new XAttribute("supscript", "0")),
+                new XElement(Hp + "noteLine",
+                    new XAttribute("length", "14692344"),
+                    new XAttribute("type", "SOLID"),
+                    new XAttribute("width", "0.12 mm"),
+                    new XAttribute("color", "#000000")),
+                new XElement(Hp + "noteSpacing",
+                    new XAttribute("betweenNotes", "0"),
+                    new XAttribute("belowLine", "567"),
+                    new XAttribute("aboveLine", "850")),
+                new XElement(Hp + "numbering",
+                    new XAttribute("type", "CONTINUOUS"),
+                    new XAttribute("newNum", "1")),
+                new XElement(Hp + "placement",
+                    new XAttribute("place", "END_OF_DOCUMENT"),
+                    new XAttribute("beneathText", "0"))),
+            // Three pageBorderFill entries: BOTH/EVEN/ODD all referencing borderFill id=1
+            new XElement(Hp + "pageBorderFill",
+                new XAttribute("type", "BOTH"),
+                new XAttribute("borderFillIDRef", "1"),
+                new XAttribute("textBorder", "PAPER"),
+                new XAttribute("headerInside", "0"),
+                new XAttribute("footerInside", "0"),
+                new XAttribute("fillArea", "PAPER"),
+                new XElement(Hp + "offset",
+                    new XAttribute("left", "1417"), new XAttribute("right", "1417"),
+                    new XAttribute("top", "1417"), new XAttribute("bottom", "1417"))),
+            new XElement(Hp + "pageBorderFill",
+                new XAttribute("type", "EVEN"),
+                new XAttribute("borderFillIDRef", "1"),
+                new XAttribute("textBorder", "PAPER"),
+                new XAttribute("headerInside", "0"),
+                new XAttribute("footerInside", "0"),
+                new XAttribute("fillArea", "PAPER"),
+                new XElement(Hp + "offset",
+                    new XAttribute("left", "1417"), new XAttribute("right", "1417"),
+                    new XAttribute("top", "1417"), new XAttribute("bottom", "1417"))),
+            new XElement(Hp + "pageBorderFill",
+                new XAttribute("type", "ODD"),
+                new XAttribute("borderFillIDRef", "1"),
+                new XAttribute("textBorder", "PAPER"),
+                new XAttribute("headerInside", "0"),
+                new XAttribute("footerInside", "0"),
+                new XAttribute("fillArea", "PAPER"),
+                new XElement(Hp + "offset",
+                    new XAttribute("left", "1417"), new XAttribute("right", "1417"),
+                    new XAttribute("top", "1417"), new XAttribute("bottom", "1417"))));
+
+        var ctrl = new XElement(Hp + "ctrl",
+            new XElement(Hp + "colPr",
+                new XAttribute("id", ""),
+                new XAttribute("type", "NEWSPAPER"),
+                new XAttribute("layout", "LEFT"),
+                new XAttribute("colCount", "1"),
+                new XAttribute("sameSz", "1"),
+                new XAttribute("sameGap", "0")));
+
         var secPrRun = new XElement(Hp + "run",
             new XAttribute("charPrIDRef", "0"),
-            new XElement(Hp + "secPr",
-                new XAttribute("id", ""),
-                new XAttribute("textDirection", "HORIZONTAL"),
-                new XAttribute("spaceColumns", "1134"),
-                new XAttribute("tabStop", "8000"),
-                new XAttribute("tabStopVal", "4000"),
-                new XAttribute("tabStopUnit", "HWPUNIT"),
-                new XAttribute("outlineShapeIDRef", "0"),
-                new XAttribute("memoShapeIDRef", "0"),
-                new XAttribute("textVerticalWidthHead", "0"),
-                new XAttribute("masterPageCnt", "0"),
-                new XElement(Hp + "pagePr",
-                    new XAttribute("landscape", "WIDELY"),
-                    new XAttribute("width",  A4W.ToString()),
-                    new XAttribute("height", A4H.ToString()),
-                    new XAttribute("gutterType", "LEFT_ONLY"),
-                    new XElement(Hp + "margin",
-                        new XAttribute("header", MarginHead.ToString()),
-                        new XAttribute("footer", MarginFoot.ToString()),
-                        new XAttribute("gutter", "0"),
-                        new XAttribute("left",   MarginLeft.ToString()),
-                        new XAttribute("right",  MarginRight.ToString()),
-                        new XAttribute("top",    MarginTop.ToString()),
-                        new XAttribute("bottom", MarginBottom.ToString())))));
+            secPr,
+            ctrl);
         para.AddFirst(secPrRun);
     }
 
@@ -673,22 +959,8 @@ public sealed class HwpxWriter : IDocumentWriter
             ? p.Runs.Max(r => r.Style.FontSizePt > 0 ? r.Style.FontSizePt : 10.0)
             : 10.0;
         double lsFactor = p.Style.LineHeightFactor > 0 ? p.Style.LineHeightFactor : 1.6;
-        long textH  = (long)Math.Round(maxPt * 100);
-        long height = (long)Math.Round(textH * lsFactor);
-        long descent = (long)Math.Round(textH * 0.25);
 
-        para.Add(new XElement(Hp + "linesegarray",
-            new XElement(Hp + "lineseg",
-                new XAttribute("textpos",    "0"),
-                new XAttribute("vertical",   "0"),
-                new XAttribute("height",     height.ToString()),
-                new XAttribute("textHeight", textH.ToString()),
-                new XAttribute("descent",    descent.ToString()),
-                new XAttribute("lineSpacing","0"),
-                new XAttribute("horzFmt",    "0"),
-                new XAttribute("vertFmt",    "0"),
-                new XAttribute("lineBreak",  "0"))));
-
+        para.Add(BuildLineseg(maxPt, lsFactor));
         return para;
     }
 
@@ -703,21 +975,41 @@ public sealed class HwpxWriter : IDocumentWriter
     }
 
     private XElement BuildEmptyParagraph(WriteContext ctx)
-        => new(Hp + "p",
+    {
+        var para = new XElement(Hp + "p",
             new XAttribute("id",          ctx.NextParaId().ToString()),
             new XAttribute("paraPrIDRef", "0"),
             new XAttribute("styleIDRef",  "0"),
             new XAttribute("pageBreak",   "0"),
             new XAttribute("columnBreak", "0"),
             new XAttribute("merged",      "0"),
-            new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")),
-            new XElement(Hp + "linesegarray",
-                new XElement(Hp + "lineseg",
-                    new XAttribute("textpos", "0"), new XAttribute("vertical", "0"),
-                    new XAttribute("height", "1600"), new XAttribute("textHeight", "1000"),
-                    new XAttribute("descent", "250"), new XAttribute("lineSpacing", "0"),
-                    new XAttribute("horzFmt", "0"), new XAttribute("vertFmt", "0"),
-                    new XAttribute("lineBreak", "0"))));
+            new XElement(Hp + "run", new XAttribute("charPrIDRef", "0")));
+        para.Add(BuildLineseg(10.0, 1.6));
+        return para;
+    }
+
+    // Build lineseg with new (real Hancom) attribute names.
+    // vertpos=0 (simplified; Hangul recalculates), others calculated from font metrics.
+    private static XElement BuildLineseg(double fontPt, double lsFactor)
+    {
+        long textH   = (long)Math.Round(fontPt * 100);
+        if (textH <= 0) textH = 1000;
+        long vertSize  = textH;
+        long baseline  = (long)Math.Round(textH * 0.85);
+        long spacing   = (long)Math.Round(textH * (lsFactor - 1.0));
+
+        return new XElement(Hp + "linesegarray",
+            new XElement(Hp + "lineseg",
+                new XAttribute("textpos",   "0"),
+                new XAttribute("vertpos",   "0"),
+                new XAttribute("vertsize",  vertSize.ToString()),
+                new XAttribute("textheight", textH.ToString()),
+                new XAttribute("baseline",  baseline.ToString()),
+                new XAttribute("spacing",   spacing.ToString()),
+                new XAttribute("horzpos",   "0"),
+                new XAttribute("horzsize",  ContentWidth.ToString()),
+                new XAttribute("flags",     "393216")));
+    }
 
     // ── opaque island ────────────────────────────────────────────────────────
 
@@ -774,7 +1066,7 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("rowCnt", rowCount.ToString()),
             new XAttribute("colCnt", colCount.ToString()),
             new XAttribute("cellSpacing", "0"),
-            new XAttribute("borderFillIDRef", "0"));
+            new XAttribute("borderFillIDRef", "1")); // 1-indexed
 
         wtbl.Add(new XElement(Hp + "sz",
             new XAttribute("width", "0"), new XAttribute("widthRelTo", "ABSOLUTE"),
@@ -801,7 +1093,7 @@ public sealed class HwpxWriter : IDocumentWriter
                     new XAttribute("protect", "0"),
                     new XAttribute("editable", "0"),
                     new XAttribute("dirty", "0"),
-                    new XAttribute("borderFillIDRef", "0"));
+                    new XAttribute("borderFillIDRef", "1")); // 1-indexed
 
                 var subList = new XElement(Hp + "subList");
                 if (cell.Blocks.Count == 0)
