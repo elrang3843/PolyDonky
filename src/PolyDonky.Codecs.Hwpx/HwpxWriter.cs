@@ -1082,6 +1082,10 @@ public sealed class HwpxWriter : IDocumentWriter
             try
             {
                 var shapeElem = XElement.Parse(op.Xml);
+                // 보존된 opaque XML 의 *IDRef 가 원본 HWPX 의 charPr/paraPr 테이블을
+                // 가리키는데 우리 새 헤더에는 그 id 가 없을 수 있다 — 한컴이 lookup
+                // 하다 무한 루프에 빠지므로 모든 ID 참조를 "0" 으로 재작성한다.
+                SanitizeIdRefs(shapeElem);
                 // 한컴 실파일 패턴: 도형 → 빈 hp:t → 단락 끝에 linesegarray.
                 // linesegarray 가 없으면 한컴이 레이아웃 계산 중 무한 루프에 빠진다.
                 var run = new XElement(Hp + "run",
@@ -1105,6 +1109,29 @@ public sealed class HwpxWriter : IDocumentWriter
             }
         }
         return BuildParagraph(Paragraph.Of(op.DisplayLabel), ctx);
+    }
+
+    // *IDRef 들이 원본 헤더의 ID 를 가리키므로 새 헤더에서 빈 id 가 되면 한컴이 거부.
+    // 안전하게 0 으로 재작성. (style 손실보다 한컴 호환이 우선)
+    private static readonly string[] s_idRefAttrs = [
+        "paraPrIDRef", "charPrIDRef", "styleIDRef",
+        "borderFillIDRef", "tabPrIDRef",
+        "linkListIDRef", "linkListNextIDRef",
+        "numberingIDRef", "bulletIDRef",
+        "outlineShapeIDRef", "memoShapeIDRef",
+        "masterPageIDRef",
+    ];
+
+    private static void SanitizeIdRefs(XElement root)
+    {
+        foreach (var elem in root.DescendantsAndSelf())
+        {
+            foreach (var name in s_idRefAttrs)
+            {
+                var attr = elem.Attribute(name);
+                if (attr is not null) attr.Value = "0";
+            }
+        }
     }
 
     // ── table ────────────────────────────────────────────────────────────────
