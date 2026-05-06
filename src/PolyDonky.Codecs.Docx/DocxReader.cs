@@ -685,14 +685,31 @@ public sealed class DocxReader : IDocumentReader
         double bboxHMm = EmuToMm(pathH);
 
         bool hasClose = path.Descendants(XnsA + "close").Any();
-        shape.Kind = hasClose ? ShapeKind.Polygon : ShapeKind.Polyline;
+        bool hasCurve = path.Descendants(XnsA + "cubicBezTo").Any()
+                     || path.Descendants(XnsA + "quadBezTo").Any();
+        shape.Kind = (hasClose, hasCurve) switch
+        {
+            (true,  true)  => ShapeKind.ClosedSpline,
+            (false, true)  => ShapeKind.Spline,
+            (true,  false) => ShapeKind.Polygon,
+            (false, false) => ShapeKind.Polyline,
+        };
 
         foreach (var cmd in path.Elements())
         {
-            var pt = cmd.Element(XnsA + "pt");
-            if (pt is null) continue;
-            if (long.TryParse(pt.Attribute("x")?.Value, out var px)
-                && long.TryParse(pt.Attribute("y")?.Value, out var py))
+            // moveTo/lnTo 는 단일 <a:pt>, cubicBezTo 는 3개(c1, c2, end), quadBezTo 는 2개(c, end).
+            // 곡선의 endpoint 만 ShapePoint 로 채택해 점 시퀀스를 복원.
+            string ln = cmd.Name.LocalName;
+            XElement? endPt = ln switch
+            {
+                "moveTo" or "lnTo" => cmd.Element(XnsA + "pt"),
+                "cubicBezTo"       => cmd.Elements(XnsA + "pt").ElementAtOrDefault(2),
+                "quadBezTo"        => cmd.Elements(XnsA + "pt").ElementAtOrDefault(1),
+                _                  => null,
+            };
+            if (endPt is null) continue;
+            if (long.TryParse(endPt.Attribute("x")?.Value, out var px)
+                && long.TryParse(endPt.Attribute("y")?.Value, out var py))
             {
                 shape.Points.Add(new ShapePoint
                 {
@@ -700,6 +717,16 @@ public sealed class DocxReader : IDocumentReader
                     Y = (double)py / pathH * bboxHMm,
                 });
             }
+        }
+
+        // 닫힌 스플라인: writer 가 시작점으로 돌아오는 마지막 segment 까지 출력하므로
+        // 마지막 endpoint 가 첫 점과 동일 → 중복 제거.
+        if (shape.Kind == ShapeKind.ClosedSpline && shape.Points.Count >= 2)
+        {
+            var first = shape.Points[0];
+            var last  = shape.Points[^1];
+            if (Math.Abs(first.X - last.X) < 0.01 && Math.Abs(first.Y - last.Y) < 0.01)
+                shape.Points.RemoveAt(shape.Points.Count - 1);
         }
 
         if (shape.Points.Count == 2 && shape.Kind == ShapeKind.Polyline)

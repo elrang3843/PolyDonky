@@ -568,22 +568,54 @@ public sealed class DocxWriter : IDocumentWriter
 
         double wMm = shape.WidthMm  > 0 ? shape.WidthMm  : 40;
         double hMm = shape.HeightMm > 0 ? shape.HeightMm : 30;
-        bool closed = shape.Kind is ShapeKind.Polygon or ShapeKind.ClosedSpline;
+        bool closed   = shape.Kind is ShapeKind.Polygon or ShapeKind.ClosedSpline;
+        bool isSpline = shape.Kind is ShapeKind.Spline  or ShapeKind.ClosedSpline;
 
         var sb = new System.Text.StringBuilder();
         sb.Append("<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/>");
         sb.Append("<a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/>");
         sb.Append($"<a:pathLst><a:path w=\"{cx}\" h=\"{cy}\">");
 
-        long x0 = (long)Math.Round(pts[0].X / wMm * cx);
-        long y0 = (long)Math.Round(pts[0].Y / hMm * cy);
-        sb.Append($"<a:moveTo><a:pt x=\"{x0}\" y=\"{y0}\"/></a:moveTo>");
-
-        for (int i = 1; i < pts.Count; i++)
+        // 모든 점을 EMU 좌표로 미리 환산.
+        int n = pts.Count;
+        var xs = new long[n];
+        var ys = new long[n];
+        for (int i = 0; i < n; i++)
         {
-            long xi = (long)Math.Round(pts[i].X / wMm * cx);
-            long yi = (long)Math.Round(pts[i].Y / hMm * cy);
-            sb.Append($"<a:lnTo><a:pt x=\"{xi}\" y=\"{yi}\"/></a:lnTo>");
+            xs[i] = (long)Math.Round(pts[i].X / wMm * cx);
+            ys[i] = (long)Math.Round(pts[i].Y / hMm * cy);
+        }
+
+        sb.Append($"<a:moveTo><a:pt x=\"{xs[0]}\" y=\"{ys[0]}\"/></a:moveTo>");
+
+        if (isSpline)
+        {
+            // Catmull-Rom → cubic Bezier (tension=0.5) 변환.
+            // 닫힌 스플라인은 시작점으로 돌아오는 마지막 segment 도 그려 매끄러운 폐곡선.
+            int segments = closed ? n : n - 1;
+            for (int i = 0; i < segments; i++)
+            {
+                int i1 = i;
+                int i2 = (i + 1) % n;
+                int i0 = closed ? (i - 1 + n) % n : Math.Max(0, i - 1);
+                int i3 = closed ? (i + 2) % n     : Math.Min(n - 1, i + 2);
+                long c1x = xs[i1] + (xs[i2] - xs[i0]) / 6;
+                long c1y = ys[i1] + (ys[i2] - ys[i0]) / 6;
+                long c2x = xs[i2] - (xs[i3] - xs[i1]) / 6;
+                long c2y = ys[i2] - (ys[i3] - ys[i1]) / 6;
+                sb.Append("<a:cubicBezTo>");
+                sb.Append($"<a:pt x=\"{c1x}\" y=\"{c1y}\"/>");
+                sb.Append($"<a:pt x=\"{c2x}\" y=\"{c2y}\"/>");
+                sb.Append($"<a:pt x=\"{xs[i2]}\" y=\"{ys[i2]}\"/>");
+                sb.Append("</a:cubicBezTo>");
+            }
+        }
+        else
+        {
+            for (int i = 1; i < n; i++)
+            {
+                sb.Append($"<a:lnTo><a:pt x=\"{xs[i]}\" y=\"{ys[i]}\"/></a:lnTo>");
+            }
         }
 
         if (closed) sb.Append("<a:close/>");

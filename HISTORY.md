@@ -45,6 +45,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **Added** — **DOCX Spline/ClosedSpline 라운드트립 보존**: 이전엔 `Spline`/`ClosedSpline` 도형이 DOCX 변환 시 직선 연결의 `Polyline`/`Polygon` 으로 떨어져 회수 시 스플라인 정보가 손실. 수정: `DocxWriter.BuildCustomGeometryXml` 가 Spline/ClosedSpline 일 때 `<a:lnTo>` 대신 Catmull-Rom (tension=0.5) → cubic Bezier 변환으로 `<a:cubicBezTo>` 시리즈 출력. 닫힌 스플라인은 시작점으로 돌아오는 마지막 segment 도 그려 매끄러운 폐곡선 유지. `DocxReader.ParseCustomGeometry` 가 `cubicBezTo`/`quadBezTo` 존재 시 Kind 를 `Spline` (open) 또는 `ClosedSpline` (closed) 로 복원, 곡선의 endpoint 만 ShapePoint 로 채택해 입력 점 시퀀스 회수. 라운드트립 테스트 2건(`RoundTrip_PreservesSplineShape`, `RoundTrip_PreservesClosedSplineShape`) 추가. HWPX 는 도형 파서가 없어 영향 없음.
+
 - **Added** — **셀 테두리 상/하/좌/우 면별 스타일 지원 (`CellBorderSide`)**: `TableCell` 에 `BorderTop`/`BorderBottom`/`BorderLeft`/`BorderRight` (`CellBorderSide?`) 프로퍼티 추가. null 이면 기존 `BorderThicknessPt`/`BorderColor` 공통값 사용(하위 호환). DOCX 코덱: `DocxReader` 가 `w:tcBorders` 의 4면을 독립 파싱 → per-side 세팅; `DocxWriter` 가 `BuildOneBorder<T>` 로 면별 값 우선·공통값 폴백 출력. HWPX 코덱: `HwpxReader.ApplyCellBorderFromDef` 가 4면 동일이면 공통값만, 다르면 per-side 채움; `HwpxWriter.SideOrFallback` 이 외곽면·inner면별 per-side 우선 적용. 라운드트립 테스트(`RoundTrip_PreservesPerSideCellBorders`) 1건 추가.
 
 - **Added** — **DOCX 표/셀 테두리·배경색 보존**: `DocxReader` 가 `w:tblBorders`(두께·색상)·`w:shd`(배경색)를 `Table.BorderThicknessPt/BorderColor/BackgroundColor`로, 셀의 `w:tcBorders`·`w:shd`를 `TableCell.BorderThicknessPt/BorderColor/BackgroundColor`로 파싱. `DocxWriter` 가 이 값들을 DOCX로 출력. 단위 변환: 1/8pt ↔ pt. 라운드트립 테스트 3건 추가.

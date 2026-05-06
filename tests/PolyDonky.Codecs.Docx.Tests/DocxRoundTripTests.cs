@@ -463,6 +463,81 @@ public class DocxRoundTripTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesSplineShape()
+    {
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        doc.Sections.Add(section);
+
+        section.Blocks.Add(new ShapeObject
+        {
+            Kind     = ShapeKind.Spline,
+            WrapMode = ImageWrapMode.InFrontOfText,
+            WidthMm  = 80,
+            HeightMm = 40,
+            Points   = { new ShapePoint { X = 0,  Y = 40 },
+                         new ShapePoint { X = 20, Y = 0  },
+                         new ShapePoint { X = 60, Y = 40 },
+                         new ShapePoint { X = 80, Y = 0  } },
+            FillColor         = null,
+            StrokeColor       = "#0000FF",
+            StrokeThicknessPt = 1.5,
+        });
+
+        var rt = WriteThenRead(doc);
+        var shape = rt.Sections[0].Blocks.OfType<ShapeObject>().Single();
+
+        Assert.Equal(ShapeKind.Spline, shape.Kind);
+        Assert.Equal(4, shape.Points.Count);
+        Assert.Equal(0,  shape.Points[0].X, precision: 0);
+        Assert.Equal(40, shape.Points[0].Y, precision: 0);
+        Assert.Equal(20, shape.Points[1].X, precision: 0);
+        Assert.Equal(0,  shape.Points[1].Y, precision: 0);
+        Assert.Equal(60, shape.Points[2].X, precision: 0);
+        Assert.Equal(40, shape.Points[2].Y, precision: 0);
+        Assert.Equal(80, shape.Points[3].X, precision: 0);
+        Assert.Equal(0,  shape.Points[3].Y, precision: 0);
+    }
+
+    [Fact]
+    public void RoundTrip_PreservesClosedSplineShape()
+    {
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        doc.Sections.Add(section);
+
+        section.Blocks.Add(new ShapeObject
+        {
+            Kind     = ShapeKind.ClosedSpline,
+            WrapMode = ImageWrapMode.InFrontOfText,
+            WidthMm  = 60,
+            HeightMm = 60,
+            Points   = { new ShapePoint { X = 30, Y = 0  },
+                         new ShapePoint { X = 60, Y = 30 },
+                         new ShapePoint { X = 30, Y = 60 },
+                         new ShapePoint { X = 0,  Y = 30 } },
+            FillColor         = "#FFCCCC",
+            StrokeColor       = "#FF0000",
+            StrokeThicknessPt = 1.0,
+        });
+
+        var rt = WriteThenRead(doc);
+        var shape = rt.Sections[0].Blocks.OfType<ShapeObject>().Single();
+
+        Assert.Equal(ShapeKind.ClosedSpline, shape.Kind);
+        Assert.Equal(4, shape.Points.Count);
+        Assert.Equal(30, shape.Points[0].X, precision: 0);
+        Assert.Equal(0,  shape.Points[0].Y, precision: 0);
+        Assert.Equal(60, shape.Points[1].X, precision: 0);
+        Assert.Equal(30, shape.Points[1].Y, precision: 0);
+        Assert.Equal(30, shape.Points[2].X, precision: 0);
+        Assert.Equal(60, shape.Points[2].Y, precision: 0);
+        Assert.Equal(0,  shape.Points[3].X, precision: 0);
+        Assert.Equal(30, shape.Points[3].Y, precision: 0);
+        Assert.Equal("#FFCCCC", shape.FillColor, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void RoundTrip_PreservesShapeRotation()
     {
         var doc = new PolyDonkyument();
