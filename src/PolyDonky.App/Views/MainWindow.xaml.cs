@@ -357,6 +357,12 @@ public partial class MainWindow : Window
             vm.InsertShapeRequested   += OnInsertShapeRequested;
             vm.RefreshSystemKeys();
             vm.RefreshMemoryUsage();
+
+            // 각주/미주 패널 — 문서 바인딩 + 이벤트 연결
+            FootnotePanel.BindToDocument(vm.Document);
+            FootnotePanel.EntryDeleted        += OnFootnoteEntryDeleted;
+            FootnotePanel.EntryFocusRequested += OnFootnoteEntryFocusRequested;
+            FootnotePanel.CloseRequested      += (_, _) => SetFootnotePanelVisible(false);
         }
 
         // 각 페이지 RTB 에 대한 이벤트 구독·속성 설정은 ConfigurePageRtb 콜백에서 수행.
@@ -1080,6 +1086,7 @@ public partial class MainWindow : Window
         {
             ApplyFlowDocument(_viewModel.FlowDocument);
             _viewModel.RefreshMemoryUsage();
+            FootnotePanel.BindToDocument(_viewModel.Document);
         }
         else if (e.PropertyName == nameof(MainViewModel.IsWriteProtected))
         {
@@ -2716,6 +2723,309 @@ public partial class MainWindow : Window
         new WpfDocs.TextRange(hl.ElementStart, hl.ElementEnd).Text = text;
     }
 
+    // ── 각주 / 미주 ─────────────────────────────────────────────────────────
+
+    private void OnInsertFootnote(object sender, RoutedEventArgs e)
+        => InsertNoteAtCaret(isEndnote: false);
+
+    private void OnInsertEndnote(object sender, RoutedEventArgs e)
+        => InsertNoteAtCaret(isEndnote: true);
+
+    private void OnToggleFootnotePanel(object sender, RoutedEventArgs e)
+        => SetFootnotePanelVisible(MiFootnotePanel.IsChecked);
+
+    private void SetFootnotePanelVisible(bool visible)
+    {
+        FootnotePanelHost.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        MiFootnotePanel.IsChecked    = visible;
+        if (visible && _viewModel is not null)
+        {
+            FootnotePanel.BindToDocument(_viewModel.Document);
+        }
+    }
+
+    /// <summary>현재 캐럿 위치(또는 선택 끝)에 새 각주/미주 참조를 삽입한다.
+    /// <para>
+    /// 동작:
+    /// <list type="number">
+    /// <item>새 <see cref="PolyDonky.Core.FootnoteEntry"/> 생성 후 문서에 추가.</item>
+    /// <item>위첨자 WPF Run 을 캐럿 위치에 삽입(번호 = list.Count). Tag 에 Core Run 보관.</item>
+    /// <item>패널을 표시·갱신하고 새 항목 TextBox 에 포커스.</item>
+    /// </list>
+    /// </para></summary>
+    private void InsertNoteAtCaret(bool isEndnote)
+    {
+        if (_viewModel is null) return;
+        var editor = GetActiveTextEditor();
+
+        // 선택이 있으면 캐럿을 선택 끝으로 옮긴다 — 일반적으로 footnote 는 선택의 직후에 배치.
+        if (!editor.Selection.IsEmpty)
+        {
+            try { editor.CaretPosition = editor.Selection.End; } catch { }
+        }
+
+        var caret     = editor.CaretPosition;
+        var insertPos = caret.GetInsertionPosition(System.Windows.Documents.LogicalDirection.Forward) ?? caret;
+
+        // 1. 모델에 새 항목 추가
+        var list = isEndnote ? _viewModel.Document.Endnotes : _viewModel.Document.Footnotes;
+        var prefix = isEndnote ? "en-" : "fn-";
+        var id = prefix + Guid.NewGuid().ToString("N").Substring(0, 8);
+        var entry = new PolyDonky.Core.FootnoteEntry
+        {
+            Id     = id,
+            Blocks = new List<PolyDonky.Core.Block> { PolyDonky.Core.Paragraph.Of(string.Empty) },
+        };
+        list.Add(entry);
+
+        // 2. 본문에 위첨자 참조 런 삽입
+        var displayNum = list.Count;
+        var coreRun = new PolyDonky.Core.Run { Text = displayNum.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        if (isEndnote) coreRun.EndnoteId = id;
+        else            coreRun.FootnoteId = id;
+
+        // FlowDocumentBuilder 와 동일한 시각 속성 — Run(string,TextPointer) 생성자로 즉시 삽입.
+        WpfDocs.Run? wpfRun = null;
+        try
+        {
+            wpfRun = new WpfDocs.Run(coreRun.Text, insertPos)
+            {
+                BaselineAlignment = BaselineAlignment.Superscript,
+                FontSize          = 8.0 * 96.0 / 72.0,  // 8pt → DIP
+                Tag               = coreRun,
+            };
+        }
+        catch { /* 삽입 위치가 부적합한 경우 무시 — 모델만 추가됨 */ }
+
+        if (wpfRun is not null)
+        {
+            try { editor.CaretPosition = wpfRun.ElementEnd; } catch { }
+        }
+
+        // 3. 본문 측 위첨자들 번호 동기화 (이전 항목들 번호는 그대로지만 안전 차원에서 재계산)
+        RenumberNoteRefs(isEndnote);
+
+        // 4. 패널 표시 + 새 항목 포커스
+        SetFootnotePanelVisible(true);
+        FootnotePanel.Refresh();
+        var kind = isEndnote
+            ? FootnoteEditorPanel.NoteKind.Endnote
+            : FootnoteEditorPanel.NoteKind.Footnote;
+        FootnotePanel.FocusEntry(kind, id);
+
+        _viewModel.MarkDirty();
+    }
+
+    /// <summary>모든 페이지 RTB 의 본문을 순회하며, 각주/미주 참조 위첨자 Run 의
+    /// 텍스트(표시 번호)를 현재 list 인덱스+1 로 재설정한다.</summary>
+    private void RenumberNoteRefs(bool endnotes)
+    {
+        if (_viewModel is null) return;
+        var list = endnotes ? _viewModel.Document.Endnotes : _viewModel.Document.Footnotes;
+        var idToNum = list
+            .Select((entry, idx) => (entry.Id, num: idx + 1))
+            .ToDictionary(x => x.Id, x => x.num);
+
+        foreach (var rtb in PageEditorHost.PageEditors)
+        {
+            foreach (var block in rtb.Document.Blocks)
+                RenumberInBlock(block, idToNum, endnotes);
+        }
+    }
+
+    private static void RenumberInBlock(
+        WpfDocs.Block block,
+        IReadOnlyDictionary<string, int> idToNum,
+        bool endnotes)
+    {
+        switch (block)
+        {
+            case WpfDocs.Paragraph para:
+                RenumberInInlines(para.Inlines, idToNum, endnotes);
+                break;
+            case WpfDocs.Section section:
+                foreach (var b in section.Blocks)
+                    RenumberInBlock(b, idToNum, endnotes);
+                break;
+            case WpfDocs.Table table:
+                foreach (var rg in table.RowGroups)
+                    foreach (var row in rg.Rows)
+                        foreach (var cell in row.Cells)
+                            foreach (var b in cell.Blocks)
+                                RenumberInBlock(b, idToNum, endnotes);
+                break;
+        }
+    }
+
+    private static void RenumberInInlines(
+        WpfDocs.InlineCollection inlines,
+        IReadOnlyDictionary<string, int> idToNum,
+        bool endnotes)
+    {
+        foreach (var inl in inlines)
+        {
+            if (inl is WpfDocs.Run wpfRun
+                && wpfRun.Tag is PolyDonky.Core.Run core)
+            {
+                var refId = endnotes ? core.EndnoteId : core.FootnoteId;
+                if (refId is { Length: > 0 } && idToNum.TryGetValue(refId, out var num))
+                {
+                    var s = num.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (wpfRun.Text != s)
+                    {
+                        wpfRun.Text = s;
+                        core.Text   = s;
+                    }
+                }
+            }
+            else if (inl is WpfDocs.Span span)
+            {
+                RenumberInInlines(span.Inlines, idToNum, endnotes);
+            }
+        }
+    }
+
+    /// <summary>패널에서 항목 삭제 요청을 받았을 때:
+    /// 모델에서 항목을 제거하고, 본문에서 해당 ID 를 가진 위첨자 Run 들을 모두 제거한 뒤,
+    /// 남은 항목 번호들을 재동기화한다.</summary>
+    private void OnFootnoteEntryDeleted(object? sender, (FootnoteEditorPanel.NoteKind Kind, string Id) e)
+    {
+        if (_viewModel is null) return;
+        var endnotes = e.Kind == FootnoteEditorPanel.NoteKind.Endnote;
+        var list = endnotes ? _viewModel.Document.Endnotes : _viewModel.Document.Footnotes;
+
+        // 1. 모델에서 항목 제거
+        var idx = -1;
+        for (int i = 0; i < list.Count; i++)
+            if (list[i].Id == e.Id) { idx = i; break; }
+        if (idx < 0) return;
+        list.RemoveAt(idx);
+
+        // 2. 본문에서 해당 ID 의 위첨자 Run 들 제거
+        foreach (var rtb in PageEditorHost.PageEditors)
+        {
+            foreach (var block in rtb.Document.Blocks.ToList())
+                RemoveNoteRefsInBlock(block, e.Id, endnotes);
+        }
+
+        // 3. 남은 항목들 번호 재동기화
+        RenumberNoteRefs(endnotes);
+
+        // 4. 패널 갱신
+        FootnotePanel.Refresh();
+        _viewModel.MarkDirty();
+    }
+
+    private static void RemoveNoteRefsInBlock(WpfDocs.Block block, string id, bool endnotes)
+    {
+        switch (block)
+        {
+            case WpfDocs.Paragraph para:
+                RemoveNoteRefsInInlines(para.Inlines, id, endnotes);
+                break;
+            case WpfDocs.Section section:
+                foreach (var b in section.Blocks.ToList())
+                    RemoveNoteRefsInBlock(b, id, endnotes);
+                break;
+            case WpfDocs.Table table:
+                foreach (var rg in table.RowGroups)
+                    foreach (var row in rg.Rows)
+                        foreach (var cell in row.Cells)
+                            foreach (var b in cell.Blocks.ToList())
+                                RemoveNoteRefsInBlock(b, id, endnotes);
+                break;
+        }
+    }
+
+    private static void RemoveNoteRefsInInlines(WpfDocs.InlineCollection inlines, string id, bool endnotes)
+    {
+        var toRemove = new List<WpfDocs.Inline>();
+        foreach (var inl in inlines)
+        {
+            if (inl is WpfDocs.Run wpfRun
+                && wpfRun.Tag is PolyDonky.Core.Run core)
+            {
+                var refId = endnotes ? core.EndnoteId : core.FootnoteId;
+                if (refId == id) toRemove.Add(wpfRun);
+            }
+            else if (inl is WpfDocs.Span span)
+            {
+                RemoveNoteRefsInInlines(span.Inlines, id, endnotes);
+            }
+        }
+        foreach (var r in toRemove) inlines.Remove(r);
+    }
+
+    /// <summary>패널에서 "본문 참조로 이동" 버튼 클릭 시:
+    /// 해당 ID 의 첫 위첨자 Run 을 찾아 캐럿을 그 위치로 옮긴다.</summary>
+    private void OnFootnoteEntryFocusRequested(object? sender, (FootnoteEditorPanel.NoteKind Kind, string Id) e)
+    {
+        var endnotes = e.Kind == FootnoteEditorPanel.NoteKind.Endnote;
+        foreach (var rtb in PageEditorHost.PageEditors)
+        {
+            if (TryFindAndFocusNoteRef(rtb, e.Id, endnotes))
+            {
+                rtb.Focus();
+                return;
+            }
+        }
+    }
+
+    private static bool TryFindAndFocusNoteRef(RichTextBox rtb, string id, bool endnotes)
+    {
+        foreach (var block in rtb.Document.Blocks)
+        {
+            if (TryFindAndFocusNoteRefInBlock(rtb, block, id, endnotes)) return true;
+        }
+        return false;
+    }
+
+    private static bool TryFindAndFocusNoteRefInBlock(
+        RichTextBox rtb, WpfDocs.Block block, string id, bool endnotes)
+    {
+        switch (block)
+        {
+            case WpfDocs.Paragraph para:
+                foreach (var inl in para.Inlines)
+                {
+                    if (inl is WpfDocs.Run wr
+                        && wr.Tag is PolyDonky.Core.Run core
+                        && (endnotes ? core.EndnoteId : core.FootnoteId) == id)
+                    {
+                        try { rtb.CaretPosition = wr.ContentEnd; }
+                        catch { }
+                        return true;
+                    }
+                }
+                break;
+            case WpfDocs.Section section:
+                foreach (var b in section.Blocks)
+                    if (TryFindAndFocusNoteRefInBlock(rtb, b, id, endnotes)) return true;
+                break;
+            case WpfDocs.Table table:
+                foreach (var rg in table.RowGroups)
+                    foreach (var row in rg.Rows)
+                        foreach (var cell in row.Cells)
+                            foreach (var b in cell.Blocks)
+                                if (TryFindAndFocusNoteRefInBlock(rtb, b, id, endnotes)) return true;
+                break;
+        }
+        return false;
+    }
+
+    /// <summary>캐럿이 속한 각주/미주 참조 Run 을 찾는다.
+    /// 컨텍스트 메뉴에서 "각주 편집" 항목 표시 여부 결정에 사용.</summary>
+    private static (string? Id, bool IsEndnote) FindNoteRefAtCaret(RichTextBox editor)
+    {
+        if (editor.CaretPosition.Parent is WpfDocs.Run wr
+            && wr.Tag is PolyDonky.Core.Run core)
+        {
+            if (core.FootnoteId is { Length: > 0 } fnId) return (fnId, false);
+            if (core.EndnoteId  is { Length: > 0 } enId) return (enId, true);
+        }
+        return (null, false);
+    }
+
     // ── 표 열 너비 드래그 리사이즈 ────────────────────────────────────────────
 
     private bool TryHitTableColumnBorder(Point pt,
@@ -3116,6 +3426,37 @@ public partial class MainWindow : Window
             };
             miHlInsert.Click += OnInsertHyperlink;
             menu.Items.Add(miHlInsert);
+        }
+
+        // 각주/미주 컨텍스트 — 캐럿이 참조 안에 있으면 "편집", 아니면 "삽입"
+        var (noteId, isEndnote) = FindNoteRefAtCaret(BodyEditor);
+        if (noteId is not null)
+        {
+            var miNoteEdit = new System.Windows.Controls.MenuItem
+            {
+                Header = isEndnote ? "미주 편집(_N)" : "각주 편집(_F)",
+                Tag    = (noteId, isEndnote),
+            };
+            miNoteEdit.Click += (_, _) =>
+            {
+                SetFootnotePanelVisible(true);
+                FootnotePanel.Refresh();
+                FootnotePanel.FocusEntry(
+                    isEndnote ? FootnoteEditorPanel.NoteKind.Endnote
+                              : FootnoteEditorPanel.NoteKind.Footnote,
+                    noteId);
+            };
+            menu.Items.Add(miNoteEdit);
+        }
+        else
+        {
+            var miFnInsert = new System.Windows.Controls.MenuItem { Header = "각주 삽입(_F)" };
+            miFnInsert.Click += OnInsertFootnote;
+            menu.Items.Add(miFnInsert);
+
+            var miEnInsert = new System.Windows.Controls.MenuItem { Header = "미주 삽입(_N)" };
+            miEnInsert.Click += OnInsertEndnote;
+            menu.Items.Add(miEnInsert);
         }
 
         var miFormatPara = new System.Windows.Controls.MenuItem
