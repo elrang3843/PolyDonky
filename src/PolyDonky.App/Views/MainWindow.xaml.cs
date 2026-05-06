@@ -2685,6 +2685,14 @@ public partial class MainWindow : Window
         }
 
         // ── 새 링크 삽입 ─────────────────────────────────────────────────
+        // 삽입 전 서식 캡처 — 하이퍼링크 삽입 후 이전 서식으로 복원할 때 사용한다.
+        object prevFg  = editor.Selection.GetPropertyValue(WpfDocs.TextElement.ForegroundProperty);
+        object prevTd  = editor.Selection.GetPropertyValue(WpfDocs.Inline.TextDecorationsProperty);
+        object prevFw  = editor.Selection.GetPropertyValue(WpfDocs.TextElement.FontWeightProperty);
+        object prevFs  = editor.Selection.GetPropertyValue(WpfDocs.TextElement.FontStyleProperty);
+        object prevFf  = editor.Selection.GetPropertyValue(WpfDocs.TextElement.FontFamilyProperty);
+        object prevFsz = editor.Selection.GetPropertyValue(WpfDocs.TextElement.FontSizeProperty);
+
         var text = displayText is { Length: > 0 } t ? t
                    : !editor.Selection.IsEmpty       ? editor.Selection.Text
                    : url;
@@ -2710,8 +2718,28 @@ public partial class MainWindow : Window
         catch { /* 잘못된 URI */ }
         hl.Tag = modelRun;
 
-        try { editor.CaretPosition = hl.ElementEnd; }
-        catch { /* 포지션 이동 실패 무시 */ }
+        // 하이퍼링크 직후에 "서식 탈출 Run" 을 삽입한다.
+        // Hyperlink 는 Span 의 서브클래스라, ElementEnd 에서 타이핑하면
+        // WPF 가 링크 스타일(파란색·밑줄)을 이어붙이는 경우가 있다.
+        // hl.ElementEnd 위치에 빈 Run 을 하나 더 삽입해 커서를 하이퍼링크
+        // 컨텍스트 밖으로 빼내고, 삽입 전 서식을 해당 Run 에 적용한다.
+        try
+        {
+            var escapeRun = new WpfDocs.Run("", hl.ElementEnd);
+            if (prevFg  != DependencyProperty.UnsetValue) escapeRun.SetValue(WpfDocs.TextElement.ForegroundProperty, prevFg);
+            if (prevFw  != DependencyProperty.UnsetValue) escapeRun.SetValue(WpfDocs.TextElement.FontWeightProperty,  prevFw);
+            if (prevFs  != DependencyProperty.UnsetValue) escapeRun.SetValue(WpfDocs.TextElement.FontStyleProperty,   prevFs);
+            if (prevFf  != DependencyProperty.UnsetValue) escapeRun.SetValue(WpfDocs.TextElement.FontFamilyProperty,  prevFf);
+            if (prevFsz != DependencyProperty.UnsetValue) escapeRun.SetValue(WpfDocs.TextElement.FontSizeProperty,    prevFsz);
+            // TextDecorations: 하이퍼링크 밑줄을 명시적으로 제거한다.
+            escapeRun.TextDecorations = prevTd is System.Windows.TextDecorationCollection tdc ? tdc : null;
+            editor.CaretPosition = escapeRun.ContentEnd;
+        }
+        catch
+        {
+            try { editor.CaretPosition = hl.ElementEnd; }
+            catch { /* 포지션 이동 실패 무시 */ }
+        }
     }
 
     /// <summary>기존 하이퍼링크를 일반 텍스트로 교체(링크 제거).</summary>
