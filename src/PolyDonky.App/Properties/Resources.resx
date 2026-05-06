@@ -64,9 +64,19 @@
   <data name="MenuInsertEmoji" xml:space="preserve"><value>이모지(_M)</value></data>
   <data name="MenuInsertShape" xml:space="preserve"><value>도형(_H)</value></data>
   <data name="MenuInsertImage" xml:space="preserve"><value>그림(_P)</value></data>
-  <data name="MenuInsertHyperlink" xml:space="preserve"><value>하이퍼링크(_K)...</value></data>
-  <data name="MenuInsertFootnote"  xml:space="preserve"><value>각주(_F)</value></data>
-  <data name="MenuInsertEndnote"   xml:space="preserve"><value>미주(_N)</value></data>
+  <data name="MenuInsertHyperlink"    xml:space="preserve"><value>하이퍼링크(_K)...</value></data>
+  <data name="MenuInsertFootnote"    xml:space="preserve"><value>각주(_F)</value></data>
+  <data name="MenuInsertEndnote"     xml:space="preserve"><value>미주(_N)</value></data>
+  <data name="MenuInsertToc"         xml:space="preserve"><value>목차 삽입(_O)</value></data>
+  <data name="MenuInsertTocRefresh"  xml:space="preserve"><value>목차 새로고침(_R)</value></data>
+  <data name="MenuInsertField"       xml:space="preserve"><value>필드 삽입(_D)</value></data>
+  <data name="MenuInsertFieldDate"   xml:space="preserve"><value>날짜</value></data>
+  <data name="MenuInsertFieldTime"   xml:space="preserve"><value>시간</value></data>
+  <data name="MenuInsertFieldPage"   xml:space="preserve"><value>페이지 번호</value></data>
+  <data name="MenuInsertFieldNumPages" xml:space="preserve"><value>총 페이지</value></data>
+  <data name="MenuInsertFieldAuthor" xml:space="preserve"><value>작성자</value></data>
+  <data name="MenuInsertFieldTitle"  xml:space="preserve"><value>문서 제목</value></data>
+  <data name="MsgNoTocToRefresh"     xml:space="preserve"><value>문서에 목차 블록이 없습니다. 먼저 '목차 삽입'을 실행해 주세요.</value></data>
 
   <!-- 각주/미주 편집 패널 -->
   <data name="FootnotePanelTitle"      xml:space="preserve"><value>각주/미주</value></data>
@@ -323,6 +333,8 @@
   <data name="SettingsLanguage" xml:space="preserve"><value>언어:</value></data>
   <data name="SettingsLangKorean" xml:space="preserve"><value>한국어 (기본)</value></data>
   <data name="SettingsLangEnglish" xml:space="preserve"><value>English</value></data>
+  <data name="SettingsSave" xml:space="preserve"><value>파일 저장:</value></data>
+  <data name="SettingsOverwriteProtect" xml:space="preserve"><value>덮어쓰기 방지 (변환 파일에 자동으로 -번호 부여)</value></data>
 
   <!-- 글자 서식 다이얼로그 -->
   <data name="FormatCharTitle"       xml:space="preserve"><value>글자 서식</value></data>

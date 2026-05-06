@@ -45,6 +45,14 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **Added** — **자동 목차(TOC) 삽입·새로고침**: 입력 메뉴 `목차 삽입` 으로 현재 캐럿 위치에 TocBlock 삽입(H1~H6 개요 단락 자동 수집·표시). `목차 새로고침` 으로 문서 내 모든 TocBlock 의 항목을 재스캔해 갱신. `TocBlock`/`TocEntry` Core 모델 + BlockJsonConverter `"toc"` 디스크리미네이터 + FlowDocumentBuilder 시각 렌더링(테두리 박스·레벨 들여쓰기·페이지 번호) + FlowDocumentParser 라운드트립 복원.
+
+- **Added** — **인라인 필드 삽입**: 입력 메뉴 `필드 삽입` 서브메뉴 — 날짜, 시간, 페이지 번호, 총 페이지, 작성자, 문서 제목. `Run.Field` (`FieldType?`) 프로퍼티 추가, FlowDocumentBuilder 가 필드 런을 하이라이트 배경 Run 으로 렌더링, FlowDocumentParser 가 Tag 에서 역복원.
+
+- **Added** — **테마 설정 영속화**: 앱 재시작 후에도 선택된 테마(Light/Dark/Soft)가 유지된다. `LanguageService` 의 `settings.json` 에 `"Theme"` 키를 추가해 저장·복원.
+
+- **Added** — **덮어쓰기 방지 설정**: 설정 창에 "덮어쓰기 방지" 체크박스 추가. 활성화 시 변환 파일(`.iwpf` 및 외부 포맷) 이름에 자동으로 `-1`, `-2`, ... 번호를 붙여 기존 파일을 덮어쓰지 않는다. 열기·저장 시 모두 번호 경로로 처리.
+
 - **Added** — **각주/미주 편집 UI (하단 패널 + 메뉴 + 우클릭)**: 입력 메뉴 `각주`/`미주`, 우클릭 `각주/미주 삽입` (캐럿이 참조 위에 있으면 `각주/미주 편집`) 으로 본문 캐럿 위치에 위첨자 참조 런 자동 생성. 신규 `FootnoteEditorPanel` (UserControl) 이 화면 하단에 도킹 — 탭으로 각주/미주 전환, 각 항목은 번호 라벨 + 다중행 TextBox + 본문 이동(↩) + 삭제(🗑) 버튼. TextBox 편집 즉시 `FootnoteEntry.Blocks` 에 단락 단위로 반영(줄바꿈 = 단락 분리). 항목 삭제 시 본문의 위첨자 Run 도 모든 페이지에서 일괄 제거 후 번호 재동기화. 보기 메뉴 `각주/미주 패널` 토글 + 패널 우상단 `✕` 닫기 버튼.
 
 - **Added** — **하이퍼링크 편집 UI**: 메뉴 `입력 > 하이퍼링크` (Ctrl+K) 로 하이퍼링크 삽입·편집·제거. `HyperlinkDialog` — URL 입력, 표시 텍스트, 기존 링크 편집 시 "링크 제거" 버튼. `FlowDocumentBuilder` 가 `Run.Url` 을 WPF `Hyperlink` 인라인으로 렌더링(파란색 밑줄, NavigateUri 설정). `FlowDocumentParser` 에 `case Wpf.Hyperlink` 추가 — 내부 텍스트를 실제 자식 Inline 에서 파싱하고 URL 을 Tag/NavigateUri 에서 복원 (사용자 텍스트 편집 반영). 우클릭 컨텍스트 메뉴에서 캐럿 위치에 따라 "하이퍼링크 삽입/편집" + "링크 열기" 항목 동적 추가. 스킴 없는 URL 자동으로 `https://` 보완. **하이퍼링크 삽입 후 서식 복원**: 링크 삽입 직후 커서 위치에 빈 탈출 Run 을 삽입해 이후 입력이 링크 이전 서식(폰트·크기·색상·굵기·이탤릭)을 그대로 이어받도록 수정 — Hyperlink 의 파란색·밑줄이 후속 문자에 전파되지 않는다.

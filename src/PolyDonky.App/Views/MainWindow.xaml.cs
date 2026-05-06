@@ -912,6 +912,8 @@ public partial class MainWindow : Window
                 => PolyDonky.App.Services.FlowDocumentBuilder.BuildShape(sh),
             PolyDonky.Core.Paragraph p
                 => PolyDonky.App.Services.FlowDocumentBuilder.BuildParagraph(p),
+            PolyDonky.Core.TocBlock toc
+                => PolyDonky.App.Services.FlowDocumentBuilder.BuildTocBlock(toc),
             _ => null,
         };
     }
@@ -2758,6 +2760,125 @@ public partial class MainWindow : Window
 
     private void OnInsertEndnote(object sender, RoutedEventArgs e)
         => InsertNoteAtCaret(isEndnote: true);
+
+    // ── 자동 목차 삽입 / 새로고침 ─────────────────────────────────────────
+
+    private void OnInsertToc(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        var editor = GetActiveTextEditor();
+        var toc    = new PolyDonky.Core.TocBlock();
+        toc.Entries = CollectTocEntries(editor.Document);
+        InsertCoreBlocksAtCaret(new System.Collections.Generic.List<PolyDonky.Core.Block> { toc });
+    }
+
+    private void OnRefreshAllToc(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        var editor     = GetActiveTextEditor();
+        var doc        = editor.Document;
+        var newEntries = CollectTocEntries(doc);
+
+        var toRefresh = new System.Collections.Generic.List<(System.Windows.Documents.Block wpfBlock, PolyDonky.Core.TocBlock toc)>();
+        foreach (var block in doc.Blocks)
+        {
+            if (block is System.Windows.Documents.BlockUIContainer { Tag: PolyDonky.Core.TocBlock toc })
+                toRefresh.Add((block, toc));
+        }
+
+        if (toRefresh.Count == 0)
+        {
+            System.Windows.MessageBox.Show(
+                PolyDonky.App.Properties.Resources.MsgNoTocToRefresh ?? "문서에 목차 블록이 없습니다.",
+                "목차",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        foreach (var (oldBlock, toc) in toRefresh)
+        {
+            toc.Entries = new System.Collections.Generic.List<PolyDonky.Core.TocEntry>(newEntries);
+            var newBlock = PolyDonky.App.Services.FlowDocumentBuilder.BuildTocBlock(toc);
+            doc.Blocks.InsertBefore(oldBlock, newBlock);
+            doc.Blocks.Remove(oldBlock);
+        }
+
+        _viewModel.MarkDirty();
+    }
+
+    private static System.Collections.Generic.IList<PolyDonky.Core.TocEntry> CollectTocEntries(
+        System.Windows.Documents.FlowDocument fd)
+    {
+        var entries = new System.Collections.Generic.List<PolyDonky.Core.TocEntry>();
+        CollectEntriesFromBlocks(fd.Blocks, entries);
+        return entries;
+    }
+
+    private static void CollectEntriesFromBlocks(
+        System.Windows.Documents.BlockCollection blocks,
+        System.Collections.Generic.List<PolyDonky.Core.TocEntry> entries)
+    {
+        foreach (var block in blocks)
+        {
+            if (block is System.Windows.Documents.Paragraph { Tag: PolyDonky.Core.Paragraph coreP }
+                && coreP.Style.Outline > PolyDonky.Core.OutlineLevel.Body)
+            {
+                entries.Add(new PolyDonky.Core.TocEntry
+                {
+                    Level = (int)coreP.Style.Outline,
+                    Text  = coreP.GetPlainText(),
+                });
+            }
+            else if (block is System.Windows.Documents.List list)
+            {
+                foreach (var item in list.ListItems)
+                    CollectEntriesFromBlocks(item.Blocks, entries);
+            }
+            else if (block is System.Windows.Documents.Section nested)
+            {
+                CollectEntriesFromBlocks(nested.Blocks, entries);
+            }
+        }
+    }
+
+    // ── 필드 삽입 ────────────────────────────────────────────────────────
+
+    private void OnInsertField(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        if (sender is not System.Windows.FrameworkElement { Tag: string fieldTypeStr }) return;
+        if (!Enum.TryParse<PolyDonky.Core.FieldType>(fieldTypeStr, out var fieldType)) return;
+
+        var editor = GetActiveTextEditor();
+        if (!editor.Selection.IsEmpty) editor.Selection.Text = string.Empty;
+
+        var insertPos = editor.CaretPosition
+            .GetInsertionPosition(System.Windows.Documents.LogicalDirection.Forward)
+            ?? editor.CaretPosition;
+
+        var fieldText = fieldType switch
+        {
+            PolyDonky.Core.FieldType.Date     => System.DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            PolyDonky.Core.FieldType.Time     => System.DateTime.Now.ToString("HH:mm",      System.Globalization.CultureInfo.InvariantCulture),
+            PolyDonky.Core.FieldType.Page     => "‹페이지›",
+            PolyDonky.Core.FieldType.NumPages => "‹총페이지›",
+            PolyDonky.Core.FieldType.Author   => _viewModel.Document.Metadata.Author is { Length: > 0 } a ? a : "‹작성자›",
+            PolyDonky.Core.FieldType.Title    => _viewModel.Document.Metadata.Title  is { Length: > 0 } t ? t : "‹제목›",
+            _                                 => $"‹{fieldType}›",
+        };
+
+        var coreRun = new PolyDonky.Core.Run { Text = fieldText, Field = fieldType };
+        var wpfRun  = new System.Windows.Documents.Run(fieldText, insertPos)
+        {
+            Tag        = coreRun,
+            Background = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromArgb(45, 0, 102, 204)),
+        };
+
+        try { editor.CaretPosition = wpfRun.ElementEnd; } catch { }
+        _viewModel.MarkDirty();
+    }
 
     private void OnToggleFootnotePanel(object sender, RoutedEventArgs e)
         => SetFootnotePanelVisible(MiFootnotePanel.IsChecked);
