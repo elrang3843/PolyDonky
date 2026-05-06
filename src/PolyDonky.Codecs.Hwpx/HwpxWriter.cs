@@ -75,10 +75,6 @@ public sealed class HwpxWriter : IDocumentWriter
         private int  _nextZOrder = 0;
         private long _nextInstId = 969106680;
         private readonly Dictionary<string, string> _imageIdByHash = new(StringComparer.Ordinal);
-        // Registration order, for binDataList in header.xml + opf:item entries in content.hpf.
-        private readonly List<BinDataInfo> _binData = new();
-        public IReadOnlyList<BinDataInfo> BinData => _binData;
-        public sealed record BinDataInfo(string Id, string MediaType, string Extension, string ZipPath);
 
         private readonly Dictionary<RunStyleKey, int> _runStyleIds = new();
         private readonly List<RunStyle> _runStyles = new();
@@ -176,37 +172,10 @@ public sealed class HwpxWriter : IDocumentWriter
             var ext = ExtensionForMediaType(mediaType);
             var path = $"{HwpxPaths.BinDataDir}{id}{ext}";
             var entry = Archive.CreateEntry(path, CompressionLevel.Optimal);
-            using (var stream = entry.Open())
-                stream.Write(data, 0, data.Length);
+            using var stream = entry.Open();
+            stream.Write(data, 0, data.Length);
             _imageIdByHash[hashKey] = id;
-            _binData.Add(new BinDataInfo(id, mediaType, ext, path));
             return id;
-        }
-
-        // Pre-pass: register all ImageBlock binaries before header.xml/content.hpf are written.
-        // Required so that binaryItemIDRef in <hp:img> resolves via header binDataList,
-        // and so content.hpf manifest contains BinData/* entries.
-        public void PreRegisterImages(PolyDonkyument document)
-        {
-            foreach (var section in document.Sections)
-                foreach (var block in section.Blocks)
-                    PreRegisterImagesFromBlock(block);
-        }
-
-        private void PreRegisterImagesFromBlock(Block block)
-        {
-            switch (block)
-            {
-                case ImageBlock img when img.Data.Length > 0:
-                    AddImage(img.Data, img.MediaType);
-                    break;
-                case Table t:
-                    foreach (var row in t.Rows)
-                        foreach (var cell in row.Cells)
-                            foreach (var inner in cell.Blocks)
-                                PreRegisterImagesFromBlock(inner);
-                    break;
-            }
         }
 
         private static string ExtensionForMediaType(string mt) => mt switch
@@ -235,22 +204,16 @@ public sealed class HwpxWriter : IDocumentWriter
         WriteContainerRdf(archive, document);
         WriteManifestXml(archive);
         WriteSettingsXml(archive);
+        WriteContentHpf(archive, document);
         WriteVersionXml(archive);
         WritePreviewText(archive, document);
 
         var ctx = new WriteContext(archive);
 
-        // Style/font registration pass.
+        // Walk pass: register every used RunStyle / ParagraphStyle / FontFamily.
         foreach (var section in document.Sections)
             foreach (var block in section.Blocks)
                 ctx.RegisterFromBlock(block);
-
-        // Image pre-registration pass: assigns binData ids and writes BinData/* entries to ZIP.
-        // Must precede WriteContentHpf (manifest needs BinData items) and WriteHeaderXml
-        // (refList needs binDataList for binaryItemIDRef resolution).
-        ctx.PreRegisterImages(document);
-
-        WriteContentHpf(archive, document, ctx);
 
         int cnt = document.Sections.Count;
         WriteHeaderXml(archive, ctx, Math.Max(cnt, 1));
@@ -366,7 +329,7 @@ public sealed class HwpxWriter : IDocumentWriter
         WriteXml(archive, HwpxPaths.SettingsXml, doc);
     }
 
-    private void WriteContentHpf(ZipArchive archive, PolyDonkyument document, WriteContext ctx)
+    private void WriteContentHpf(ZipArchive archive, PolyDonkyument document)
     {
         // All paths in manifest are ABSOLUTE from ZIP root (not relative to content.hpf location).
         // Real Hancom includes header in spine with linear="yes", sections without.
@@ -381,13 +344,6 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("id", "settings"),
             new XAttribute("href", "settings.xml"),
             new XAttribute("media-type", "application/xml")));
-
-        // Embedded images registered during PreRegisterImages pass.
-        foreach (var bd in ctx.BinData)
-            manifest.Add(new XElement(Opf + "item",
-                new XAttribute("id",         bd.Id),
-                new XAttribute("href",       bd.ZipPath),
-                new XAttribute("media-type", bd.MediaType)));
 
         var spine = new XElement(Opf + "spine");
         // Header in spine with linear="yes" (matches real Hancom format)
@@ -528,33 +484,30 @@ public sealed class HwpxWriter : IDocumentWriter
         }
 
         // borderFills — IDs start from 1 (real Hancom format is 1-indexed).
-        // id=1 = default "no border, no fill" entry referenced by char/para/page borders.
-        // id=2 = "all four sides solid 0.12mm" — used by tables so cell grids are visible.
-        // (Real Hancom typically has many borderFill entries; we provide the common pair.)
-        XElement BuildBorderFill(int id, string borderType) => new(Hh + "borderFill",
-            new XAttribute("id", id.ToString()),
-            new XAttribute("threeD", "0"),
-            new XAttribute("shadow", "0"),
-            new XAttribute("centerLine", "NONE"),
-            new XAttribute("breakCellSeparateLine", "0"),
-            new XElement(Hh + "slash",
-                new XAttribute("type", "NONE"),
-                new XAttribute("Crooked", "0"),
-                new XAttribute("isCounter", "0")),
-            new XElement(Hh + "backSlash",
-                new XAttribute("type", "NONE"),
-                new XAttribute("Crooked", "0"),
-                new XAttribute("isCounter", "0")),
-            new XElement(Hh + "leftBorder",   new XAttribute("type", borderType), new XAttribute("width", "0.12 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "rightBorder",  new XAttribute("type", borderType), new XAttribute("width", "0.12 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "topBorder",    new XAttribute("type", borderType), new XAttribute("width", "0.12 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "bottomBorder", new XAttribute("type", borderType), new XAttribute("width", "0.12 mm"), new XAttribute("color", "#000000")),
-            new XElement(Hh + "diagonal",     new XAttribute("type", "SOLID"),    new XAttribute("width", "0.1 mm"),  new XAttribute("color", "#000000")));
-
+        // id=1 = default "no border, no fill" entry referenced by all basic elements.
         var borderFills = new XElement(Hh + "borderFills",
-            new XAttribute("itemCnt", "2"),
-            BuildBorderFill(1, "NONE"),   // default no-border (char/page/etc.)
-            BuildBorderFill(2, "SOLID")); // table grid lines
+            new XAttribute("itemCnt", "1"),
+            new XElement(Hh + "borderFill",
+                new XAttribute("id", "1"),
+                new XAttribute("threeD", "0"),
+                new XAttribute("shadow", "0"),
+                new XAttribute("centerLine", "NONE"),
+                new XAttribute("breakCellSeparateLine", "0"),
+                new XElement(Hh + "slash",
+                    new XAttribute("type", "NONE"),
+                    new XAttribute("Crooked", "0"),
+                    new XAttribute("isCounter", "0")),
+                new XElement(Hh + "backSlash",
+                    new XAttribute("type", "NONE"),
+                    new XAttribute("Crooked", "0"),
+                    new XAttribute("isCounter", "0")),
+                new XElement(Hh + "leftBorder",   new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "rightBorder",  new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "topBorder",    new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                new XElement(Hh + "bottomBorder", new XAttribute("type", "NONE"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000")),
+                // Real Hancom always has diagonal type="SOLID" even for no-border fills.
+                new XElement(Hh + "diagonal",     new XAttribute("type", "SOLID"), new XAttribute("width", "0.1 mm"), new XAttribute("color", "#000000"))));
+        // Note: no hh:fillInfo / hh:noFill — real Hancom omits fill element when there is no fill.
 
         // charProperties — one entry per unique RunStyle
         var charProps = new XElement(Hh + "charProperties",
@@ -599,29 +552,10 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("lockForm", "0")));
         }
 
-        // binDataList — required when document has embedded images (BinData/*).
-        // <hp:img binaryItemIDRef="N"> resolves via <hh:binData id="N"> here.
-        // id format follows real Hancom convention: numeric, 1-indexed.
-        XElement? binDataList = null;
-        if (ctx.BinData.Count > 0)
-        {
-            binDataList = new XElement(Hh + "binDataList",
-                new XAttribute("itemCnt", ctx.BinData.Count.ToString()));
-            for (int i = 0; i < ctx.BinData.Count; i++)
-            {
-                var bd = ctx.BinData[i];
-                binDataList.Add(new XElement(Hh + "binData",
-                    new XAttribute("id",   bd.Id),     // matches binaryItemIDRef in <hp:img>
-                    new XAttribute("type", "EMBEDDING"),
-                    new XAttribute("name", bd.ZipPath))); // e.g., "BinData/image1.png"
-            }
-        }
-
-        // KS X 6101 §5 order: binDataList → fontfaces → borderFills → charProperties → tabProperties
+        // KS X 6101 §5 order: fontfaces → borderFills → charProperties → tabProperties
         //   → paraProperties → numberings → bullets → styles
-        var refList = new XElement(Hh + "refList");
-        if (binDataList is not null) refList.Add(binDataList);
-        refList.Add(fontFaces, borderFills, charProps, tabProperties, paraProps,
+        var refList = new XElement(Hh + "refList",
+            fontFaces, borderFills, charProps, tabProperties, paraProps,
             numberings, bullets, styles);
 
         // Real Hancom: targetProgram="HWP201X" with <hh:layoutCompatibility/> child.
@@ -1198,7 +1132,7 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("rowCnt",          rowCount.ToString()),
             new XAttribute("colCnt",          colCount.ToString()),
             new XAttribute("cellSpacing",     "0"),
-            new XAttribute("borderFillIDRef", "2"), // visible-border fill (defined in header)
+            new XAttribute("borderFillIDRef", "1"),
             new XAttribute("noAdjust",        "0"));
 
         wtbl.Add(new XElement(Hp + "sz",
@@ -1254,7 +1188,7 @@ public sealed class HwpxWriter : IDocumentWriter
                     new XAttribute("protect",         "0"),
                     new XAttribute("editable",        "0"),
                     new XAttribute("dirty",           "0"),
-                    new XAttribute("borderFillIDRef", "2")); // visible cell borders
+                    new XAttribute("borderFillIDRef", "1"));
 
                 var subList = new XElement(Hp + "subList", SubListAttrs());
                 if (cell.Blocks.Count == 0)
