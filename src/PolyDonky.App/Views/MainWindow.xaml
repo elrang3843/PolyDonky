@@ -117,6 +117,25 @@
                           Click="OnInsertFootnote" />
                 <MenuItem Header="{Binding MenuInsertEndnote, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertEndnote" />
+                <Separator />
+                <MenuItem Header="{Binding MenuInsertToc, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertToc" />
+                <MenuItem Header="{Binding MenuInsertTocRefresh, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnRefreshAllToc" />
+                <MenuItem Header="{Binding MenuInsertField, Source={x:Static svc:LocalizedStrings.Instance}}">
+                    <MenuItem Header="{Binding MenuInsertFieldDate,     Source={x:Static svc:LocalizedStrings.Instance}}"
+                              Click="OnInsertField" Tag="Date" />
+                    <MenuItem Header="{Binding MenuInsertFieldTime,     Source={x:Static svc:LocalizedStrings.Instance}}"
+                              Click="OnInsertField" Tag="Time" />
+                    <MenuItem Header="{Binding MenuInsertFieldPage,     Source={x:Static svc:LocalizedStrings.Instance}}"
+                              Click="OnInsertField" Tag="Page" />
+                    <MenuItem Header="{Binding MenuInsertFieldNumPages, Source={x:Static svc:LocalizedStrings.Instance}}"
+                              Click="OnInsertField" Tag="NumPages" />
+                    <MenuItem Header="{Binding MenuInsertFieldAuthor,   Source={x:Static svc:LocalizedStrings.Instance}}"
+                              Click="OnInsertField" Tag="Author" />
+                    <MenuItem Header="{Binding MenuInsertFieldTitle,    Source={x:Static svc:LocalizedStrings.Instance}}"
+                              Click="OnInsertField" Tag="Title" />
+                </MenuItem>
             </MenuItem>
 
             <MenuItem Header="{Binding MenuFormat, Source={x:Static svc:LocalizedStrings.Instance}}">

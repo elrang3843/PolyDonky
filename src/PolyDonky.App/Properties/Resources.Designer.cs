@@ -46,14 +46,24 @@ namespace PolyDonky.App.Properties
         internal static string MenuEditDocInfo       => Get(nameof(MenuEditDocInfo));
 
         // ── 메뉴: 입력 ─────────────────────────────────────────────
-        internal static string MenuInsert            => Get(nameof(MenuInsert));
-        internal static string MenuInsertTextBox     => Get(nameof(MenuInsertTextBox));
-        internal static string MenuInsertTable       => Get(nameof(MenuInsertTable));
-        internal static string MenuInsertSpecialChar => Get(nameof(MenuInsertSpecialChar));
-        internal static string MenuInsertEquation    => Get(nameof(MenuInsertEquation));
-        internal static string MenuInsertEmoji       => Get(nameof(MenuInsertEmoji));
-        internal static string MenuInsertShape       => Get(nameof(MenuInsertShape));
-        internal static string MenuInsertImage       => Get(nameof(MenuInsertImage));
+        internal static string MenuInsert              => Get(nameof(MenuInsert));
+        internal static string MenuInsertTextBox       => Get(nameof(MenuInsertTextBox));
+        internal static string MenuInsertTable         => Get(nameof(MenuInsertTable));
+        internal static string MenuInsertSpecialChar   => Get(nameof(MenuInsertSpecialChar));
+        internal static string MenuInsertEquation      => Get(nameof(MenuInsertEquation));
+        internal static string MenuInsertEmoji         => Get(nameof(MenuInsertEmoji));
+        internal static string MenuInsertShape         => Get(nameof(MenuInsertShape));
+        internal static string MenuInsertImage         => Get(nameof(MenuInsertImage));
+        internal static string MenuInsertToc           => Get(nameof(MenuInsertToc));
+        internal static string MenuInsertTocRefresh    => Get(nameof(MenuInsertTocRefresh));
+        internal static string MenuInsertField         => Get(nameof(MenuInsertField));
+        internal static string MenuInsertFieldDate     => Get(nameof(MenuInsertFieldDate));
+        internal static string MenuInsertFieldTime     => Get(nameof(MenuInsertFieldTime));
+        internal static string MenuInsertFieldPage     => Get(nameof(MenuInsertFieldPage));
+        internal static string MenuInsertFieldNumPages => Get(nameof(MenuInsertFieldNumPages));
+        internal static string MenuInsertFieldAuthor   => Get(nameof(MenuInsertFieldAuthor));
+        internal static string MenuInsertFieldTitle    => Get(nameof(MenuInsertFieldTitle));
+        internal static string MsgNoTocToRefresh       => Get(nameof(MsgNoTocToRefresh));
         // ── 메뉴: 서식 ─────────────────────────────────────────────
         internal static string MenuFormat            => Get(nameof(MenuFormat));
         internal static string MenuFormatChar        => Get(nameof(MenuFormatChar));
@@ -239,15 +249,17 @@ namespace PolyDonky.App.Properties
         internal static string AboutDesc    => Get(nameof(AboutDesc));
 
         // ── 설정 다이얼로그 ─────────────────────────────────────────
-        internal static string SettingsTitle      => Get(nameof(SettingsTitle));
-        internal static string SettingsTheme      => Get(nameof(SettingsTheme));
-        internal static string SettingsThemeLight => Get(nameof(SettingsThemeLight));
-        internal static string SettingsThemeDark  => Get(nameof(SettingsThemeDark));
-        internal static string SettingsThemeSoft  => Get(nameof(SettingsThemeSoft));
-        internal static string SettingsApply      => Get(nameof(SettingsApply));
-        internal static string SettingsLanguage   => Get(nameof(SettingsLanguage));
-        internal static string SettingsLangKorean => Get(nameof(SettingsLangKorean));
-        internal static string SettingsLangEnglish => Get(nameof(SettingsLangEnglish));
+        internal static string SettingsTitle           => Get(nameof(SettingsTitle));
+        internal static string SettingsTheme           => Get(nameof(SettingsTheme));
+        internal static string SettingsThemeLight      => Get(nameof(SettingsThemeLight));
+        internal static string SettingsThemeDark       => Get(nameof(SettingsThemeDark));
+        internal static string SettingsThemeSoft       => Get(nameof(SettingsThemeSoft));
+        internal static string SettingsApply           => Get(nameof(SettingsApply));
+        internal static string SettingsLanguage        => Get(nameof(SettingsLanguage));
+        internal static string SettingsLangKorean      => Get(nameof(SettingsLangKorean));
+        internal static string SettingsLangEnglish     => Get(nameof(SettingsLangEnglish));
+        internal static string SettingsSave            => Get(nameof(SettingsSave));
+        internal static string SettingsOverwriteProtect => Get(nameof(SettingsOverwriteProtect));
 
         // ── 글자 서식 다이얼로그 ────────────────────────────────────
         internal static string FormatCharTitle        => Get(nameof(FormatCharTitle));

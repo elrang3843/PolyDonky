@@ -235,6 +235,10 @@ public static class FlowDocumentParser
                     target.Add(ParseTable(wpfTable));
                     break;
 
+                case Wpf.BlockUIContainer container when container.Tag is TocBlock toc:
+                    target.Add(toc);
+                    break;
+
                 case Wpf.BlockUIContainer container when container.Tag is ImageBlock image:
                     target.Add(image);
                     break;
@@ -408,8 +412,9 @@ public static class FlowDocumentParser
         {
             case Wpf.Run r:
             {
-                // 각주/미주 참조 런 — Tag 의 원본 Run 을 그대로 회수 (FootnoteId/EndnoteId 보존).
-                if (r.Tag is Run origRef && (origRef.FootnoteId is not null || origRef.EndnoteId is not null))
+                // 각주/미주/필드 참조 런 — Tag 의 원본 Run 을 그대로 회수.
+                if (r.Tag is Run origRef &&
+                    (origRef.FootnoteId is not null || origRef.EndnoteId is not null || origRef.Field is not null))
                 {
                     p.Runs.Add(origRef.Clone());
                     break;

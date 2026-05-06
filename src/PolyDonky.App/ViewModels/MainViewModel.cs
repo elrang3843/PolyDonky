@@ -294,7 +294,11 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var iwpfPath = Path.ChangeExtension(sourcePath, ".iwpf");
+        // 덮어쓰기 방지 모드: 안전한 번호 경로를 바로 사용 (덮어쓰기 대화 건너뜀).
+        var iwpfBase = Path.ChangeExtension(sourcePath, ".iwpf");
+        var iwpfPath = LanguageService.OverwriteProtection
+            ? GetSafePath(iwpfBase)
+            : iwpfBase;
 
         // 사용자 안내 — 변환 후 IWPF 를 연다는 사실을 분명히 알린다.
         var promptMsg = string.Format(SR.DlgConvertOnOpenPrompt,
@@ -307,8 +311,8 @@ public partial class MainViewModel : ObservableObject
             MessageBoxResult.OK);
         if (promptResult != MessageBoxResult.OK) return;
 
-        // 같은 이름의 IWPF 가 이미 있으면 사용자 선택.
-        if (File.Exists(iwpfPath))
+        // 덮어쓰기 방지 비활성화 시: 같은 이름의 IWPF 가 이미 있으면 사용자 선택.
+        if (!LanguageService.OverwriteProtection && File.Exists(iwpfPath))
         {
             var owMsg = string.Format(SR.DlgConvertOverwritePrompt, Path.GetFileName(iwpfPath));
             var ow = MessageBox.Show(
@@ -966,7 +970,10 @@ public partial class MainViewModel : ObservableObject
         }
 
         // 같은 이름의 정식 .iwpf 와 외부 포맷을 함께 저장 (IWPF 정본 + 외부 export).
-        var iwpfPath = Path.ChangeExtension(targetPath, ".iwpf");
+        var iwpfBase = Path.ChangeExtension(targetPath, ".iwpf");
+        var iwpfPath = LanguageService.OverwriteProtection ? GetSafePath(iwpfBase) : iwpfBase;
+        if (LanguageService.OverwriteProtection)
+            targetPath = GetSafePath(targetPath);
 
         var promptMsg = string.Format(SR.DlgConvertOnSavePrompt,
             Path.GetFileName(iwpfPath), Path.GetFileName(targetPath));
@@ -1024,6 +1031,25 @@ public partial class MainViewModel : ObservableObject
         {
             BusyProgress = -1;
         }
+    }
+
+    /// <summary>
+    /// 덮어쓰기 방지: 파일이 이미 존재하면 이름 뒤에 -1, -2, ... 를 붙인 첫 번째 빈 경로를 반환.
+    /// 파일이 없으면 그대로 반환한다.
+    /// </summary>
+    private static string GetSafePath(string path)
+    {
+        if (!File.Exists(path)) return path;
+
+        var dir  = Path.GetDirectoryName(path) ?? string.Empty;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var ext  = Path.GetExtension(path);
+        for (int i = 1; i <= 9999; i++)
+        {
+            var candidate = Path.Combine(dir, $"{name}-{i}{ext}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+        return path;  // fallback (사실상 발생 불가)
     }
 
     /// <summary>

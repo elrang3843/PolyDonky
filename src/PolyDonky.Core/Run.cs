@@ -33,6 +33,9 @@ public sealed class Run
     /// DOCX: w:endnoteReference, HWPX: hp:ctrl ctrlID="END_NOTE"</summary>
     public string? EndnoteId { get; set; }
 
+    /// <summary>인라인 필드 종류. null 이면 필드가 아닌 일반 텍스트 Run.</summary>
+    public FieldType? Field { get; set; }
+
     /// <summary>모든 필드를 복사한 깊은 복제본 — Style 도 새 인스턴스로.</summary>
     public Run Clone() => new()
     {
@@ -45,7 +48,25 @@ public sealed class Run
         Url               = Url,
         FootnoteId        = FootnoteId,
         EndnoteId         = EndnoteId,
+        Field             = Field,
     };
+}
+
+/// <summary>인라인 필드 종류 — 렌더링 시 현재 값으로 치환되는 자동 삽입 값.</summary>
+public enum FieldType
+{
+    /// <summary>현재 페이지 번호.</summary>
+    Page,
+    /// <summary>총 페이지 수.</summary>
+    NumPages,
+    /// <summary>현재 날짜.</summary>
+    Date,
+    /// <summary>현재 시간.</summary>
+    Time,
+    /// <summary>문서 작성자.</summary>
+    Author,
+    /// <summary>문서 제목.</summary>
+    Title,
 }
 
 /// <summary>이모지 인라인 이미지의 기준선 정렬.</summary>

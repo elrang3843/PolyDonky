@@ -219,8 +219,99 @@ public static class FlowDocumentBuilder
                     currentKind = null;
                     target.Add(BuildOpaquePlaceholder(opaque));
                     break;
+
+                case TocBlock toc:
+                    currentList = null;
+                    currentKind = null;
+                    target.Add(BuildTocBlock(toc));
+                    break;
             }
         }
+    }
+
+    /// <summary>TocBlock 을 시각적 BlockUIContainer 로 빌드한다. Tag = TocBlock 으로 라운드트립 가능.</summary>
+    public static Wpf.BlockUIContainer BuildTocBlock(TocBlock toc)
+    {
+        var stack = new System.Windows.Controls.StackPanel { Margin = new Thickness(2) };
+
+        // 제목
+        var titleTb = new System.Windows.Controls.TextBlock
+        {
+            Text            = "목   차",
+            FontWeight      = FontWeights.Bold,
+            FontSize        = PtToDip(13),
+            TextAlignment   = TextAlignment.Center,
+            Padding         = new Thickness(0, 4, 0, 4),
+        };
+        stack.Children.Add(titleTb);
+
+        // 구분선
+        var sep = new System.Windows.Controls.Separator { Margin = new Thickness(0, 2, 0, 6) };
+        stack.Children.Add(sep);
+
+        if (toc.Entries.Count == 0)
+        {
+            stack.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text       = "[목차 항목 없음 — '목차 새로고침'을 실행해 주세요]",
+                Foreground = WpfMedia.Brushes.Gray,
+                FontStyle  = FontStyles.Italic,
+                Margin     = new Thickness(4, 2, 4, 2),
+            });
+        }
+        else
+        {
+            foreach (var entry in toc.Entries)
+            {
+                var grid = new System.Windows.Controls.Grid
+                {
+                    Margin = new Thickness((entry.Level - 1) * 14.0, 1, 0, 1),
+                };
+                grid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
+                    { Width = new System.Windows.GridLength(1, System.Windows.GridUnitType.Star) });
+                grid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
+                    { Width = System.Windows.GridLength.Auto });
+
+                var entryTb = new System.Windows.Controls.TextBlock
+                {
+                    Text         = entry.Text,
+                    FontWeight   = entry.Level == 1 ? FontWeights.SemiBold : FontWeights.Normal,
+                    FontSize     = PtToDip(entry.Level == 1 ? 11 : 10),
+                    TextTrimming = System.Windows.TextTrimming.CharacterEllipsis,
+                };
+                System.Windows.Controls.Grid.SetColumn(entryTb, 0);
+
+                var pageTb = new System.Windows.Controls.TextBlock
+                {
+                    Text      = entry.PageNumber.HasValue
+                                    ? entry.PageNumber.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                    : "–",
+                    TextAlignment = TextAlignment.Right,
+                    MinWidth      = 28,
+                    Margin        = new Thickness(8, 0, 0, 0),
+                    FontSize      = PtToDip(10),
+                    Foreground    = WpfMedia.Brushes.DimGray,
+                };
+                System.Windows.Controls.Grid.SetColumn(pageTb, 1);
+
+                grid.Children.Add(entryTb);
+                grid.Children.Add(pageTb);
+                stack.Children.Add(grid);
+            }
+        }
+
+        var border = new System.Windows.Controls.Border
+        {
+            BorderBrush     = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xC0, 0xC0, 0xC0)),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new System.Windows.CornerRadius(3),
+            Padding         = new Thickness(10),
+            Margin          = new Thickness(0, 4, 0, 4),
+            Background      = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(15, 0, 0, 0)),
+            Child           = stack,
+        };
+
+        return new Wpf.BlockUIContainer(border) { Tag = toc };
     }
 
     internal static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null)
@@ -1522,6 +1613,9 @@ public static class FlowDocumentBuilder
             return enWpfRun;
         }
 
+        if (run.Field is { } fieldType)
+            return BuildFieldInline(run, fieldType);
+
         if (run.LatexSource is { Length: > 0 } latex)
             return BuildEquationInline(run, latex);
 
@@ -1573,6 +1667,26 @@ public static class FlowDocumentBuilder
         }
 
         return wpfRun;
+    }
+
+    private static Wpf.Inline BuildFieldInline(Run run, FieldType fieldType)
+    {
+        var text = fieldType switch
+        {
+            FieldType.Date     => System.DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            FieldType.Time     => System.DateTime.Now.ToString("HH:mm",      System.Globalization.CultureInfo.InvariantCulture),
+            FieldType.Page     => "‹페이지›",
+            FieldType.NumPages => "‹총페이지›",
+            FieldType.Author   => string.IsNullOrEmpty(run.Text) ? "‹작성자›" : run.Text,
+            FieldType.Title    => string.IsNullOrEmpty(run.Text) ? "‹제목›"   : run.Text,
+            _                  => $"‹{fieldType}›",
+        };
+
+        return new Wpf.Run(text)
+        {
+            Tag        = run,
+            Background = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(45, 0, 102, 204)),
+        };
     }
 
     private static Wpf.Inline BuildEquationInline(Run run, string latex)
