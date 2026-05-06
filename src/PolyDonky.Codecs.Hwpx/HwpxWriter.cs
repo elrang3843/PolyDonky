@@ -1082,8 +1082,13 @@ public sealed class HwpxWriter : IDocumentWriter
             try
             {
                 var shapeElem = XElement.Parse(op.Xml);
-                var run = new XElement(Hp + "run", new XAttribute("charPrIDRef", "0"), shapeElem);
-                return new XElement(Hp + "p",
+                // 한컴 실파일 패턴: 도형 → 빈 hp:t → 단락 끝에 linesegarray.
+                // linesegarray 가 없으면 한컴이 레이아웃 계산 중 무한 루프에 빠진다.
+                var run = new XElement(Hp + "run",
+                    new XAttribute("charPrIDRef", "0"),
+                    shapeElem,
+                    new XElement(Hp + "t"));
+                var para = new XElement(Hp + "p",
                     new XAttribute("id",          ctx.NextParaId().ToString()),
                     new XAttribute("paraPrIDRef", "0"),
                     new XAttribute("styleIDRef",  "0"),
@@ -1091,6 +1096,8 @@ public sealed class HwpxWriter : IDocumentWriter
                     new XAttribute("columnBreak", "0"),
                     new XAttribute("merged",      "0"),
                     run);
+                para.Add(BuildLineseg(10.0, 1.6));
+                return para;
             }
             catch (System.Xml.XmlException)
             {
