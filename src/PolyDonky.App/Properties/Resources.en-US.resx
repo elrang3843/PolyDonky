@@ -64,6 +64,17 @@
   <data name="MenuInsertEmoji" xml:space="preserve"><value>E_moji</value></data>
   <data name="MenuInsertShape" xml:space="preserve"><value>S_hape</value></data>
   <data name="MenuInsertImage" xml:space="preserve"><value>_Image</value></data>
+  <data name="MenuInsertHyperlink" xml:space="preserve"><value>Hyper_link...</value></data>
+
+  <!-- Hyperlink dialog -->
+  <data name="HyperlinkDlgTitle"       xml:space="preserve"><value>Hyperlink</value></data>
+  <data name="HyperlinkDlgUrl"         xml:space="preserve"><value>_URL:</value></data>
+  <data name="HyperlinkDlgDisplayText" xml:space="preserve"><value>_Display text:</value></data>
+  <data name="HyperlinkDlgDisplayHint" xml:space="preserve"><value>(leave blank to use URL as text)</value></data>
+  <data name="HyperlinkDlgRemove"      xml:space="preserve"><value>_Remove link</value></data>
+  <data name="HyperlinkDlgUrlEmpty"    xml:space="preserve"><value>Please enter a URL.</value></data>
+  <data name="CtxHyperlinkEdit"        xml:space="preserve"><value>Edit _Hyperlink...</value></data>
+  <data name="CtxHyperlinkOpen"        xml:space="preserve"><value>_Open Link</value></data>
 
   <!-- Menu: Format -->
   <data name="MenuFormat" xml:space="preserve"><value>F_ormat</value></data>

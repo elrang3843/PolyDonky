@@ -465,6 +465,23 @@ public static class FlowDocumentParser
             case Wpf.LineBreak:
                 p.AddText("\n", Clone(baseStyle));
                 break;
+            case Wpf.Hyperlink hl:
+            {
+                // URL 은 Tag(원본 Run) 또는 NavigateUri 에서 복원.
+                // 내부 텍스트는 항상 실제 자식 Inline 으로부터 파싱 — 사용자 편집 반영.
+                var url = (hl.Tag is Run origHl ? origHl.Url : null)
+                          ?? hl.NavigateUri?.ToString()
+                          ?? string.Empty;
+                var hlStyle = Clone(baseStyle);
+                hlStyle.Underline = true;
+                var startIdx = p.Runs.Count;
+                foreach (var child in hl.Inlines)
+                    ParseInline(p, child, hlStyle);
+                if (!string.IsNullOrEmpty(url))
+                    for (var i = startIdx; i < p.Runs.Count; i++)
+                        p.Runs[i].Url = url;
+                break;
+            }
             case Wpf.Span span:
             {
                 // 글자폭·자간 시각화 Span — Tag 가 PolyDonky.Run 이고 자식이 모두 같은 Tag 의 per-char IUC 면

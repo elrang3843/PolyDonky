@@ -1051,6 +1051,11 @@ public partial class MainWindow : Window
                 if (TryPasteSelectedObject()) e.Handled = true;
                 break;
 
+            case Key.K when (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control:
+                OnInsertHyperlink(this, new RoutedEventArgs());
+                e.Handled = true;
+                break;
+
             case Key.L when (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control:
                 OnFormatChar(this, new RoutedEventArgs());
                 e.Handled = true;
@@ -2601,6 +2606,116 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnInsertHyperlink(object sender, RoutedEventArgs e)
+    {
+        var editor = GetActiveTextEditor();
+
+        // 기존 하이퍼링크 탐지 (캐럿이 링크 안에 있는지)
+        var existingHl  = FindHyperlinkAtCaret(editor);
+        var existingUrl = (existingHl?.Tag as PolyDonky.Core.Run)?.Url
+                          ?? existingHl?.NavigateUri?.ToString()
+                          ?? string.Empty;
+
+        // 선택 텍스트를 표시 텍스트 초기값으로
+        var selectedText = editor.Selection.IsEmpty ? string.Empty : editor.Selection.Text;
+
+        var dlg = new HyperlinkDialog(existingUrl, selectedText, canRemove: existingHl is not null)
+        {
+            Owner = this,
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        if (dlg.ResultUrl is null)
+            RemoveHyperlinkAt(editor, existingHl);
+        else
+            InsertOrUpdateHyperlink(editor, existingHl, dlg.ResultUrl, dlg.ResultDisplayText);
+
+        _viewModel?.MarkDirty();
+        editor.Focus();
+    }
+
+    // ── 하이퍼링크 유틸리티 ───────────────────────────────────────────────
+
+    /// <summary>캐럿이 속한 WPF Hyperlink 요소를 찾는다. 없으면 null.</summary>
+    private static WpfDocs.Hyperlink? FindHyperlinkAtCaret(RichTextBox editor)
+    {
+        var el = editor.CaretPosition.Parent as WpfDocs.TextElement;
+        while (el is not null)
+        {
+            if (el is WpfDocs.Hyperlink hl) return hl;
+            el = el.Parent as WpfDocs.TextElement;
+        }
+        return null;
+    }
+
+    /// <summary>하이퍼링크를 삽입하거나(existingHl==null) 기존 링크의 URL·텍스트를 갱신한다.</summary>
+    private static void InsertOrUpdateHyperlink(
+        RichTextBox editor,
+        WpfDocs.Hyperlink? existingHl,
+        string url,
+        string? displayText)
+    {
+        // ── 기존 링크 갱신 ────────────────────────────────────────────────
+        if (existingHl is not null)
+        {
+            // NavigateUri 갱신
+            try { existingHl.NavigateUri = new Uri(url, UriKind.RelativeOrAbsolute); }
+            catch { existingHl.NavigateUri = null; }
+
+            // Tag(원본 Core Run) URL 갱신
+            if (existingHl.Tag is PolyDonky.Core.Run coreRun)
+                coreRun.Url = url;
+            else
+                existingHl.Tag = new PolyDonky.Core.Run { Url = url };
+
+            // 표시 텍스트 변경이 요청된 경우에만 교체
+            if (displayText is { Length: > 0 })
+            {
+                var innerRange = new WpfDocs.TextRange(existingHl.ContentStart, existingHl.ContentEnd);
+                innerRange.Text = displayText;
+            }
+            return;
+        }
+
+        // ── 새 링크 삽입 ─────────────────────────────────────────────────
+        var text = displayText is { Length: > 0 } t ? t
+                   : !editor.Selection.IsEmpty       ? editor.Selection.Text
+                   : url;
+
+        // 선택 영역 삭제
+        if (!editor.Selection.IsEmpty)
+            editor.Selection.Text = string.Empty;
+
+        var insertPos = editor.CaretPosition
+                               .GetInsertionPosition(System.Windows.Documents.LogicalDirection.Forward)
+                               ?? editor.CaretPosition;
+
+        var modelRun = new PolyDonky.Core.Run
+        {
+            Text  = text,
+            Url   = url,
+            Style = new PolyDonky.Core.RunStyle { Underline = true },
+        };
+
+        var wpfRun = new WpfDocs.Run(text);
+        var hl = new WpfDocs.Hyperlink(wpfRun, insertPos);
+        try { hl.NavigateUri = new Uri(url, UriKind.RelativeOrAbsolute); }
+        catch { /* 잘못된 URI */ }
+        hl.Tag = modelRun;
+
+        try { editor.CaretPosition = hl.ElementEnd; }
+        catch { /* 포지션 이동 실패 무시 */ }
+    }
+
+    /// <summary>기존 하이퍼링크를 일반 텍스트로 교체(링크 제거).</summary>
+    private static void RemoveHyperlinkAt(RichTextBox editor, WpfDocs.Hyperlink? hl)
+    {
+        if (hl is null) return;
+        var text = new WpfDocs.TextRange(hl.ContentStart, hl.ContentEnd).Text;
+        // ElementStart~ElementEnd 범위에 Text 를 대입하면 Hyperlink 구조가 평탄화된다.
+        new WpfDocs.TextRange(hl.ElementStart, hl.ElementEnd).Text = text;
+    }
+
     // ── 표 열 너비 드래그 리사이즈 ────────────────────────────────────────────
 
     private bool TryHitTableColumnBorder(Point pt,
@@ -2963,6 +3078,45 @@ public partial class MainWindow : Window
         };
         miFormatChar.Click += OnFormatChar;
         menu.Items.Add(miFormatChar);
+
+        // 하이퍼링크 컨텍스트 — 캐럿이 링크 안에 있을 때만 편집/열기 표시
+        var hlAtCaret = FindHyperlinkAtCaret(BodyEditor);
+        if (hlAtCaret is not null)
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var miHlEdit = new System.Windows.Controls.MenuItem
+            {
+                Header = "하이퍼링크 편집(_K)...", InputGestureText = "Ctrl+K"
+            };
+            miHlEdit.Click += OnInsertHyperlink;
+            menu.Items.Add(miHlEdit);
+
+            var miHlOpen = new System.Windows.Controls.MenuItem
+            {
+                Header = "링크 열기(_O)"
+            };
+            var hlUri = (hlAtCaret.Tag as PolyDonky.Core.Run)?.Url
+                        ?? hlAtCaret.NavigateUri?.ToString();
+            miHlOpen.Tag = hlUri;
+            miHlOpen.Click += (_, _) =>
+            {
+                if (miHlOpen.Tag is string uriStr && !string.IsNullOrEmpty(uriStr))
+                {
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uriStr) { UseShellExecute = true }); }
+                    catch { /* 열기 실패 무시 */ }
+                }
+            };
+            menu.Items.Add(miHlOpen);
+        }
+        else
+        {
+            var miHlInsert = new System.Windows.Controls.MenuItem
+            {
+                Header = "하이퍼링크 삽입(_K)...", InputGestureText = "Ctrl+K"
+            };
+            miHlInsert.Click += OnInsertHyperlink;
+            menu.Items.Add(miHlInsert);
+        }
 
         var miFormatPara = new System.Windows.Controls.MenuItem
         {

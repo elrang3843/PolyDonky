@@ -110,6 +110,9 @@
                 </MenuItem>
                 <MenuItem Header="{Binding MenuInsertImage, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertImage" />
+                <Separator />
+                <MenuItem Header="{Binding MenuInsertHyperlink, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertHyperlink" InputGestureText="Ctrl+K" />
             </MenuItem>
 
             <MenuItem Header="{Binding MenuFormat, Source={x:Static svc:LocalizedStrings.Instance}}">

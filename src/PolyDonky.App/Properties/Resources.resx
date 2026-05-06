@@ -64,6 +64,17 @@
   <data name="MenuInsertEmoji" xml:space="preserve"><value>이모지(_M)</value></data>
   <data name="MenuInsertShape" xml:space="preserve"><value>도형(_H)</value></data>
   <data name="MenuInsertImage" xml:space="preserve"><value>그림(_P)</value></data>
+  <data name="MenuInsertHyperlink" xml:space="preserve"><value>하이퍼링크(_K)...</value></data>
+
+  <!-- 하이퍼링크 다이얼로그 -->
+  <data name="HyperlinkDlgTitle"       xml:space="preserve"><value>하이퍼링크</value></data>
+  <data name="HyperlinkDlgUrl"         xml:space="preserve"><value>URL(_U):</value></data>
+  <data name="HyperlinkDlgDisplayText" xml:space="preserve"><value>표시 텍스트(_D):</value></data>
+  <data name="HyperlinkDlgDisplayHint" xml:space="preserve"><value>(비워 두면 URL 그대로 표시)</value></data>
+  <data name="HyperlinkDlgRemove"      xml:space="preserve"><value>링크 제거(_R)</value></data>
+  <data name="HyperlinkDlgUrlEmpty"    xml:space="preserve"><value>URL을 입력하세요.</value></data>
+  <data name="CtxHyperlinkEdit"        xml:space="preserve"><value>하이퍼링크 편집(_K)...</value></data>
+  <data name="CtxHyperlinkOpen"        xml:space="preserve"><value>링크 열기(_O)</value></data>
 
   <!-- 메뉴: 서식 -->
   <data name="MenuFormat" xml:space="preserve"><value>서식(_R)</value></data>

@@ -1561,6 +1561,17 @@ public static class FlowDocumentBuilder
             wpfRun.BaselineAlignment = BaselineAlignment.Subscript;
 
         wpfRun.Tag = run;
+
+        // URL 이 있으면 WPF Hyperlink 로 감쌈 — Tag 에 원본 Run 보관(파서 라운드트립용).
+        if (run.Url is { Length: > 0 } url)
+        {
+            var hl = new Wpf.Hyperlink(wpfRun);
+            try { hl.NavigateUri = new Uri(url, UriKind.RelativeOrAbsolute); }
+            catch { /* 잘못된 URI — NavigateUri 생략 */ }
+            hl.Tag = run;
+            return hl;
+        }
+
         return wpfRun;
     }
 
