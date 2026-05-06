@@ -1368,22 +1368,15 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XElement(Hc + "rotMatrix",
                     new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
                     new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0"))),
-            // 공식 OWPML CPictureType.InitMap 순서:
-            // lineShape → imgRect → imgClip → effects → inMargin → imgDim → img
-            // (Picture 는 AbstractDrawingObjectType 가 아니므로 shadow/fillBrush/drawText 없음)
-            new XElement(Hp + "lineShape",
-                new XAttribute("color",        "#000000"),
-                new XAttribute("width",        "0"),
-                new XAttribute("style",        "NONE"),
-                new XAttribute("endCap",       "FLAT"),
-                new XAttribute("headStyle",    "NORMAL"),
-                new XAttribute("tailStyle",    "NORMAL"),
-                new XAttribute("headfill",     "1"),
-                new XAttribute("tailfill",     "1"),
-                new XAttribute("headSz",       "SMALL_SMALL"),
-                new XAttribute("tailSz",       "SMALL_SMALL"),
-                new XAttribute("outlineStyle", "NORMAL"),
-                new XAttribute("alpha",        "0")),
+            // HwpForge ground truth 순서: hc:img → imgRect → imgClip → inMargin → imgDim → effects.
+            // img 는 hc: 네임스페이스 (이전엔 hp: 로 잘못 사용 → 한컴 거부 원인).
+            // Picture 는 lineShape/shadow/fillBrush 없음 (drawing object 아님).
+            new XElement(Hc + "img",
+                new XAttribute("binaryItemIDRef", binId),
+                new XAttribute("bright",   "0"),
+                new XAttribute("contrast", "0"),
+                new XAttribute("effect",   "REAL_PIC"),
+                new XAttribute("alpha",    "0")),
             new XElement(Hp + "imgRect",
                 new XElement(Hc + "pt0", new XAttribute("x", "0"),         new XAttribute("y", "0")),
                 new XElement(Hc + "pt1", new XAttribute("x", w.ToString()), new XAttribute("y", "0")),
@@ -1392,19 +1385,13 @@ public sealed class HwpxWriter : IDocumentWriter
             new XElement(Hp + "imgClip",
                 new XAttribute("left",   "0"),         new XAttribute("top",    "0"),
                 new XAttribute("right",  w.ToString()), new XAttribute("bottom", h.ToString())),
-            new XElement(Hp + "effects"),
             new XElement(Hp + "inMargin",
                 new XAttribute("left", "0"), new XAttribute("right",  "0"),
                 new XAttribute("top",  "0"), new XAttribute("bottom", "0")),
             new XElement(Hp + "imgDim",
                 new XAttribute("dimwidth",  w.ToString()),
                 new XAttribute("dimheight", h.ToString())),
-            new XElement(Hp + "img",
-                new XAttribute("binaryItemIDRef", binId),
-                new XAttribute("bright",   "0"),
-                new XAttribute("contrast", "0"),
-                new XAttribute("effect",   "REAL_PIC"),
-                new XAttribute("alpha",    "0")),
+            new XElement(Hp + "effects"),
             new XElement(Hp + "sz",
                 new XAttribute("width",       w.ToString()),
                 new XAttribute("widthRelTo",  "ABSOLUTE"),
@@ -1450,13 +1437,19 @@ public sealed class HwpxWriter : IDocumentWriter
 
     private XElement BuildShape(ShapeObject shape, WriteContext ctx)
     {
-        // 종류별 매핑: Line → hp:line, Rectangle/RoundedRect → hp:rect,
-        // Ellipse → hp:ellipse, 그 외 → hp:rect placeholder.
+        // 종류별 hp: 요소 매핑 (공식 OWPML 클래스명 참고).
         string elemName = shape.Kind switch
         {
-            ShapeKind.Line     => "line",
-            ShapeKind.Ellipse  => "ellipse",
-            _                  => "rect", // Rectangle 등 폴백
+            ShapeKind.Line       => "line",
+            ShapeKind.Ellipse    => "ellipse",
+            ShapeKind.Polyline
+            or ShapeKind.Polygon
+            or ShapeKind.Triangle
+            or ShapeKind.RegularPolygon
+            or ShapeKind.Star    => "polygon",
+            ShapeKind.Spline
+            or ShapeKind.ClosedSpline => "curve",
+            _                    => "rect", // Rectangle/RoundedRect
         };
 
         long w = (long)Math.Round((shape.WidthMm  > 0 ? shape.WidthMm  : 40) / HwpUnitToMm);
@@ -1550,9 +1543,26 @@ public sealed class HwpxWriter : IDocumentWriter
             elem.Add(new XElement(Hc + "endPt",
                 new XAttribute("x", exU.ToString()), new XAttribute("y", eyU.ToString())));
         }
+        else if (elemName == "polygon" || elemName == "curve")
+        {
+            // hp:polygon / hp:curve: 꼭짓점 hc:pt 시리즈 (마지막에 닫힘점 반복).
+            var verts = ResolvePolygonVertices(shape, w, h);
+            foreach (var (vx, vy) in verts)
+                elem.Add(new XElement(Hc + "pt",
+                    new XAttribute("x", vx.ToString()),
+                    new XAttribute("y", vy.ToString())));
+            // polygon 은 닫힌 형태 — 첫 점 다시 추가해 명시적으로 닫는다.
+            if (elemName == "polygon" && verts.Count > 0
+                && (verts[0].X != verts[^1].X || verts[0].Y != verts[^1].Y))
+            {
+                elem.Add(new XElement(Hc + "pt",
+                    new XAttribute("x", verts[0].X.ToString()),
+                    new XAttribute("y", verts[0].Y.ToString())));
+            }
+        }
         else
         {
-            // Rectangle / RoundedRect / Ellipse 등: 4 코너 좌표 (HWPUNIT, 좌상단 기준).
+            // Rectangle / RoundedRect / Ellipse: 4 코너 좌표 (HWPUNIT, 좌상단 기준).
             // 한컴은 hp:rect/ellipse 등 닫힌 도형에 hc:pt0~pt3 를 요구 — 누락 시 거부.
             elem.Add(new XElement(Hc + "pt0", new XAttribute("x", "0"),         new XAttribute("y", "0")));
             elem.Add(new XElement(Hc + "pt1", new XAttribute("x", w.ToString()), new XAttribute("y", "0")));
@@ -1608,5 +1618,69 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("top",  "0"), new XAttribute("bottom", "0")));
 
         return elem;
+    }
+
+    // Polygon/Curve 의 꼭짓점 좌표 (HWPUNIT, 바운딩 박스 좌상단 0,0 기준).
+    // ShapeKind 별 보강:
+    //   - Polyline/Polygon/Spline: shape.Points 가 정의되어 있으면 그대로 사용
+    //   - Triangle: Points 가 비어있으면 등변 삼각형 (위 꼭짓점→오른쪽 아래→왼쪽 아래)
+    //   - RegularPolygon: Points 가 비어있으면 SideCount 개 정다각형 자동 계산
+    //   - Star: 외/내부 반지름 교차로 별 모양 자동 계산
+    private static List<(long X, long Y)> ResolvePolygonVertices(ShapeObject shape, long w, long h)
+    {
+        var result = new List<(long, long)>();
+
+        if (shape.Points.Count >= 2)
+        {
+            foreach (var p in shape.Points)
+            {
+                long px = (long)Math.Round(p.X / HwpUnitToMm);
+                long py = (long)Math.Round(p.Y / HwpUnitToMm);
+                if (px < 0) px = 0; if (py < 0) py = 0;
+                if (px > w) px = w; if (py > h) py = h;
+                result.Add((px, py));
+            }
+            return result;
+        }
+
+        switch (shape.Kind)
+        {
+            case ShapeKind.Triangle:
+                result.Add((w / 2, 0));   // top
+                result.Add((w, h));       // bottom-right
+                result.Add((0, h));       // bottom-left
+                break;
+
+            case ShapeKind.RegularPolygon:
+            case ShapeKind.Star:
+            {
+                int n = Math.Max(3, shape.SideCount);
+                long cx = w / 2, cy = h / 2;
+                long rx = w / 2, ry = h / 2;
+                bool isStar = shape.Kind == ShapeKind.Star;
+                int total = isStar ? n * 2 : n;
+                double inner = Math.Clamp(shape.InnerRadiusRatio, 0.1, 0.95);
+                for (int i = 0; i < total; i++)
+                {
+                    double t = (Math.PI * 2 * i) / total - Math.PI / 2; // start at top
+                    double radiusFactor = isStar && (i % 2 == 1) ? inner : 1.0;
+                    long vx = cx + (long)Math.Round(Math.Cos(t) * rx * radiusFactor);
+                    long vy = cy + (long)Math.Round(Math.Sin(t) * ry * radiusFactor);
+                    if (vx < 0) vx = 0; if (vy < 0) vy = 0;
+                    if (vx > w) vx = w; if (vy > h) vy = h;
+                    result.Add((vx, vy));
+                }
+                break;
+            }
+
+            default:
+                // Polyline/Polygon with no Points: rectangle outline as fallback.
+                result.Add((0, 0));
+                result.Add((w, 0));
+                result.Add((w, h));
+                result.Add((0, h));
+                break;
+        }
+        return result;
     }
 }
