@@ -26,9 +26,9 @@
 
         <!-- 표시 텍스트 -->
         <TextBlock Margin="0,10,0,4">
-            <Run Text="{Binding HyperlinkDlgDisplayText, Source={x:Static svc:LocalizedStrings.Instance}}" />
+            <Run Text="{Binding HyperlinkDlgDisplayText, Source={x:Static svc:LocalizedStrings.Instance}, Mode=OneWay}" />
             <Run Text=" " />
-            <Run Text="{Binding HyperlinkDlgDisplayHint, Source={x:Static svc:LocalizedStrings.Instance}}"
+            <Run Text="{Binding HyperlinkDlgDisplayHint, Source={x:Static svc:LocalizedStrings.Instance}, Mode=OneWay}"
                  Foreground="{DynamicResource OnSurfaceMuted}" />
         </TextBlock>
         <TextBox x:Name="TxtDisplayText"
