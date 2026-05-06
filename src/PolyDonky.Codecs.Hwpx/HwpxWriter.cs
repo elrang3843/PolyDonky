@@ -1492,7 +1492,11 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("id",            ctx.NextObjId().ToString()),
             new XAttribute("zOrder",        ctx.NextZOrder().ToString()),
             new XAttribute("numberingType", numType),
-            new XAttribute("textWrap",      "TOP_AND_BOTTOM"),
+            // 도형은 anchored overlay 라서 textWrap=IN_FRONT_OF_TEXT 로 본문 위에 그림.
+            // BehindText 면 BEHIND_TEXT, 그 외는 IN_FRONT_OF_TEXT.
+            // 이전 TOP_AND_BOTTOM 은 본문이 도형 위·아래로 밀려나 페이지 흐름 망가짐.
+            new XAttribute("textWrap",
+                shape.WrapMode == ImageWrapMode.BehindText ? "BEHIND_TEXT" : "IN_FRONT_OF_TEXT"),
             new XAttribute("textFlow",      "BOTH_SIDES"),
             new XAttribute("lock",          "0"),
             new XAttribute("dropcapstyle",  "None"),
