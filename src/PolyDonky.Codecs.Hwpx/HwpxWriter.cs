@@ -1256,7 +1256,6 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("href",          ""),
             new XAttribute("groupLevel",    "0"),
             new XAttribute("instid",        ctx.NextInstId().ToString()),
-            new XAttribute("ratio",         "0"),
             new XAttribute("reverse",       "0"),
 
             new XElement(Hp + "offset", new XAttribute("x", "0"), new XAttribute("y", "0")),
@@ -1278,6 +1277,9 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XElement(Hc + "rotMatrix",
                     new XAttribute("e1", "1"), new XAttribute("e2", "0"), new XAttribute("e3", "0"),
                     new XAttribute("e4", "0"), new XAttribute("e5", "1"), new XAttribute("e6", "0"))),
+            // 공식 OWPML CPictureType.InitMap 순서:
+            // lineShape → imgRect → imgClip → effects → inMargin → imgDim → img
+            // (Picture 는 AbstractDrawingObjectType 가 아니므로 shadow/fillBrush/drawText 없음)
             new XElement(Hp + "lineShape",
                 new XAttribute("color",        "#000000"),
                 new XAttribute("width",        "0"),
@@ -1291,18 +1293,21 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("tailSz",       "SMALL_SMALL"),
                 new XAttribute("outlineStyle", "NORMAL"),
                 new XAttribute("alpha",        "0")),
-            new XElement(Hp + "shadow",
-                new XAttribute("type",    "NONE"),
-                new XAttribute("color",   "#B2B2B2"),
-                new XAttribute("offsetX", "0"),
-                new XAttribute("offsetY", "0"),
-                new XAttribute("alpha",   "0")),
+            new XElement(Hp + "imgRect",
+                new XElement(Hc + "pt0", new XAttribute("x", "0"),         new XAttribute("y", "0")),
+                new XElement(Hc + "pt1", new XAttribute("x", w.ToString()), new XAttribute("y", "0")),
+                new XElement(Hc + "pt2", new XAttribute("x", w.ToString()), new XAttribute("y", h.ToString())),
+                new XElement(Hc + "pt3", new XAttribute("x", "0"),         new XAttribute("y", h.ToString()))),
             new XElement(Hp + "imgClip",
                 new XAttribute("left", "0"), new XAttribute("top",    "0"),
                 new XAttribute("right","0"), new XAttribute("bottom", "0")),
+            new XElement(Hp + "effects"),
             new XElement(Hp + "inMargin",
                 new XAttribute("left", "0"), new XAttribute("right",  "0"),
                 new XAttribute("top",  "0"), new XAttribute("bottom", "0")),
+            new XElement(Hp + "imgDim",
+                new XAttribute("dimwidth",  w.ToString()),
+                new XAttribute("dimheight", h.ToString())),
             new XElement(Hp + "img",
                 new XAttribute("binaryItemIDRef", binId),
                 new XAttribute("bright",   "0"),
@@ -1417,13 +1422,23 @@ public sealed class HwpxWriter : IDocumentWriter
                 new XAttribute("headSz",       "SMALL_SMALL"),
                 new XAttribute("tailSz",       "SMALL_SMALL"),
                 new XAttribute("outlineStyle", "NORMAL"),
-                new XAttribute("alpha",        "0")),
-            new XElement(Hp + "shadow",
-                new XAttribute("type",    "NONE"),
-                new XAttribute("color",   "#B2B2B2"),
-                new XAttribute("offsetX", "0"),
-                new XAttribute("offsetY", "0"),
-                new XAttribute("alpha",   "0")));
+                new XAttribute("alpha",        "0")));
+
+        // 공식 OWPML CAbstractDrawingObjectType 의 fillBrush 는 hp:line/rect/ellipse 등
+        // 모든 drawing object 의 필수 자식. 채움색 없으면 winBrush alpha=255 (투명).
+        bool hasFill = !string.IsNullOrEmpty(shape.FillColor);
+        elem.Add(new XElement(Hc + "fillBrush",
+            new XElement(Hc + "winBrush",
+                new XAttribute("faceColor",  hasFill ? shape.FillColor! : "#FFFFFF"),
+                new XAttribute("hatchColor", "#000000"),
+                new XAttribute("alpha",      hasFill ? "0" : "255"))));
+
+        elem.Add(new XElement(Hp + "shadow",
+            new XAttribute("type",    "NONE"),
+            new XAttribute("color",   "#B2B2B2"),
+            new XAttribute("offsetX", "0"),
+            new XAttribute("offsetY", "0"),
+            new XAttribute("alpha",   "0")));
 
         // Line 만 startPt/endPt 좌표 추가.
         if (shape.Kind == ShapeKind.Line)
