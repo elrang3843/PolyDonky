@@ -15,12 +15,13 @@ namespace PolyDonky.Codecs.Html;
 ///   - CodeLanguage non-null → &lt;pre&gt;&lt;code class="language-xxx"&gt;...&lt;/code&gt;&lt;/pre&gt;
 ///   - ListMarker (bullet/ordered, nested by Level) → &lt;ul&gt;/&lt;ol&gt; + &lt;li&gt;
 ///   - ListMarker.Checked    → &lt;input type="checkbox" disabled checked?&gt; 접두
-///   - Run.Bold/Italic/Strike/Sub/Super/Underline → &lt;strong&gt;&lt;em&gt;&lt;s&gt;&lt;sub&gt;&lt;sup&gt;&lt;u&gt;
+///   - Run.Bold/Italic/Strike/Sub/Super/Underline/Overline → &lt;strong&gt;&lt;em&gt;&lt;s&gt;&lt;sub&gt;&lt;sup&gt;&lt;u&gt; + span CSS
 ///   - 모노스페이스 FontFamily → &lt;code&gt;
 ///   - Run.Url               → &lt;a href="..."&gt;
 ///   - Run.Foreground/Background/FontSizePt/FontFamily → &lt;span style="..."&gt;
-///   - Table                 → &lt;table&gt;&lt;thead&gt;/&lt;tbody&gt; + 셀 정렬 style
-///   - ImageBlock            → &lt;img src alt width height&gt; (또는 &lt;figure&gt; + &lt;figcaption&gt;)
+///   - Table                 → &lt;table&gt;&lt;colgroup&gt;&lt;thead&gt;/&lt;tbody&gt; + 셀 정렬·배경·패딩·테두리 style
+///   - ImageBlock            → &lt;img src alt width height style&gt; (또는 &lt;figure&gt; + &lt;figcaption&gt;)
+///   - ParagraphStyle.LineHeightFactor/SpaceBeforePt/SpaceAfterPt/IndentFirstLineMm/IndentLeftMm/IndentRightMm → CSS
 /// </summary>
 public sealed class HtmlWriter : IDocumentWriter
 {
@@ -190,7 +191,8 @@ public sealed class HtmlWriter : IDocumentWriter
 
     private static string ParagraphStyleAttr(ParagraphStyle s)
     {
-        if (s.Alignment is Alignment.Left or Alignment.Distributed) return "";
+        var parts = new List<string>(6);
+
         var ta = s.Alignment switch
         {
             Alignment.Center  => "center",
@@ -198,7 +200,24 @@ public sealed class HtmlWriter : IDocumentWriter
             Alignment.Justify => "justify",
             _                 => null,
         };
-        return ta is null ? "" : $" style=\"text-align:{ta}\"";
+        if (ta is not null) parts.Add($"text-align:{ta}");
+
+        // 기본값 1.2 와 다를 때만 출력 (브라우저 기본값 normal ≈ 1.2 에 해당).
+        if (s.LineHeightFactor > 0 && Math.Abs(s.LineHeightFactor - 1.2) > 0.01)
+            parts.Add($"line-height:{s.LineHeightFactor.ToString("0.##", CultureInfo.InvariantCulture)}");
+
+        if (s.SpaceBeforePt > 0)
+            parts.Add($"margin-top:{s.SpaceBeforePt.ToString("0.##", CultureInfo.InvariantCulture)}pt");
+        if (s.SpaceAfterPt > 0)
+            parts.Add($"margin-bottom:{s.SpaceAfterPt.ToString("0.##", CultureInfo.InvariantCulture)}pt");
+        if (Math.Abs(s.IndentFirstLineMm) > 0.01)
+            parts.Add($"text-indent:{s.IndentFirstLineMm.ToString("0.##", CultureInfo.InvariantCulture)}mm");
+        if (s.IndentLeftMm > 0)
+            parts.Add($"padding-left:{s.IndentLeftMm.ToString("0.##", CultureInfo.InvariantCulture)}mm");
+        if (s.IndentRightMm > 0)
+            parts.Add($"padding-right:{s.IndentRightMm.ToString("0.##", CultureInfo.InvariantCulture)}mm");
+
+        return parts.Count == 0 ? "" : $" style=\"{string.Join(';', parts)}\"";
     }
 
     private static void WriteListGroup(StringBuilder sb, IList<Block> blocks, int from, int to, string indent)
@@ -233,9 +252,42 @@ public sealed class HtmlWriter : IDocumentWriter
     private static void WriteTable(StringBuilder sb, Table t, string indent)
     {
         if (t.Rows.Count == 0) return;
-        sb.Append(indent).Append("<table>\n");
 
-        // <thead> 모음.
+        // 표 수준 style (배경색·정렬).
+        var tblStyle = new List<string>(3);
+        if (!string.IsNullOrEmpty(t.BackgroundColor))
+            tblStyle.Add($"background-color:{t.BackgroundColor}");
+        switch (t.HAlign)
+        {
+            case TableHAlign.Center: tblStyle.Add("margin-left:auto;margin-right:auto"); break;
+            case TableHAlign.Right:  tblStyle.Add("margin-left:auto");                  break;
+        }
+        if (t.BorderThicknessPt > 0)
+            tblStyle.Add($"border-collapse:collapse");
+
+        var tblStyleAttr = tblStyle.Count > 0
+            ? $" style=\"{string.Join(';', tblStyle)}\""
+            : "";
+
+        sb.Append(indent).Append("<table").Append(tblStyleAttr).Append(">\n");
+
+        // <colgroup> — 열 너비가 하나라도 있을 때만 출력.
+        if (t.Columns.Any(c => c.WidthMm > 0))
+        {
+            sb.Append(indent).Append("  <colgroup>\n");
+            foreach (var col in t.Columns)
+            {
+                if (col.WidthMm > 0)
+                    sb.Append(indent).Append("    <col style=\"width:")
+                      .Append(col.WidthMm.ToString("0.##", CultureInfo.InvariantCulture))
+                      .Append("mm\">\n");
+                else
+                    sb.Append(indent).Append("    <col>\n");
+            }
+            sb.Append(indent).Append("  </colgroup>\n");
+        }
+
+        // <thead> / <tbody> 모음.
         var headerRows = t.Rows.Where(r => r.IsHeader).ToList();
         var bodyRows   = t.Rows.Where(r => !r.IsHeader).ToList();
 
@@ -264,14 +316,12 @@ public sealed class HtmlWriter : IDocumentWriter
             var attrs = new StringBuilder();
             if (cell.ColumnSpan > 1) attrs.Append(" colspan=\"").Append(cell.ColumnSpan).Append('"');
             if (cell.RowSpan    > 1) attrs.Append(" rowspan=\"").Append(cell.RowSpan).Append('"');
-            var alignStyle = cell.TextAlign switch
-            {
-                CellTextAlign.Center  => " style=\"text-align:center\"",
-                CellTextAlign.Right   => " style=\"text-align:right\"",
-                CellTextAlign.Justify => " style=\"text-align:justify\"",
-                _                     => "",
-            };
-            sb.Append(indent).Append("  <").Append(tag).Append(attrs).Append(alignStyle).Append('>');
+
+            var cellStyle = BuildCellStyle(cell);
+            if (cellStyle.Length > 0)
+                attrs.Append(" style=\"").Append(cellStyle).Append('"');
+
+            sb.Append(indent).Append("  <").Append(tag).Append(attrs).Append('>');
             // 셀 안 블록을 인라인적으로 렌더 — 단락은 <br> 로 구분.
             bool first = true;
             foreach (var b in cell.Blocks)
@@ -288,17 +338,71 @@ public sealed class HtmlWriter : IDocumentWriter
         sb.Append(indent).Append("</tr>\n");
     }
 
+    private static string BuildCellStyle(TableCell cell)
+    {
+        var parts = new List<string>(8);
+
+        if (cell.TextAlign != CellTextAlign.Left)
+        {
+            var ta = cell.TextAlign switch
+            {
+                CellTextAlign.Center  => "center",
+                CellTextAlign.Right   => "right",
+                CellTextAlign.Justify => "justify",
+                _                     => null,
+            };
+            if (ta is not null) parts.Add($"text-align:{ta}");
+        }
+
+        if (!string.IsNullOrEmpty(cell.BackgroundColor))
+            parts.Add($"background-color:{cell.BackgroundColor}");
+
+        // 셀 안여백 (mm → CSS)
+        double padT = cell.PaddingTopMm,    padB = cell.PaddingBottomMm;
+        double padL = cell.PaddingLeftMm,   padR = cell.PaddingRightMm;
+        if (padT > 0 || padB > 0 || padL > 0 || padR > 0)
+            parts.Add($"padding:{FmtMm(padT)} {FmtMm(padR)} {FmtMm(padB)} {FmtMm(padL)}");
+
+        // 테두리 — 면별 per-side 또는 공통값이 있을 때 출력.
+        bool hasBorder = cell.BorderTop is not null || cell.BorderBottom is not null
+                      || cell.BorderLeft is not null || cell.BorderRight is not null
+                      || cell.BorderThicknessPt > 0 || !string.IsNullOrEmpty(cell.BorderColor);
+        if (hasBorder)
+        {
+            parts.Add($"border-top:{BorderCss(cell.BorderTop,    cell.BorderThicknessPt, cell.BorderColor)}");
+            parts.Add($"border-bottom:{BorderCss(cell.BorderBottom, cell.BorderThicknessPt, cell.BorderColor)}");
+            parts.Add($"border-left:{BorderCss(cell.BorderLeft,   cell.BorderThicknessPt, cell.BorderColor)}");
+            parts.Add($"border-right:{BorderCss(cell.BorderRight,  cell.BorderThicknessPt, cell.BorderColor)}");
+        }
+
+        return string.Join(';', parts);
+    }
+
+    private static string BorderCss(CellBorderSide? side, double defPt, string? defColor)
+    {
+        var pt  = side.HasValue && side.Value.ThicknessPt > 0 ? side.Value.ThicknessPt : defPt;
+        var clr = side.HasValue && !string.IsNullOrEmpty(side.Value.Color) ? side.Value.Color! : (defColor ?? "#C8C8C8");
+        if (pt <= 0) return "none";
+        return $"{pt.ToString("0.##", CultureInfo.InvariantCulture)}pt solid {clr}";
+    }
+
+    private static string FmtMm(double mm)
+        => mm > 0 ? mm.ToString("0.##", CultureInfo.InvariantCulture) + "mm" : "0";
+
     private static void WriteImage(StringBuilder sb, ImageBlock img, string indent)
     {
-        var src    = img.ResourcePath ?? BuildDataUri(img);
-        var alt    = EscapeAttr(img.Description ?? "");
+        var src      = img.ResourcePath ?? BuildDataUri(img);
+        var alt      = EscapeAttr(img.Description ?? "");
         var sizeAttr = new StringBuilder();
         if (img.WidthMm  > 0) sizeAttr.Append(" width=\"")  .Append(MmToPx(img.WidthMm) .ToString("0", CultureInfo.InvariantCulture)).Append('"');
         if (img.HeightMm > 0) sizeAttr.Append(" height=\"") .Append(MmToPx(img.HeightMm).ToString("0", CultureInfo.InvariantCulture)).Append('"');
 
+        var imgStyle = BuildImageStyle(img);
+        var styleAttr = imgStyle.Length > 0 ? $" style=\"{imgStyle}\"" : "";
+
         if (img.ShowTitle && !string.IsNullOrEmpty(img.Title))
         {
-            sb.Append(indent).Append("<figure>\n");
+            sb.Append(indent).Append("<figure").Append(styleAttr).Append(">\n");
             sb.Append(indent).Append("  <img src=\"").Append(EscapeAttr(src)).Append("\" alt=\"")
               .Append(alt).Append('"').Append(sizeAttr).Append(">\n");
             sb.Append(indent).Append("  <figcaption>").Append(EscapeHtml(img.Title!)).Append("</figcaption>\n");
@@ -307,8 +411,37 @@ public sealed class HtmlWriter : IDocumentWriter
         else
         {
             sb.Append(indent).Append("<img src=\"").Append(EscapeAttr(src)).Append("\" alt=\"")
-              .Append(alt).Append('"').Append(sizeAttr).Append(">\n");
+              .Append(alt).Append('"').Append(sizeAttr).Append(styleAttr).Append(">\n");
         }
+    }
+
+    private static string BuildImageStyle(ImageBlock img)
+    {
+        var parts = new List<string>(4);
+
+        // WrapMode → CSS float (텍스트 감싸기).
+        // WrapLeft = 이미지 오른쪽에 텍스트 → float:right
+        // WrapRight = 이미지 왼쪽에 텍스트 → float:left
+        switch (img.WrapMode)
+        {
+            case ImageWrapMode.WrapLeft:  parts.Add("float:right"); break;
+            case ImageWrapMode.WrapRight: parts.Add("float:left");  break;
+        }
+
+        // HAlign (WrapMode=Inline 일 때) → display:block + margin auto.
+        if (img.WrapMode == ImageWrapMode.Inline)
+        {
+            switch (img.HAlign)
+            {
+                case ImageHAlign.Center: parts.Add("display:block;margin-left:auto;margin-right:auto"); break;
+                case ImageHAlign.Right:  parts.Add("display:block;margin-left:auto");                   break;
+            }
+        }
+
+        if (img.MarginTopMm    > 0) parts.Add($"margin-top:{FmtMm(img.MarginTopMm)}");
+        if (img.MarginBottomMm > 0) parts.Add($"margin-bottom:{FmtMm(img.MarginBottomMm)}");
+
+        return string.Join(';', parts);
     }
 
     private static string BuildDataUri(ImageBlock img)
@@ -359,7 +492,7 @@ public sealed class HtmlWriter : IDocumentWriter
 
     private static string BuildSpanStyle(RunStyle s, bool includeMono)
     {
-        var parts = new List<string>(4);
+        var parts = new List<string>(5);
         if (!string.IsNullOrEmpty(s.FontFamily) &&
             (includeMono || !s.FontFamily.Contains("monospace", StringComparison.OrdinalIgnoreCase)))
         {
@@ -370,6 +503,8 @@ public sealed class HtmlWriter : IDocumentWriter
             parts.Add($"font-size:{s.FontSizePt.ToString("0.##", CultureInfo.InvariantCulture)}pt");
         if (s.Foreground is { } fg) parts.Add($"color:{ColorHex(fg)}");
         if (s.Background is { } bg) parts.Add($"background-color:{ColorHex(bg)}");
+        // Overline 은 semantic HTML 태그 없음 → CSS로만 표현.
+        if (s.Overline) parts.Add("text-decoration:overline");
         return string.Join(';', parts);
     }
 
