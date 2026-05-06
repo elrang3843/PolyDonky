@@ -118,6 +118,11 @@ public sealed class DocxWriter : IDocumentWriter
                 new W.NumberingId { Val = 1 });
         }
 
+        if (p.Style.ForcePageBreakBefore)
+        {
+            pPr.PageBreakBefore = new W.PageBreakBefore();
+        }
+
         if (pPr.HasChildren)
         {
             wpara.AppendChild(pPr);

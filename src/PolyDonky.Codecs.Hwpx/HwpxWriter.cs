@@ -1175,7 +1175,7 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("id",          ctx.NextParaId().ToString()),
             new XAttribute("paraPrIDRef", paraPrID.ToString()),
             new XAttribute("styleIDRef",  styleID.ToString()),
-            new XAttribute("pageBreak",   "0"),
+            new XAttribute("pageBreak",   p.Style.ForcePageBreakBefore ? "1" : "0"),
             new XAttribute("columnBreak", "0"),
             new XAttribute("merged",      "0"));
 

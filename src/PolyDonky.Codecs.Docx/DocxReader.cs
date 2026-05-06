@@ -393,6 +393,12 @@ public sealed class DocxReader : IDocumentReader
         {
             paragraph.Style.ListMarker = new ListMarker { Kind = ListKind.Bullet };
         }
+
+        if (pPr.PageBreakBefore is { } pbBefore
+            && (pbBefore.Val is null || pbBefore.Val.Value))
+        {
+            paragraph.Style.ForcePageBreakBefore = true;
+        }
     }
 
     private static RunStyle ReadRunStyle(W.RunProperties? rPr)

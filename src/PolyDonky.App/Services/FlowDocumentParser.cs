@@ -359,6 +359,8 @@ public static class FlowDocumentParser
             p.Style.Outline = InferHeadingFromFontSize(wpfPara.FontSize);
         }
 
+        p.Style.ForcePageBreakBefore = wpfPara.BreakPageBefore;
+
         // 들여쓰기·간격은 사용자가 직접 변경할 가능성 높지만, 본 사이클에서는 단순 보존만.
         if (wpfPara.Tag is Paragraph baseP)
         {

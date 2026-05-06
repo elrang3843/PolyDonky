@@ -675,6 +675,11 @@ public sealed class HwpxReader : IDocumentReader
             defaultCharPrId = styleDef.CharPrIdRef;
         }
 
+        if (wp.Attribute("pageBreak")?.Value == "1")
+        {
+            paragraph.Style.ForcePageBreakBefore = true;
+        }
+
         // 2) paragraph 자신의 paraPrIDRef 가 있으면 그 위에 override.
         var directParaPrId = TryParseInt(wp.Attribute("paraPrIDRef")?.Value);
         var directParaStyle = header.GetParagraphStyle(directParaPrId);

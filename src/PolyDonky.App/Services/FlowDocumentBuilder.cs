@@ -1385,6 +1385,9 @@ public static class FlowDocumentBuilder
             _ => TextAlignment.Left,
         };
 
+        if (style.ForcePageBreakBefore)
+            wpfPara.BreakPageBefore = true;
+
         // 개요 수준이 있으면 OutlineStyleSet 에서 글자 크기·굵기 읽기 (없으면 내장 기본값).
         if (style.Outline > OutlineLevel.Body)
         {
