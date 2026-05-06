@@ -454,6 +454,14 @@ public sealed class HwpxReader : IDocumentReader
             }
         }
 
+        // hp:tbl borderFillIDRef → header borderFill 정의에서 외곽선 색·두께·배경 회수.
+        // per-side spec 인 경우 top/left 쪽 값 우선 (외곽 셀 외곽쪽 면이 표 외곽선 spec 임).
+        if (TryParseInt(wtbl.Attribute("borderFillIDRef")?.Value) is { } tblBfId
+            && ctx.Header.BorderFills.TryGetValue(tblBfId, out var tblBf))
+        {
+            ApplyTableBorderFromDef(table, tblBf);
+        }
+
         foreach (var row in wtbl.Elements().Where(e => e.Name.LocalName == "tr"))
         {
             var tableRow = new TableRow();
@@ -461,6 +469,13 @@ public sealed class HwpxReader : IDocumentReader
             foreach (var cell in row.Elements().Where(e => e.Name.LocalName == "tc"))
             {
                 var tableCell = new TableCell();
+
+                // hp:tc borderFillIDRef → 셀 외곽선 색·두께·배경 회수.
+                if (TryParseInt(cell.Attribute("borderFillIDRef")?.Value) is { } cellBfId
+                    && ctx.Header.BorderFills.TryGetValue(cellBfId, out var cellBf))
+                {
+                    ApplyCellBorderFromDef(tableCell, cellBf);
+                }
 
                 // cellSpan 의 colSpan/rowSpan
                 var span = cell.Elements().FirstOrDefault(e => e.Name.LocalName == "cellSpan");
@@ -512,6 +527,44 @@ public sealed class HwpxReader : IDocumentReader
             table.Rows.Add(tableRow);
         }
         return table;
+    }
+
+    /// <summary>
+    /// 표 borderFill 정의 → Table.BorderColor/BorderThicknessPt/BackgroundColor 매핑.
+    /// per-side spec 일 수 있어 top 면을 대표로 사용 (writer 가 표 외곽 spec 으로 4면 동일 값).
+    /// </summary>
+    private static void ApplyTableBorderFromDef(Table table, HwpxBorderFillDef bf)
+    {
+        if (!string.IsNullOrEmpty(bf.TopColor))
+            table.BorderColor = bf.TopColor;
+        if (bf.TopWidthPt > 0)
+            table.BorderThicknessPt = bf.TopWidthPt;
+        if (!string.IsNullOrEmpty(bf.FillFaceColor))
+            table.BackgroundColor = bf.FillFaceColor;
+    }
+
+    /// <summary>
+    /// 셀 borderFill 정의 → TableCell.BorderColor/BorderThicknessPt/BackgroundColor 매핑.
+    /// per-side spec 인 경우 안쪽 spec(=cell inner) 가 우선 — bottom/right 가 일반적으로 inner.
+    /// 4면 모두 동일하면 top 사용.
+    /// </summary>
+    private static void ApplyCellBorderFromDef(TableCell cell, HwpxBorderFillDef bf)
+    {
+        // 안쪽 셀 spec 가능성 — bottom/right 가 더 자주 inner 로 사용됨.
+        // 4면 동일이면 top 사용. 다르면 bottom (inner 쪽) 우선.
+        bool sideUniform = bf.TopColor == bf.BottomColor && bf.TopColor == bf.LeftColor && bf.TopColor == bf.RightColor
+                        && Math.Abs(bf.TopWidthPt - bf.BottomWidthPt) < 0.01
+                        && Math.Abs(bf.TopWidthPt - bf.LeftWidthPt)   < 0.01
+                        && Math.Abs(bf.TopWidthPt - bf.RightWidthPt)  < 0.01;
+        var (color, widthPt) = sideUniform
+            ? (bf.TopColor, bf.TopWidthPt)
+            : (bf.BottomColor, bf.BottomWidthPt);
+        if (!string.IsNullOrEmpty(color))
+            cell.BorderColor = color;
+        if (widthPt > 0)
+            cell.BorderThicknessPt = widthPt;
+        if (!string.IsNullOrEmpty(bf.FillFaceColor))
+            cell.BackgroundColor = bf.FillFaceColor;
     }
 
     private static bool TryReadPicture(XElement pic, ReadContext ctx, out ImageBlock image)

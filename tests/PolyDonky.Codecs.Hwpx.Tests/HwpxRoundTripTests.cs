@@ -352,6 +352,79 @@ public class HwpxRoundTripTests
         Assert.NotEmpty(roundTripped.EnumerateParagraphs());
     }
 
+    [Fact]
+    public void RoundTrip_PreservesTableBorderColorAndThickness()
+    {
+        var t = new Table {
+            BorderColor = "#FF0000",
+            BorderThicknessPt = 2.0,
+        };
+        t.Columns.Add(new TableColumn { WidthMm = 30 });
+        t.Rows.Add(new TableRow { Cells = { new TableCell { Blocks = { Paragraph.Of("A") } } } });
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        section.Blocks.Add(t);
+        doc.Sections.Add(section);
+
+        var rt = WriteThenRead(doc);
+        var rtTable = rt.Sections[0].Blocks.OfType<Table>().Single();
+
+        Assert.Equal("#FF0000", rtTable.BorderColor);
+        // 2pt → 표준 0.7mm 로 snap 후 reader 가 mm → pt 환산 — 2pt 근처값.
+        Assert.InRange(rtTable.BorderThicknessPt, 1.9, 2.1);
+    }
+
+    [Fact]
+    public void RoundTrip_PreservesTableBackgroundColor()
+    {
+        var t = new Table {
+            BorderColor = "#000000",
+            BorderThicknessPt = 0.5,
+            BackgroundColor = "#EEEEEE",
+        };
+        t.Columns.Add(new TableColumn { WidthMm = 30 });
+        t.Rows.Add(new TableRow { Cells = { new TableCell { Blocks = { Paragraph.Of("A") } } } });
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        section.Blocks.Add(t);
+        doc.Sections.Add(section);
+
+        var rt = WriteThenRead(doc);
+        var rtTable = rt.Sections[0].Blocks.OfType<Table>().Single();
+
+        Assert.Equal("#EEEEEE", rtTable.BackgroundColor);
+    }
+
+    [Fact]
+    public void RoundTrip_PreservesTableCellBorderColorAndThickness()
+    {
+        // 2x2 표 — 좌상 셀의 inner side(bottom/right) 가 cell BorderColor 를 보존.
+        // 1x1 표는 모든 면이 외곽 = 표 BorderColor 라서 cell 색이 인코딩에 안 들어감.
+        // 2pt → 0.7mm 정확 매핑 → reader 가 다시 ~1.98pt 회수 (snap 오차 < 1%).
+        // 다른 값은 표준 너비에 매핑되며 round-trip 오차가 클 수 있음.
+        TableCell MakeCell(string color) => new()
+        {
+            Blocks = { Paragraph.Of("X") },
+            BorderColor = color,
+            BorderThicknessPt = 2.0,
+        };
+        var t = new Table { BorderColor = "#000000", BorderThicknessPt = 0.5 };
+        t.Columns.Add(new TableColumn { WidthMm = 30 });
+        t.Columns.Add(new TableColumn { WidthMm = 30 });
+        t.Rows.Add(new TableRow { Cells = { MakeCell("#0000FF"), MakeCell("#0000FF") } });
+        t.Rows.Add(new TableRow { Cells = { MakeCell("#0000FF"), MakeCell("#0000FF") } });
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        section.Blocks.Add(t);
+        doc.Sections.Add(section);
+
+        var rt = WriteThenRead(doc);
+        var rtCell = rt.Sections[0].Blocks.OfType<Table>().Single().Rows[0].Cells[0];
+
+        Assert.Equal("#0000FF", rtCell.BorderColor);
+        Assert.InRange(rtCell.BorderThicknessPt, 1.9, 2.1);
+    }
+
     private static byte[] WriteToBytes(PolyDonkyument doc)
     {
         using var ms = new MemoryStream();

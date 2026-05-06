@@ -14,6 +14,8 @@ internal sealed class HwpxHeader
     public Dictionary<int, RunStyle> CharProperties { get; } = new();
     public Dictionary<int, ParagraphStyle> ParaProperties { get; } = new();
     public Dictionary<int, HwpxStyleDef> Styles { get; } = new();
+    /// <summary>borderFillIDRef 가 가리키는 borderFill 정의 — 표/셀 외곽선·배경 회수에 사용.</summary>
+    public Dictionary<int, HwpxBorderFillDef> BorderFills { get; } = new();
 
     public RunStyle GetRunStyle(int? charPrId)
     {
@@ -50,4 +52,22 @@ internal sealed class HwpxStyleDef
     public string? Name { get; init; }
     public string? EngName { get; init; }
     public OutlineLevel Outline { get; init; } = OutlineLevel.Body;
+}
+
+/// <summary>
+/// HWPX borderFill 정의 — 4면(top/bottom/left/right) 색·두께(pt) 와 fill 색.
+/// 표/셀의 borderFillIDRef 가 가리키며, 표 외곽선·배경 회수에 사용.
+/// </summary>
+internal sealed class HwpxBorderFillDef
+{
+    public string? TopColor { get; init; }
+    public double TopWidthPt { get; init; }
+    public string? BottomColor { get; init; }
+    public double BottomWidthPt { get; init; }
+    public string? LeftColor { get; init; }
+    public double LeftWidthPt { get; init; }
+    public string? RightColor { get; init; }
+    public double RightWidthPt { get; init; }
+    /// <summary>winBrush 의 faceColor — 셀 배경. null 이면 채움 없음.</summary>
+    public string? FillFaceColor { get; init; }
 }
