@@ -238,6 +238,92 @@ public class DocxRoundTripTests
         Assert.Contains("opaque payload", preserved.Xml ?? string.Empty);
     }
 
+    // ── 표 테두리·배경색 라운드트립 테스트 ──────────────────────────────────────
+
+    [Fact]
+    public void RoundTrip_PreservesTableBorderThicknessAndColor()
+    {
+        var table = new Table
+        {
+            BorderThicknessPt = 2.0,
+            BorderColor       = "#FF0000",
+        };
+        table.Columns.Add(new TableColumn { WidthMm = 50 });
+        var row = new TableRow();
+        row.Cells.Add(new TableCell { Blocks = { Paragraph.Of("셀") } });
+        table.Rows.Add(row);
+
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        section.Blocks.Add(table);
+        doc.Sections.Add(section);
+
+        var rt = WriteThenRead(doc);
+        var t = rt.Sections[0].Blocks.OfType<Table>().Single();
+
+        Assert.Equal(2.0, t.BorderThicknessPt, precision: 1);
+        Assert.Equal("#FF0000", t.BorderColor, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RoundTrip_PreservesTableBackgroundColor()
+    {
+        var table = new Table
+        {
+            BackgroundColor = "#FFEECC",
+        };
+        table.Columns.Add(new TableColumn { WidthMm = 50 });
+        var row = new TableRow();
+        row.Cells.Add(new TableCell { Blocks = { Paragraph.Of("셀") } });
+        table.Rows.Add(row);
+
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        section.Blocks.Add(table);
+        doc.Sections.Add(section);
+
+        var rt = WriteThenRead(doc);
+        var t = rt.Sections[0].Blocks.OfType<Table>().Single();
+
+        Assert.Equal("#FFEECC", t.BackgroundColor, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RoundTrip_PreservesCellBorderAndBackground()
+    {
+        var table = new Table();
+        table.Columns.Add(new TableColumn { WidthMm = 40 });
+        table.Columns.Add(new TableColumn { WidthMm = 40 });
+
+        var row = new TableRow();
+        row.Cells.Add(new TableCell
+        {
+            Blocks            = { Paragraph.Of("헤더") },
+            BackgroundColor   = "#336699",
+            BorderThicknessPt = 1.5,
+            BorderColor       = "#000080",
+        });
+        row.Cells.Add(new TableCell
+        {
+            Blocks          = { Paragraph.Of("일반") },
+            BackgroundColor = "#FFFFFF",
+        });
+        table.Rows.Add(row);
+
+        var doc = new PolyDonkyument();
+        var section = new Section();
+        section.Blocks.Add(table);
+        doc.Sections.Add(section);
+
+        var rt = WriteThenRead(doc);
+        var cells = rt.Sections[0].Blocks.OfType<Table>().Single().Rows[0].Cells;
+
+        Assert.Equal("#336699", cells[0].BackgroundColor, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(1.5,       cells[0].BorderThicknessPt, precision: 1);
+        Assert.Equal("#000080", cells[0].BorderColor, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("#FFFFFF", cells[1].BackgroundColor, StringComparer.OrdinalIgnoreCase);
+    }
+
     // ── 도형 라운드트립 테스트 ────────────────────────────────────────────────
 
     [Fact]

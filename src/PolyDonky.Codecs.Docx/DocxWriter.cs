@@ -196,15 +196,16 @@ public sealed class DocxWriter : IDocumentWriter
     {
         var wtable = new W.Table();
 
-        // 표 기본 속성 — 테두리 정도. (Word 가 보더 없이 보여주는 일이 있어 기본 single 적용.)
-        var tblPr = new W.TableProperties(
-            new W.TableBorders(
-                new W.TopBorder { Val = W.BorderValues.Single, Size = 4U },
-                new W.LeftBorder { Val = W.BorderValues.Single, Size = 4U },
-                new W.BottomBorder { Val = W.BorderValues.Single, Size = 4U },
-                new W.RightBorder { Val = W.BorderValues.Single, Size = 4U },
-                new W.InsideHorizontalBorder { Val = W.BorderValues.Single, Size = 4U },
-                new W.InsideVerticalBorder { Val = W.BorderValues.Single, Size = 4U }));
+        var tblPr = new W.TableProperties(BuildTableBorders(table));
+        if (!string.IsNullOrEmpty(table.BackgroundColor))
+        {
+            tblPr.AppendChild(new W.Shading
+            {
+                Val   = W.ShadingPatternValues.Clear,
+                Color = "auto",
+                Fill  = table.BackgroundColor!.TrimStart('#').ToUpperInvariant(),
+            });
+        }
         wtable.AppendChild(tblPr);
 
         if (table.Columns.Count > 0)
@@ -246,6 +247,23 @@ public sealed class DocxWriter : IDocumentWriter
                     });
                 }
 
+                // 셀 테두리
+                if (cell.BorderThicknessPt > 0 || !string.IsNullOrEmpty(cell.BorderColor))
+                {
+                    tcPr.AppendChild(BuildCellBorders(cell));
+                }
+
+                // 셀 배경색
+                if (!string.IsNullOrEmpty(cell.BackgroundColor))
+                {
+                    tcPr.AppendChild(new W.Shading
+                    {
+                        Val   = W.ShadingPatternValues.Clear,
+                        Color = "auto",
+                        Fill  = cell.BackgroundColor!.TrimStart('#').ToUpperInvariant(),
+                    });
+                }
+
                 if (tcPr.HasChildren)
                 {
                     wcell.AppendChild(tcPr);
@@ -277,6 +295,37 @@ public sealed class DocxWriter : IDocumentWriter
 
     private static string MmToTwipsString(double mm)
         => ((int)Math.Round(mm * 56.6929)).ToString(CultureInfo.InvariantCulture);
+
+    // ── 표·셀 테두리 빌더 ─────────────────────────────────────────────────────
+
+    private static W.TableBorders BuildTableBorders(Table table)
+    {
+        // Word 가 tblBorders 없으면 테두리를 표시하지 않는 경우가 있어 항상 출력한다.
+        uint sz    = table.BorderThicknessPt > 0 ? (uint)Math.Round(table.BorderThicknessPt * 8) : 4U;
+        string clr = !string.IsNullOrEmpty(table.BorderColor)
+            ? table.BorderColor!.TrimStart('#').ToUpperInvariant() : "auto";
+
+        return new W.TableBorders(
+            new W.TopBorder              { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.LeftBorder             { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.BottomBorder           { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.RightBorder            { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.InsideHorizontalBorder { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.InsideVerticalBorder   { Val = W.BorderValues.Single, Size = sz, Color = clr });
+    }
+
+    private static W.TableCellBorders BuildCellBorders(TableCell cell)
+    {
+        uint sz    = cell.BorderThicknessPt > 0 ? (uint)Math.Round(cell.BorderThicknessPt * 8) : 4U;
+        string clr = !string.IsNullOrEmpty(cell.BorderColor)
+            ? cell.BorderColor!.TrimStart('#').ToUpperInvariant() : "auto";
+
+        return new W.TableCellBorders(
+            new W.TopBorder    { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.LeftBorder   { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.BottomBorder { Val = W.BorderValues.Single, Size = sz, Color = clr },
+            new W.RightBorder  { Val = W.BorderValues.Single, Size = sz, Color = clr });
+    }
 
     private static W.Paragraph BuildImageParagraph(ImageBlock image, WriteContext ctx)
     {

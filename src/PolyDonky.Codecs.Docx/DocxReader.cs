@@ -191,6 +191,10 @@ public sealed class DocxReader : IDocumentReader
     {
         var table = new Table();
 
+        // 표 속성 (테두리·배경)
+        var tblPr = wtable.Elements<W.TableProperties>().FirstOrDefault();
+        ReadTableProperties(table, tblPr);
+
         // 컬럼 너비 (twips → mm). 1 twip = 1/1440 inch.
         var grid = wtable.Elements<W.TableGrid>().FirstOrDefault();
         if (grid is not null)
@@ -243,6 +247,7 @@ public sealed class DocxReader : IDocumentReader
                 {
                     tableCell.WidthMm = twips / 56.6929;
                 }
+                ReadCellProperties(tableCell, tcPr);
 
                 foreach (var inner in cell.ChildElements)
                 {
@@ -269,6 +274,56 @@ public sealed class DocxReader : IDocumentReader
         }
 
         return table;
+    }
+
+    // ── 표·셀 속성 (테두리·배경색) ────────────────────────────────────────────
+
+    private static void ReadTableProperties(Table table, W.TableProperties? tblPr)
+    {
+        if (tblPr is null) return;
+
+        // 표 외곽선: tblBorders > w:top 을 대표값으로 읽는다.
+        var borders = tblPr.TableBorders;
+        if (borders is not null)
+        {
+            var top = borders.TopBorder;
+            if (top?.Val?.Value is { } tv && !tv.Equals(W.BorderValues.None)
+                && top.Size?.Value is { } sz && sz > 0)
+            {
+                table.BorderThicknessPt = sz / 8.0;
+            }
+            if (top?.Color?.Value is { Length: 6 } tc && tc != "auto")
+                table.BorderColor = "#" + tc.ToUpperInvariant();
+        }
+
+        // 표 배경색: tblPr > w:shd/@fill
+        var shd = tblPr.Shading;
+        if (shd?.Fill?.Value is { Length: 6 } fill && fill != "auto")
+            table.BackgroundColor = "#" + fill.ToUpperInvariant();
+    }
+
+    private static void ReadCellProperties(TableCell cell, W.TableCellProperties? tcPr)
+    {
+        if (tcPr is null) return;
+
+        // 셀 테두리: tcBorders > w:top 을 대표값으로 읽는다.
+        var borders = tcPr.TableCellBorders;
+        if (borders is not null)
+        {
+            var top = borders.TopBorder;
+            if (top?.Val?.Value is { } tv && !tv.Equals(W.BorderValues.None)
+                && top.Size?.Value is { } sz && sz > 0)
+            {
+                cell.BorderThicknessPt = sz / 8.0;
+            }
+            if (top?.Color?.Value is { Length: 6 } tc && tc != "auto")
+                cell.BorderColor = "#" + tc.ToUpperInvariant();
+        }
+
+        // 셀 배경색: tcPr > w:shd/@fill
+        var shd = tcPr.Shading;
+        if (shd?.Fill?.Value is { Length: 6 } fill && fill != "auto")
+            cell.BackgroundColor = "#" + fill.ToUpperInvariant();
     }
 
     private static double ParseTwipsToMm(string? twipsRaw)
