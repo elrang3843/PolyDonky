@@ -1456,6 +1456,15 @@ public sealed class HwpxWriter : IDocumentWriter
             elem.Add(new XElement(Hc + "endPt",
                 new XAttribute("x", exU.ToString()), new XAttribute("y", eyU.ToString())));
         }
+        else
+        {
+            // Rectangle / RoundedRect / Ellipse 등: 4 코너 좌표 (HWPUNIT, 좌상단 기준).
+            // 한컴은 hp:rect/ellipse 등 닫힌 도형에 hc:pt0~pt3 를 요구 — 누락 시 거부.
+            elem.Add(new XElement(Hc + "pt0", new XAttribute("x", "0"),         new XAttribute("y", "0")));
+            elem.Add(new XElement(Hc + "pt1", new XAttribute("x", w.ToString()), new XAttribute("y", "0")));
+            elem.Add(new XElement(Hc + "pt2", new XAttribute("x", w.ToString()), new XAttribute("y", h.ToString())));
+            elem.Add(new XElement(Hc + "pt3", new XAttribute("x", "0"),         new XAttribute("y", h.ToString())));
+        }
 
         elem.Add(new XElement(Hp + "sz",
             new XAttribute("width",       w.ToString()),
@@ -1463,18 +1472,43 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("height",      h.ToString()),
             new XAttribute("heightRelTo", "ABSOLUTE"),
             new XAttribute("protect",     "0")));
-        elem.Add(new XElement(Hp + "pos",
-            new XAttribute("treatAsChar",     "1"),
-            new XAttribute("affectLSpacing",  "0"),
-            new XAttribute("flowWithText",    "1"),
-            new XAttribute("allowOverlap",    "0"),
-            new XAttribute("holdAnchorAndSO", "0"),
-            new XAttribute("vertRelTo",       "PARA"),
-            new XAttribute("horzRelTo",       "PARA"),
-            new XAttribute("vertAlign",       "TOP"),
-            new XAttribute("horzAlign",       "LEFT"),
-            new XAttribute("vertOffset",      "0"),
-            new XAttribute("horzOffset",      "0")));
+
+        // Wrap 모드별 위치: InFrontOfText/BehindText = 오버레이 (절대 위치),
+        // 그 외 (Inline/WrapLeft/WrapRight) = 글자처럼 인라인 배치.
+        bool isOverlay = shape.WrapMode == ImageWrapMode.InFrontOfText
+                      || shape.WrapMode == ImageWrapMode.BehindText;
+        if (isOverlay)
+        {
+            long xOff = (long)Math.Round(shape.OverlayXMm / HwpUnitToMm);
+            long yOff = (long)Math.Round(shape.OverlayYMm / HwpUnitToMm);
+            elem.Add(new XElement(Hp + "pos",
+                new XAttribute("treatAsChar",     "0"),
+                new XAttribute("affectLSpacing",  "0"),
+                new XAttribute("flowWithText",    "0"),
+                new XAttribute("allowOverlap",    "1"),
+                new XAttribute("holdAnchorAndSO", "0"),
+                new XAttribute("vertRelTo",       "PAPER"),
+                new XAttribute("horzRelTo",       "PAPER"),
+                new XAttribute("vertAlign",       "TOP"),
+                new XAttribute("horzAlign",       "LEFT"),
+                new XAttribute("vertOffset",      yOff.ToString()),
+                new XAttribute("horzOffset",      xOff.ToString())));
+        }
+        else
+        {
+            elem.Add(new XElement(Hp + "pos",
+                new XAttribute("treatAsChar",     "1"),
+                new XAttribute("affectLSpacing",  "0"),
+                new XAttribute("flowWithText",    "1"),
+                new XAttribute("allowOverlap",    "0"),
+                new XAttribute("holdAnchorAndSO", "0"),
+                new XAttribute("vertRelTo",       "PARA"),
+                new XAttribute("horzRelTo",       "PARA"),
+                new XAttribute("vertAlign",       "TOP"),
+                new XAttribute("horzAlign",       "LEFT"),
+                new XAttribute("vertOffset",      "0"),
+                new XAttribute("horzOffset",      "0")));
+        }
         elem.Add(new XElement(Hp + "outMargin",
             new XAttribute("left", "0"), new XAttribute("right",  "0"),
             new XAttribute("top",  "0"), new XAttribute("bottom", "0")));
