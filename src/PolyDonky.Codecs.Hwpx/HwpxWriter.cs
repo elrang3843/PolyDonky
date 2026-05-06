@@ -1626,42 +1626,26 @@ public sealed class HwpxWriter : IDocumentWriter
             new XAttribute("heightRelTo", "ABSOLUTE"),
             new XAttribute("protect",     "0")));
 
-        // Wrap 모드별 위치: InFrontOfText/BehindText = 오버레이 (절대 위치),
-        // 그 외 (Inline/WrapLeft/WrapRight) = 글자처럼 인라인 배치.
-        bool isOverlay = shape.WrapMode == ImageWrapMode.InFrontOfText
-                      || shape.WrapMode == ImageWrapMode.BehindText;
-        if (isOverlay)
-        {
-            long xOff = (long)Math.Round(shape.OverlayXMm / HwpUnitToMm);
-            long yOff = (long)Math.Round(shape.OverlayYMm / HwpUnitToMm);
-            elem.Add(new XElement(Hp + "pos",
-                new XAttribute("treatAsChar",     "0"),
-                new XAttribute("affectLSpacing",  "0"),
-                new XAttribute("flowWithText",    "0"),
-                new XAttribute("allowOverlap",    "1"),
-                new XAttribute("holdAnchorAndSO", "0"),
-                new XAttribute("vertRelTo",       "PAPER"),
-                new XAttribute("horzRelTo",       "PAPER"),
-                new XAttribute("vertAlign",       "TOP"),
-                new XAttribute("horzAlign",       "LEFT"),
-                new XAttribute("vertOffset",      yOff.ToString()),
-                new XAttribute("horzOffset",      xOff.ToString())));
-        }
-        else
-        {
-            elem.Add(new XElement(Hp + "pos",
-                new XAttribute("treatAsChar",     "1"),
-                new XAttribute("affectLSpacing",  "0"),
-                new XAttribute("flowWithText",    "1"),
-                new XAttribute("allowOverlap",    "0"),
-                new XAttribute("holdAnchorAndSO", "0"),
-                new XAttribute("vertRelTo",       "PARA"),
-                new XAttribute("horzRelTo",       "PARA"),
-                new XAttribute("vertAlign",       "TOP"),
-                new XAttribute("horzAlign",       "LEFT"),
-                new XAttribute("vertOffset",      "0"),
-                new XAttribute("horzOffset",      "0")));
-        }
+        // 도형 위치 — 모든 도형을 anchored overlay 로 출력.
+        // 이유: WrapMode=Inline 기본값으로 만들면 treatAsChar=1 → 도형 높이가
+        // 단락 라인 높이가 되어 큰 도형은 다음 페이지로 밀림. 사용자 보고:
+        // 직선만 InFrontOfText 라서 정상이고, 사각형/타원/폴리곤 등 Inline 기본값
+        // 도형은 모두 다음 페이지로 넘어감. 한컴 ground truth 도 도형은 anchored.
+        // OverlayXMm/Y 가 설정되어 있으면 그 값, 아니면 (0,0) 기본 위치.
+        long xOff = (long)Math.Round(shape.OverlayXMm / HwpUnitToMm);
+        long yOff = (long)Math.Round(shape.OverlayYMm / HwpUnitToMm);
+        elem.Add(new XElement(Hp + "pos",
+            new XAttribute("treatAsChar",     "0"),
+            new XAttribute("affectLSpacing",  "0"),
+            new XAttribute("flowWithText",    "0"),
+            new XAttribute("allowOverlap",    "1"),
+            new XAttribute("holdAnchorAndSO", "0"),
+            new XAttribute("vertRelTo",       "PAPER"),
+            new XAttribute("horzRelTo",       "PAPER"),
+            new XAttribute("vertAlign",       "TOP"),
+            new XAttribute("horzAlign",       "LEFT"),
+            new XAttribute("vertOffset",      yOff.ToString()),
+            new XAttribute("horzOffset",      xOff.ToString())));
         elem.Add(new XElement(Hp + "outMargin",
             new XAttribute("left", "0"), new XAttribute("right",  "0"),
             new XAttribute("top",  "0"), new XAttribute("bottom", "0")));
