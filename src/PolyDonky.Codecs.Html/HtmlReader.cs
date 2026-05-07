@@ -257,9 +257,10 @@ public sealed class HtmlReader : IDocumentReader
             {
                 // 단독 <code>(블록) — 모노스페이스 단락. <pre> 안의 <code> 는 위에서 처리됨.
                 var p = new Paragraph();
-                p.Style.QuoteLevel = ctx.QuoteLevel;
-                p.Style.ListMarker = CloneMarker(ctx.Marker);
-                p.Style.CodeLanguage = ExtractCodeLanguage(el);
+                p.Style.QuoteLevel   = ctx.QuoteLevel;
+                p.Style.ListMarker   = CloneMarker(ctx.Marker);
+                // null 이면 일반 단락과 구별 불가 → 언어 없는 코드 블록은 "" 로 통일.
+                p.Style.CodeLanguage = ExtractCodeLanguage(el) ?? "";
                 p.AddText(el.TextContent, MonoStyle());
                 target.Add(p);
                 break;

@@ -222,6 +222,11 @@ try
         var text = htmlEnc.GetString(htmlBytes!);
         var doc = HtmlReader.FromHtml(text, maxBlocks: 0);
 
+        // HTML 파일 기준 상대 경로 이미지를 디스크에서 읽어 data 로 내장.
+        WriteProgress(30, "이미지 내장 중");
+        var htmlBaseDir = Path.GetDirectoryName(inPath) ?? ".";
+        EmbedLocalImages(doc, htmlBaseDir);
+
         WriteProgress(60, "IWPF 로 변환 중");
         using (var ofs = File.Create(tempOut))
             new IwpfWriter().Write(doc, ofs);
@@ -356,6 +361,83 @@ static (Encoding enc, string label) DetectEncoding(byte[] bytes)
 
     return (new UTF8Encoding(false), "UTF-8 (기본값)");
 }
+
+/// <summary>
+/// 문서 전체를 순회하며 ResourcePath 만 있고 Data 가 없는 ImageBlock 을
+/// 디스크에서 읽어 Data 에 내장한다.
+/// http(s):// · data: · // 등 외부 URL 은 건너뛴다.
+/// </summary>
+static void EmbedLocalImages(PolyDonkyument doc, string baseDir)
+{
+    foreach (var section in doc.Sections)
+        EmbedImagesInBlocks(section.Blocks, baseDir);
+}
+
+static void EmbedImagesInBlocks(IList<Block> blocks, string baseDir)
+{
+    foreach (var block in blocks)
+    {
+        switch (block)
+        {
+            case ImageBlock img when img.Data.Length == 0
+                                  && !string.IsNullOrEmpty(img.ResourcePath)
+                                  && !IsExternalUrl(img.ResourcePath):
+                TryEmbedImageFromDisk(img, baseDir);
+                break;
+
+            case Table t:
+                foreach (var row in t.Rows)
+                    foreach (var cell in row.Cells)
+                        EmbedImagesInBlocks(cell.Blocks, baseDir);
+                break;
+        }
+    }
+}
+
+static bool IsExternalUrl(string path) =>
+    path.StartsWith("//",       StringComparison.Ordinal) ||
+    path.StartsWith("http://",  StringComparison.OrdinalIgnoreCase) ||
+    path.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+    path.StartsWith("ftp://",   StringComparison.OrdinalIgnoreCase) ||
+    path.StartsWith("data:",    StringComparison.OrdinalIgnoreCase) ||
+    path.StartsWith("mailto:",  StringComparison.OrdinalIgnoreCase);
+
+static void TryEmbedImageFromDisk(ImageBlock img, string baseDir)
+{
+    try
+    {
+        // 쿼리스트링/프래그먼트 제거 후 경로 정규화.
+        var resourcePath = img.ResourcePath!;
+        var sep = resourcePath.IndexOfAny(['?', '#']);
+        if (sep >= 0) resourcePath = resourcePath[..sep];
+
+        // URL 인코딩 디코드 (%20 → 공백 등).
+        resourcePath = Uri.UnescapeDataString(resourcePath);
+
+        var fullPath = Path.GetFullPath(Path.Combine(baseDir, resourcePath));
+        if (!File.Exists(fullPath)) return;
+
+        img.Data         = File.ReadAllBytes(fullPath);
+        img.ResourcePath = null;
+
+        // MediaType 이 모호(application/octet-stream)거나 비어 있으면 확장자로 재추정.
+        if (string.IsNullOrEmpty(img.MediaType) || img.MediaType == "application/octet-stream")
+            img.MediaType = GuessMediaTypeByExt(Path.GetExtension(fullPath));
+    }
+    catch { /* 로드 실패 시 ResourcePath 유지 — 메인 앱이 placeholder 를 표시 */ }
+}
+
+static string GuessMediaTypeByExt(string ext) => ext.ToLowerInvariant() switch
+{
+    ".png"              => "image/png",
+    ".jpg" or ".jpeg"   => "image/jpeg",
+    ".gif"              => "image/gif",
+    ".bmp"              => "image/bmp",
+    ".tif" or ".tiff"   => "image/tiff",
+    ".webp"             => "image/webp",
+    ".svg"              => "image/svg+xml",
+    _                   => "application/octet-stream",
+};
 
 static void PrintHelp()
 {
