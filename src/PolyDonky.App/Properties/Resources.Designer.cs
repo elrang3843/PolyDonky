@@ -38,6 +38,8 @@ namespace PolyDonky.App.Properties
 
         // ── 메뉴: 편집 ─────────────────────────────────────────────
         internal static string MenuEdit              => Get(nameof(MenuEdit));
+        internal static string MenuEditUndo          => Get(nameof(MenuEditUndo));
+        internal static string MenuEditRedo          => Get(nameof(MenuEditRedo));
         internal static string MenuEditCopy          => Get(nameof(MenuEditCopy));
         internal static string MenuEditCut           => Get(nameof(MenuEditCut));
         internal static string MenuEditPaste         => Get(nameof(MenuEditPaste));
@@ -54,6 +56,8 @@ namespace PolyDonky.App.Properties
         internal static string MenuInsertEmoji         => Get(nameof(MenuInsertEmoji));
         internal static string MenuInsertShape         => Get(nameof(MenuInsertShape));
         internal static string MenuInsertImage         => Get(nameof(MenuInsertImage));
+        internal static string MenuInsertPageBreak      => Get(nameof(MenuInsertPageBreak));
+        internal static string MsgPageBreakInTableCell  => Get(nameof(MsgPageBreakInTableCell));
         internal static string MenuInsertToc           => Get(nameof(MenuInsertToc));
         internal static string MenuInsertTocRefresh    => Get(nameof(MenuInsertTocRefresh));
         internal static string MenuInsertField         => Get(nameof(MenuInsertField));

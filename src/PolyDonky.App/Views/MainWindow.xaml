@@ -53,6 +53,15 @@
             </MenuItem>
 
             <MenuItem Header="{Binding MenuEdit, Source={x:Static svc:LocalizedStrings.Instance}}">
+                <MenuItem Header="{Binding MenuEditUndo, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnEditUndo"
+                          IsEnabled="{Binding CanUndo}"
+                          InputGestureText="Ctrl+Z" />
+                <MenuItem Header="{Binding MenuEditRedo, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnEditRedo"
+                          IsEnabled="{Binding CanRedo}"
+                          InputGestureText="Ctrl+Y" />
+                <Separator />
                 <MenuItem Header="{Binding MenuEditDelete, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnEditDelete"
                           InputGestureText="Del" />
@@ -117,6 +126,8 @@
                           Click="OnInsertFootnote" />
                 <MenuItem Header="{Binding MenuInsertEndnote, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertEndnote" />
+                <MenuItem Header="{Binding MenuInsertPageBreak, Source={x:Static svc:LocalizedStrings.Instance}}"
+                          Click="OnInsertPageBreak" InputGestureText="Ctrl+Enter" />
                 <Separator />
                 <MenuItem Header="{Binding MenuInsertToc, Source={x:Static svc:LocalizedStrings.Instance}}"
                           Click="OnInsertToc" />
