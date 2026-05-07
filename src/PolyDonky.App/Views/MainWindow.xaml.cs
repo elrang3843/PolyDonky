@@ -5116,6 +5116,16 @@ public partial class MainWindow : Window
 
         var pt = e.GetPosition(PageEditorHost); // 오버레이 Canvas 와 동일 좌표계
 
+        // ①-b 도형 편집 핸들 (정점 핸들 / 세그먼트 핸들)
+        //      도형 히트 테스트보다 먼저 실행해야 핸들이 도형 메뉴에 가려지지 않는다.
+        if (e.OriginalSource is System.Windows.Shapes.Rectangle hitHandle
+            && _shapeEditHandles.Contains(hitHandle))
+        {
+            OnShapeEditHandleRightClicked(hitHandle);
+            e.Handled = true;
+            return;
+        }
+
         // ② 오버레이 도형 (InFrontOfText 우선, BehindText 차선)
         var hitShape = (FindCanvasChildAt(OverlayShapeCanvas, pt)
                      ?? FindCanvasChildAt(UnderlayShapeCanvas, pt))?.Tag as PolyDonky.Core.ShapeObject;
