@@ -46,6 +46,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Added
 
+- **Added** — **HTML import CSS 클래스 기반 스타일링 (`AngleSharp.Css` 연동)**: `PolyDonky.Convert.Html` CLI 변환기가 HTML import 시 (1) `<link rel="stylesheet" href="local.css">` 외부 파일을 `<style>` 블록으로 인라인화, (2) `AngleSharp.Css`로 CSS 캐스케이드를 계산한 뒤 문서 CSS 규칙에 등장하는 속성만 각 요소의 `style=""` 속성으로 인라이닝 — UA 기본값 오염 없이 클래스·ID·요소 선택자 스타일을 `HtmlReader` 가 읽을 수 있는 인라인 스타일로 변환. 기존 인라인 `style=""` 은 캐스케이드 규칙대로 CSS 규칙보다 우선 보존. `AngleSharp.Css 1.0.0-beta.213` / `AngleSharp 1.4.0` 의존성 추가(`Directory.Packages.props` 갱신, `Convert.Html.csproj` 에만 `AngleSharp.Css` 참조 추가).
+
+- **Fixed** — **HTML import 렌더링 5종 버그 수정**: WPF `FlowDocumentBuilder` 와 `Convert.Html` CLI 에서 HTML 원본과 크게 달랐던 시각 요소들을 수정. (1) **`<blockquote>` 시각화** — `QuoteLevel` 값에 따라 레벨당 5 mm 들여쓰기 + 3 px 회색 좌측 테두리 렌더링(`ApplyQuoteLevelStyle`). (2) **`<hr>` 시각화** — `IsThematicBreak` 단락을 `BlockUIContainer` + 1 px 회색 가로선으로 렌더링(`BuildThematicBreak`). (3) **상대 경로 이미지 내장** — `Convert.Html` import 시 `<img src="./images/photo.jpg">` 같은 로컬 이미지를 디스크에서 읽어 `ImageBlock.Data` 로 Base64 내장(`EmbedLocalImages`); 외부 URL/data: URI 는 건너뜀. (4) **중첩 리스트** — `AppendBlocks` 의 `currentList` 단일 변수를 `Stack<(List, ListKind)>` 로 교체해 `ListMarker.Level` 기반 중첩·해제를 정확히 처리. (5) **코드 블록 스타일** — `CodeLanguage != null` 인 단락에 회색 배경·테두리·모노스페이스 폰트(`ApplyCodeBlockStyle`) 적용; `HtmlReader` 가 `<code>` 블록의 `CodeLanguage` 를 `null` 대신 `""` 로 통일.
+
 - **Added** — **실행 취소 / 다시 실행 (Undo/Redo)**: 편집 메뉴에 `실행 취소(Ctrl+Z)` · `다시 실행(Ctrl+Y / Ctrl+Shift+Z)` 항목 추가. 모델 스냅샷 기반(JSON 직렬화) — 텍스트·오버레이·페이지 나누기·블록 삽입·Z-순서·서식 변경 등 거의 모든 편집을 되돌린다. 텍스트 입력은 1.5초 idle "burst" 단위로 묶어 한 글자마다 스냅샷이 쌓이지 않게 합치며, 비-텍스트 액션은 액션 단위로 한 번씩 스냅샷을 등록. 스택 깊이는 최대 100 (초과 시 가장 오래된 항목부터 폐기) — 메모리 안전. 새 문서·파일 로드 시 스택 자동 비움. 단위 테스트 12종 추가(`UndoRedoManagerTests`).
 
 - **Added** — **스플라인 제어점 삽입·삭제 UI**: 점-기반 도형(Spline/ClosedSpline/Polyline/Polygon) 선택 시 세그먼트 중간에 다이아몬드 모양 핸들 표시 — 클릭하면 곡선 위(스플라인은 t=0.5 De Casteljau 지점) 에 새 앵커 포인트 삽입. 기존 정점 핸들 우클릭으로 포인트 삭제 (최소 2개/3개 유지). `ShapePoint` 에 `OutCtrlX/Y`·`InCtrlX/Y` (nullable) 베지어 제어점 속성 추가. `NormalizeShapeBoundingBox` 가 이동 시 제어점 좌표도 함께 보정.
