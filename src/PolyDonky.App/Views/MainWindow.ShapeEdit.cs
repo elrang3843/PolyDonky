@@ -151,6 +151,28 @@ public partial class MainWindow
         return h;
     }
 
+    // ── 통합 우클릭 위탁 처리 (MainWindow.xaml.cs 의 OnPaperPreviewMouseRightButtonDown 에서 호출) ──
+
+    /// <summary>
+    /// 도형 편집 핸들이 우클릭됐을 때 호출된다.
+    /// 핸들 종류에 따라 적절한 동작을 수행한다.
+    /// </summary>
+    internal void OnShapeEditHandleRightClicked(Rectangle handle)
+    {
+        if (handle.Tag is not string tag) return;
+
+        if (tag.StartsWith(VertexHandleTagPrefix, StringComparison.Ordinal))
+        {
+            // 정점 핸들: 이미 ContextMenu 가 연결되어 있으므로 직접 연다.
+            if (handle.ContextMenu is { } cm)
+            {
+                cm.PlacementTarget = handle;
+                cm.IsOpen = true;
+            }
+        }
+        // 세그먼트 핸들: 우클릭 무시 (좌클릭만 사용)
+    }
+
     /// <summary>정점 핸들에 우클릭 컨텍스트 메뉴("이 점 삭제")를 연결한다.</summary>
     private void AttachVertexContextMenu(Rectangle h, ShapeObject shape)
     {
