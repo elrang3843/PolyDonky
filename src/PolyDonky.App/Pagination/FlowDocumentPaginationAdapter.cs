@@ -204,6 +204,12 @@ public static class FlowDocumentPaginationAdapter
         // 강제 이동시킬 때 기준 페이지를 결정하는 데 사용. -1 = 첫 블록.
         int prevSlot = -1;
 
+        // 강제 페이지 나누기 이후 이어지는 모든 블록의 최소 슬롯 인덱스.
+        // ForcePageBreakBefore 블록이 slot N 에 배정되면 minSlot=N 으로 올라가
+        // 그 뒤 블록들이 자연 Y 가 slot N 이전이어도 slot N 이상으로 배정되도록 보장한다.
+        // (모든 콘텐츠가 한 페이지에 들어갈 만큼 짧아도 페이지 나누기가 정확히 작동하게 함.)
+        int minSlot = 0;
+
         foreach (var wpfBlock in FlattenBlocks(fd.Blocks))
         {
             if (wpfBlock.Tag is not Block coreBlock) continue;
@@ -212,30 +218,33 @@ public static class FlowDocumentPaginationAdapter
             double topY    = TryGetTopY(wpfBlock);
             double bottomY = TryGetBottomY(wpfBlock);
 
-            // Y 를 측정할 수 없으면 첫 슬롯에 배정하고 다음 블록으로.
+            // Y 를 측정할 수 없으면 minSlot 슬롯에 배정하고 다음 블록으로.
             if (double.IsNaN(topY))
             {
-                result.Add((0, 0, coreBlock, Rect.Empty));
-                prevSlot = 0;
+                result.Add((minSlot / colCount, minSlot % colCount, coreBlock, Rect.Empty));
+                prevSlot = minSlot;
                 continue;
             }
 
             double blockH  = (!double.IsNaN(bottomY) && bottomY > topY) ? (bottomY - topY) : 0.0;
             // 연속 스크롤 공간에서 "단 슬롯" 인덱스 (단 슬롯 = 단 × 페이지).
-            // 상한 클램프 없음 — 호출자(Paginate) 가 max pageIdx 로 pageCount 를 보정한다.
-            int slotTop = Math.Max(0, (int)(topY / bodyH));
+            // minSlot 을 하한으로 적용해 강제 페이지 나누기 이후 블록이 이전 페이지로
+            // 돌아가지 않도록 한다. 상한 클램프 없음 — 호출자(Paginate) 가 보정.
+            int slotTop = Math.Max(minSlot, (int)(topY / bodyH));
 
             // ── 강제 페이지 나누기 처리 ─────────────────────────────────────────────
             // FlowDocumentBuilder 가 ForcePageBreakBefore=true 를 WPF 의 BreakPageBefore 로
             // 변환하지만, 본문 블록 Y 측정은 무한 높이(rtb.Measure(Size(_, +∞))) 에서 이루어져
             // paginator 의 페이지 나눔이 Y 좌표에 반영되지 않는다. 따라서 Y 기반 슬롯 매핑만으로는
             // 같은 슬롯(=같은 페이지) 에 묶일 수 있다 — 이를 직전 블록 페이지의 다음 페이지 첫 단으로
-            // 끌어올려 보정한다. 첫 블록(prevSlot=-1) 에서는 적용하지 않는다(0 페이지 유지).
+            // 끌어올려 보정하고, minSlot 을 갱신해 후속 블록도 같은 페이지 이상에 배정한다.
+            // 첫 블록(prevSlot=-1) 에서는 적용하지 않는다(0 페이지 유지).
             bool isPageBreak = coreBlock is Paragraph fpara && fpara.Style.ForcePageBreakBefore;
             if (isPageBreak && prevSlot >= 0)
             {
                 int forcedSlot = ((prevSlot / colCount) + 1) * colCount;
                 if (slotTop < forcedSlot) slotTop = forcedSlot;
+                minSlot = slotTop;
             }
 
             // ── 줄 단위 분할 ──────────────────────────────────────────────────────────
