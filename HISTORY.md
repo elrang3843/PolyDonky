@@ -46,6 +46,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Added
 
+- **Fixed** — **HTML/XML → IWPF 변환 후 앱에서 1페이지만 표시되던 버그**: `HtmlReader`가 WPF 렌더링 힌트용 `pagination.degraded` 마커를 문서 메타데이터에 설정하던 코드 제거. 앱이 HTML을 직접 읽던 시절의 잔재로, CLI 분리 이후에는 앱이 `HtmlReader`를 직접 호출하지 않으므로 이 마커가 존재할 이유가 없었음. 마커가 IWPF로 직렬화되어 앱이 열 때 1-페이지 fast-path를 타던 문제 근본 해결. `FlowDocumentPaginationAdapter`의 `BuildDegradedPaginatedDocument` 메서드 및 호출부 함께 제거.
+
 - **Added** — **HTML import CSS 클래스 기반 스타일링 (`AngleSharp.Css` 연동)**: `PolyDonky.Convert.Html` CLI 변환기가 HTML import 시 (1) `<link rel="stylesheet" href="local.css">` 외부 파일을 `<style>` 블록으로 인라인화, (2) `AngleSharp.Css`로 CSS 캐스케이드를 계산한 뒤 문서 CSS 규칙에 등장하는 속성만 각 요소의 `style=""` 속성으로 인라이닝 — UA 기본값 오염 없이 클래스·ID·요소 선택자 스타일을 `HtmlReader` 가 읽을 수 있는 인라인 스타일로 변환. 기존 인라인 `style=""` 은 캐스케이드 규칙대로 CSS 규칙보다 우선 보존. `AngleSharp.Css 1.0.0-beta.213` / `AngleSharp 1.4.0` 의존성 추가(`Directory.Packages.props` 갱신, `Convert.Html.csproj` 에만 `AngleSharp.Css` 참조 추가).
 
 - **Fixed** — **HTML import 렌더링 5종 버그 수정**: WPF `FlowDocumentBuilder` 와 `Convert.Html` CLI 에서 HTML 원본과 크게 달랐던 시각 요소들을 수정. (1) **`<blockquote>` 시각화** — `QuoteLevel` 값에 따라 레벨당 5 mm 들여쓰기 + 3 px 회색 좌측 테두리 렌더링(`ApplyQuoteLevelStyle`). (2) **`<hr>` 시각화** — `IsThematicBreak` 단락을 `BlockUIContainer` + 1 px 회색 가로선으로 렌더링(`BuildThematicBreak`). (3) **상대 경로 이미지 내장** — `Convert.Html` import 시 `<img src="./images/photo.jpg">` 같은 로컬 이미지를 디스크에서 읽어 `ImageBlock.Data` 로 Base64 내장(`EmbedLocalImages`); 외부 URL/data: URI 는 건너뜀. (4) **중첩 리스트** — `AppendBlocks` 의 `currentList` 단일 변수를 `Stack<(List, ListKind)>` 로 교체해 `ListMarker.Level` 기반 중첩·해제를 정확히 처리. (5) **코드 블록 스타일** — `CodeLanguage != null` 인 단락에 회색 배경·테두리·모노스페이스 폰트(`ApplyCodeBlockStyle`) 적용; `HtmlReader` 가 `<code>` 블록의 `CodeLanguage` 를 `null` 대신 `""` 로 통일.

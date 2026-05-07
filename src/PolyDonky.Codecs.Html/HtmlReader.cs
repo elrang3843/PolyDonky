@@ -82,11 +82,6 @@ public sealed class HtmlReader : IDocumentReader
             pd.Metadata.Custom["html.maxBlocks"]    = maxBlocks.ToString();
         }
 
-        // HTML 문서는 일반적으로 본문 블록이 매우 많아 WPF FlowDocument 의 정밀
-        // 페이지네이션(블록별 GetCharacterRect)이 브라우저와 다르게 매우 느리다.
-        // 메인 앱의 Paginate 가 이 플래그를 보고 fast-path(전체 page 0 배정) 를 쓰게 한다.
-        pd.Metadata.Custom["pagination.degraded"] = "true";
-
         return pd;
     }
 
