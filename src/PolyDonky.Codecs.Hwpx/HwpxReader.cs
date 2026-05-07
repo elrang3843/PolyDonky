@@ -127,52 +127,6 @@ public sealed class HwpxReader : IDocumentReader
                 document.Sections.Add(new Section());
             }
 
-            // 진단 정보 — MainViewModel 이 "본문 0건" 같은 경고 메시지를 띄울 수 있게 metadata 에 박는다.
-            document.Metadata.Custom["hwpx.sectionFilesFound"] = sectionPaths.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            document.Metadata.Custom["hwpx.paragraphCount"] = totalParagraphs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            document.Metadata.Custom["hwpx.nonEmptyRunCount"] = totalTextRuns.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (sectionPaths.Count > 0)
-            {
-                document.Metadata.Custom["hwpx.firstSectionPath"] = sectionPaths[0];
-                // section 파일이 실제로 archive 에서 매치되는지 (LoadXml 성공 여부의 선결 조건).
-                var firstHit = archive.GetEntry(sectionPaths[0]) is not null;
-                document.Metadata.Custom["hwpx.firstSectionEntryHit"] = firstHit ? "yes" : "no";
-            }
-            if (firstSectionRoot is not null)
-            {
-                document.Metadata.Custom["hwpx.firstSectionRoot"] = firstSectionRoot;
-            }
-            if (firstSectionTagCounts.Count > 0)
-            {
-                // 가장 많이 등장한 element 이름 top 8 — paragraph 후보를 사용자/메인테이너가 즉시 식별.
-                var top = firstSectionTagCounts
-                    .OrderByDescending(kv => kv.Value)
-                    .ThenBy(kv => kv.Key, StringComparer.Ordinal)
-                    .Take(8)
-                    .Select(kv => $"{kv.Key}={kv.Value}")
-                    .ToList();
-                document.Metadata.Custom["hwpx.firstSectionTags"] = string.Join(", ", top);
-            }
-
-            // 본문 못 찾은 케이스의 마지막 단서: ZIP 내부의 모든 .xml entry 목록 (top 10).
-            if (totalParagraphs == 0)
-            {
-                var xmlEntries = archive.Entries
-                    .Where(e => e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
-                    .Select(e => e.FullName)
-                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                    .Take(10)
-                    .ToList();
-                document.Metadata.Custom["hwpx.xmlEntries"] = string.Join("; ", xmlEntries);
-            }
-
-            // 누적된 XML 파싱 오류는 진단에 박는다. throw 대신 graceful degradation 으로,
-            // 사용자 문서 일부라도 보이게 한다.
-            if (parseErrors.Count > 0)
-            {
-                document.Metadata.Custom["hwpx.parseErrors"] = string.Join(" | ", parseErrors.Take(3));
-            }
-
             return document;
         }
         finally
