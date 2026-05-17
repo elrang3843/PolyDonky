@@ -445,13 +445,21 @@ public sealed class HwpReader : IDocumentReader
 
                         if (ctrlId == CTRL_ID_GSO)
                         {
-                            // GSO CTRL_HEADER 페이로드에 실제 위치/크기 정보가 있음 (SHAPE_COMPONENT 가 아님).
-                            // 레이아웃:  0-3 ctrlId, 4-7 flags, 8-11 xOffset, 12-15 yOffset,
-                            //           16-19 width, 20-23 height (HWPUNIT)
-                            // (이전 코드는 W/H 를 바꿔 읽어 가로/세로가 반대로 나왔음 — 표지 배경 사각형이
-                            //  297×210mm(landscape) 로 잘못 인식되어 portrait A4 와 안 맞았던 문제 수정.)
+                            // GSO CTRL_HEADER 페이로드 레이아웃:
+                            //   0-3: ctrlId
+                            //   4-7: flags (비트 필드):
+                            //        bits 0-1: wrapType (0=square, 1=tight, 2=through, 3=none)
+                            //        bits 2-3: wrapSide (0=both, 1=left, 2=right, 3=bigger)
+                            //        bits 4-5: anchorType (0=page, 1=paragraph, 2=character/inline)
+                            //        ... (그 외 수직/수평 기준 등)
+                            //   8-11: xOffset (int32, HWPUNIT) — anchor 기준 X
+                            //  12-15: yOffset (int32, HWPUNIT) — anchor 기준 Y
+                            //  16-19: width (uint32, HWPUNIT)
+                            //  20-23: height (uint32, HWPUNIT)
                             double gsoXMm = 0, gsoYMm = 0, gsoWMm = 0, gsoHMm = 0;
+                            uint gsoFlags = 0;
                             var p = rec.Payload;
+                            if (p.Length >= 8)  gsoFlags = BitConverter.ToUInt32(p, 4);
                             if (p.Length >= 24)
                             {
                                 gsoXMm = BitConverter.ToInt32(p, 8)  * HwpUnitToMm;
@@ -459,8 +467,9 @@ public sealed class HwpReader : IDocumentReader
                                 gsoWMm = BitConverter.ToUInt32(p, 16) * HwpUnitToMm;
                                 gsoHMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
                             }
+                            HwpLog.Write($"[ParseSectionRecords] GSO flags=0x{gsoFlags:X8}, anchorType={(gsoFlags >> 4) & 0x3}");
                             // 그리기 개체(GSO): 도형/글상자/이미지
-                            i = ParseGsoControl(recs, i + 1, rec.Level + 1, body, gsoXMm, gsoYMm, gsoWMm, gsoHMm, currentPageIndex);
+                            i = ParseGsoControl(recs, i + 1, rec.Level + 1, body, gsoXMm, gsoYMm, gsoWMm, gsoHMm, currentPageIndex, gsoFlags);
                             continue;
                         }
                         if (ctrlId == CTRL_ID_HEADER)
@@ -533,7 +542,7 @@ public sealed class HwpReader : IDocumentReader
 
     private static int ParseGsoControl(List<HwpRecord> recs, int startIdx, uint minLevel, HwpBodyText body,
         double ctrlXMm = 0, double ctrlYMm = 0, double ctrlWMm = 0, double ctrlHMm = 0,
-        int anchorPageIndex = 0)
+        int anchorPageIndex = 0, uint ctrlFlags = 0)
     {
         // 기본값: CTRL_HEADER 에서 가져온 위치/크기 (SHAPE_COMPONENT 가 덮어쓸 수 있음).
         double xMm = ctrlXMm, yMm = ctrlYMm, wMm = ctrlWMm, hMm = ctrlHMm;
@@ -674,8 +683,30 @@ public sealed class HwpReader : IDocumentReader
 
         if (!hasShape) return i;
 
+        // ── 인라인/단락 앵커 LINE → ThematicBreakBlock ─────────────────────────
+        // CTRL_HEADER flags (offset 4) 의 bits 4-5: anchorType
+        //   0 = page (절대 좌표) | 1 = paragraph (단락 기준) | 2 = character (인라인)
+        // 단락·문자 앵커된 수평 선(LINE)은 본문 흐름 안에 구분선으로 삽입해야 한다.
+        // 이러한 경우 overlay ShapeObject 로 렌더하면 위치가 완전히 틀어지므로
+        // ThematicBreakBlock 으로 변환해 인라인 흐름에 끼워 넣는다.
+        if (kind == HwpShapeKind.Line)
+        {
+            uint anchorType = (ctrlFlags >> 4) & 0x3;
+            bool isNonPageAnchor = anchorType != 0;
+            // 폴백: anchorType 비트를 읽지 못한 경우에도, 넓은 수평선(넓이>100mm, 높이≈0)이
+            // 페이지 절대좌표로 배치 불가능한 좌표(너비가 페이지 밖)를 가지면 인라인으로 판단.
+            if (!isNonPageAnchor && wMm > 100 && Math.Abs(hMm) < 5 && xMm + wMm > 220)
+                isNonPageAnchor = true;
+
+            HwpLog.Write($"[ParseGsoControl] LINE anchorType={anchorType} ({(isNonPageAnchor ? "non-page → ThematicBreak" : "page → overlay")})");
+            if (isNonPageAnchor)
+            {
+                body.Blocks.Add(new HwpThematicBreakBlock());
+                return i;
+            }
+        }
+
         // 좌표·크기 sanity 검증. SHAPE_COMPONENT 오프셋이 부정확한 경우 비현실적인 값(수천 mm)이 나옴.
-        // A4(210x297mm)·A3(420x297mm) 범위를 벗어나면 기본값(0, 페이지 중앙)으로 대체.
         const double MaxReasonableMm = 1000.0;  // 가장 큰 용지(A0) 도 1000mm 미만
         if (Math.Abs(xMm) > MaxReasonableMm || Math.Abs(yMm) > MaxReasonableMm)
         {
@@ -822,8 +853,8 @@ public sealed class HwpReader : IDocumentReader
                 1 => Alignment.Left,
                 2 => Alignment.Right,
                 3 => Alignment.Center,
-                4 => Alignment.Justify, // distribute (균등 분배) ≈ justify
-                5 => Alignment.Justify, // division
+                4 => Alignment.Distributed, // distribute (균등 분배) — "공 문" 스타일 넓은 자간
+                5 => Alignment.Distributed, // division
                 _ => Alignment.Justify,  // 0 = both (양쪽 혼합)
             };
         }
@@ -847,6 +878,9 @@ public sealed class HwpReader : IDocumentReader
         if (ps.IndentRightMm < 0) ps.IndentRightMm = 0;
         if (ps.IndentFirstLineMm < -50) ps.IndentFirstLineMm = -50;
         if (ps.IndentFirstLineMm >  50) ps.IndentFirstLineMm =  50;
+        // 단락 위·아래 여백 상한선: 36pt(약 12.7mm) 초과는 스펙 오독 가능성
+        if (ps.SpaceBeforePt > 36) ps.SpaceBeforePt = 0;
+        if (ps.SpaceAfterPt  > 36) ps.SpaceAfterPt  = 0;
 
         return ps;
     }
@@ -1205,7 +1239,7 @@ public sealed class HwpReader : IDocumentReader
                     slot.Paragraphs.Add(p);
         }
 
-        // ── Body blocks (paragraphs + tables in order) ─────────────────────
+        // ── Body blocks (paragraphs + tables + thematic breaks in order) ──────
         foreach (var block in body.Blocks)
         {
             switch (block)
@@ -1217,6 +1251,9 @@ public sealed class HwpReader : IDocumentReader
                 case HwpTableBlock tb:
                     var table = ConvertHwpTable(tb, docInfo);
                     if (table != null) section.Blocks.Add(table);
+                    break;
+                case HwpThematicBreakBlock:
+                    section.Blocks.Add(new ThematicBreakBlock());
                     break;
             }
         }
@@ -1381,6 +1418,9 @@ public sealed class HwpReader : IDocumentReader
             if (hp.ParaShapeId >= 0 && hp.ParaShapeId < docInfo.ParaShapes.Count)
             {
                 var ps = docInfo.ParaShapes[hp.ParaShapeId];
+                // 진단: 기본(Justify/Left)이 아닌 정렬값 로그
+                if (ps.Alignment != Alignment.Justify && ps.Alignment != Alignment.Left)
+                    HwpLog.Write($"[ConvertHwpParagraph] ParaShape[{hp.ParaShapeId}] alignment={ps.Alignment}, text='{hp.Text.Substring(0, Math.Min(15, hp.Text.Length))}'");
                 paragraph.Style.Alignment        = ps.Alignment;
                 paragraph.Style.IndentFirstLineMm = ps.IndentFirstLineMm;
                 paragraph.Style.IndentLeftMm     = ps.IndentLeftMm;
@@ -1726,13 +1766,16 @@ public sealed class HwpReader : IDocumentReader
             Blocks.OfType<HwpParagraphBlock>().Select(b => b.Paragraph);
     }
 
-    // 본문 블록 — 단락 또는 표
+    // 본문 블록 — 단락, 표, 또는 수평선
     private abstract class HwpBlock { }
 
     private sealed class HwpParagraphBlock : HwpBlock
     {
         public HwpParagraph Paragraph { get; set; } = new();
     }
+
+    // 인라인/단락 앵커된 LINE GSO 를 수평선 블록으로 변환할 때 사용
+    private sealed class HwpThematicBreakBlock : HwpBlock { }
 
     private sealed class HwpTableBlock : HwpBlock
     {
