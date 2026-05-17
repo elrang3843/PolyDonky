@@ -83,6 +83,12 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP soft line break 분할 시 누적 단락 여백 제거**: `ConvertHwpParagraphMulti` 가 soft line break 에서 단락을 분할할 때, 중간 줄(마지막 줄 이전의 모든 줄)들이 원본 단락의 SpaceBeforePt/SpaceAfterPt 를 그대로 상속받아 여백이 누적되는 버그. 예를 들어 SpaceAfterPt=6pt 인 단락이 3 줄로 분할되면, 각 줄마다 6pt 의 여백이 적용되어 총 18pt 의 과다 간격이 생겼다. 이제 중간 줄들은 IsIntermediateLine 플래그를 설정하고, ConvertHwpParagraph 에서 이 플래그가 true 일 때 SpaceBeforePt/SpaceAfterPt 를 모두 0 으로 설정. 결과: 협조공문 등에서 서명 표의 행(예: "주소")이 다음 페이지로 잘못 넘어가던 현상 해결. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
+- **HWP 비-페이지 앵커 수평선(LINE) → ThematicBreakBlock 변환**: 단락·문자에 앵커된 GSO LINE 도형이 overlay ShapeObject 로 렌더링되어 완전히 잘못된 위치(페이지 상단)에 나타나던 문제. 이러한 선은 "제목:" 아래나 "첨부" 구분선 같은 본문 흐름 내 수평 구분선이다. CTRL_HEADER flags(bits 4-5) 의 anchorType 을 읽어 비-page 앵커를 감지하거나, 선 너비+X 좌표가 페이지를 초과하는 경우(xMm + wMm > 220mm) 폴백으로 감지한다. 감지된 선은 `HwpThematicBreakBlock` 을 경유해 Core `ThematicBreakBlock` 으로 변환되어 원본 위치의 본문 흐름 안에 수평선으로 표시된다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 균등 분배(distribute) 정렬 → Alignment.Distributed 올바른 매핑**: PARA_SHAPE 의 정렬 값 4(균등 분배)·5(나눔)를 `Alignment.Justify` 로 잘못 매핑하던 문제. "공 문" 같은 넓은 자간 타이틀이 일반 양쪽 맞춤으로 렌더링되어 원본과 달라졌다. 이제 값 4·5 를 `Alignment.Distributed` 로 정확히 변환한다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **PARA_SHAPE 단락 여백 상한선 클램핑**: SpaceBeforePt/SpaceAfterPt 가 36pt 초과인 경우 오프셋 오독으로 인한 비현실적 값으로 간주해 0 으로 클램핑. 이로써 과도한 단락 여백이 표의 행을 다음 페이지로 밀어내는 현상을 추가 방지. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP GSO 도형·글상자 위치 보정**: 모든 GSO 객체(도형·글상자·이미지)가 (0,0) 위치에 겹쳐 그려지던 문제 수정. SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대 좌표이므로 절대 위치로 사용할 수 없었음. CTRL_HEADER 의 페이로드(offset 8=xOffset, 12=yOffset, 16=height, 20=width)에서 절대 위치/크기를 읽어 적용. Test1.hwp 의 5 개 도형이 각각 다른 위치에 배치되고, Welcome to Hwp.hwp 의 표지 글상자도 올바른 위치(136.6, 25.1)에 표시됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP GSO TextBox 텍스트 추출 버그 + SHAPE_COMPONENT 오프셋 수정**: `HwpReader.ParseGsoControl` 에서 LIST_HEADER 의 자식 PARA_HEADER 가 LIST_HEADER 와 같은 레벨에 있다는 사실을 잘못 처리(레벨+1로 가정)하여 글상자 내부 텍스트가 모두 누락되던 문제 수정. 또한 RECT_COMPONENT 등 후속 shape component 가 kind=TextBox 를 kind=Rectangle 로 덮어쓰는 버그도 수정. 추가로 SHAPE_COMPONENT 페이로드의 위치/크기 오프셋이 KS X 5700 스펙과 달라 비현실적인 값(예: width=2,157,154mm)이 나오던 문제를 정정 — 올바른 오프셋: xPos@8, yPos@12, objW@24, objH@28. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
