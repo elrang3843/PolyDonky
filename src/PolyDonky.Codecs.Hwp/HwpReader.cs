@@ -612,24 +612,19 @@ public sealed class HwpReader : IDocumentReader
                         if (hMm <= 0)
                             hMm = BitConverter.ToUInt32(p, 28) * HwpUnitToMm;
 
-                        // 진단: offset 44+ 주변의 값들을 모두 로깅
-                        HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT bytes @40-56: {BitConverter.ToString(p.Skip(40).Take(Math.Min(p.Length - 40, 16)).ToArray())}");
-                        if (p.Length >= 46)
+                        // SHAPE_COMPONENT offset 50: borderFillId (UINT16, 1-based)
+                        // KS X 5700 실측:
+                        //   36-39: rotation_center_x (INT32)
+                        //   40-43: rotation_center_y (INT32)
+                        //   44-45: shadow_offset_x   (INT16? — 실측값 0)
+                        //   46-47: shadow_offset_y   (INT16? — 실측값 = centerY HWPUNIT)
+                        //   48-49: ??? (항상 0)
+                        //   50-51: borderFillId      (UINT16, 1-based) ← 실측 확인
+                        if (p.Length >= 52 && shapeBorderFillId < 0)
                         {
-                            ushort bfId16_44 = BitConverter.ToUInt16(p, 44);
-                            ushort bfId16_46 = p.Length >= 48 ? BitConverter.ToUInt16(p, 46) : (ushort)0;
-                            ushort bfId16_48 = p.Length >= 50 ? BitConverter.ToUInt16(p, 48) : (ushort)0;
-                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT uint16@44={bfId16_44}, @46={bfId16_46}, @48={bfId16_48}");
-                        }
-                        // 유효한 borderFillId (1-3)을 찾기 위해 전체 페이로드 스캔
-                        for (int off = 40; off + 2 <= Math.Min(p.Length, 80); off += 2)
-                        {
-                            ushort candidate = BitConverter.ToUInt16(p, off);
-                            if (candidate >= 1 && candidate <= 3)
-                            {
-                                HwpLog.Write($"[ParseGsoControl] Found potential borderFillId={candidate} at offset {off}!");
-                                if (shapeBorderFillId < 0) shapeBorderFillId = candidate;
-                            }
+                            int bfId = BitConverter.ToUInt16(p, 50);
+                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT borderFillId@50={bfId}");
+                            if (bfId >= 1) shapeBorderFillId = bfId;
                         }
                         hasShape = true;
                     }
@@ -959,19 +954,30 @@ public sealed class HwpReader : IDocumentReader
     /// HWPTAG_BORDER_FILL (KS X 5700) 페이로드 파싱.
     /// Layout:
     ///   0-1  : attr (WORD)
-    ///   2-7  : top border (HWPLINE = type 1B, width 1B, color BBGGRR 4B)
+    ///   2-7  : top border    (HWPLINE = type 1B, width 1B, color 4B)
     ///   8-13 : left border
-    ///   14-19: bottom border
-    ///   20-25: right border
+    ///   14-19: right border
+    ///   20-25: bottom border
     ///   26-31: diagonal border
-    ///   32-35: fill kind (0=none, 1=color, 2=image, 4=gradient)
-    ///   36-39: background color (BBGGRR, fill kind=1 only)
-    ///   40-43: pattern color (BBGGRR, used if background is 0xFFFFFFFF)
+    ///   32-33: fillType (WORD: 0=none, 1=solid color, 2=image, 4=gradient)
+    ///   if fillType == 1 (solid):
+    ///     34-37: background color (BBGGRR uint32)
+    ///     38-41: pattern color    (BBGGRR uint32)
+    ///     42-43: pattern kind     (WORD)
+    ///   if fillType == 4 (gradient):
+    ///     34-37: gradient type (uint32)
+    ///     38-41: angle         (uint32, 1/100 degree)
+    ///     42-45: startColor    (uint32)
+    ///     46-49: endColor      (uint32)
+    ///     ... (more gradient params)
     /// </summary>
     private static HwpBorderFill ParseBorderFill(byte[] p)
     {
         var bf = new HwpBorderFill();
-        // HWPLINE 파서: type(1B), width(1B), color BBGGRR(4B) = 6B
+
+        HwpLog.Write($"[ParseBorderFill] len={p.Length}, bytes={BitConverter.ToString(p.Take(Math.Min(p.Length, 48)).ToArray())}");
+
+        // HWPLINE 파서: type(1B), width(1B), color 0xBBGGRR(4B) = 6B
         static (byte kind, byte width, string? color) ReadLine(byte[] b, int off)
         {
             if (off + 6 > b.Length) return (0, 0, null);
@@ -984,24 +990,39 @@ public sealed class HwpReader : IDocumentReader
 
         if (p.Length >= 8)  { var (k, w, c) = ReadLine(p, 2);  bf.TopKind = k; bf.TopWidth = w; bf.TopColor = c; }
         if (p.Length >= 14) { var (k, w, c) = ReadLine(p, 8);  bf.LeftKind = k; bf.LeftWidth = w; bf.LeftColor = c; }
-        if (p.Length >= 20) { var (k, w, c) = ReadLine(p, 14); bf.BottomKind = k; bf.BottomWidth = w; bf.BottomColor = c; }
-        if (p.Length >= 26) { var (k, w, c) = ReadLine(p, 20); bf.RightKind = k; bf.RightWidth = w; bf.RightColor = c; }
+        if (p.Length >= 20) { var (k, w, c) = ReadLine(p, 14); bf.RightKind = k; bf.RightWidth = w; bf.RightColor = c; }
+        if (p.Length >= 26) { var (k, w, c) = ReadLine(p, 20); bf.BottomKind = k; bf.BottomWidth = w; bf.BottomColor = c; }
 
-        // fill (offset 32+)
-        if (p.Length >= 40)
+        // fill: fillType WORD at offset 32 (not uint32!)
+        if (p.Length >= 34)
         {
-            uint fillKind = BitConverter.ToUInt32(p, 32);
-            if (fillKind == 1)  // color fill
+            ushort fillType = BitConverter.ToUInt16(p, 32);
+            HwpLog.Write($"[ParseBorderFill] fillType@32={fillType}");
+
+            if (fillType == 1 && p.Length >= 38)  // solid color
             {
-                uint bgColor  = BitConverter.ToUInt32(p, 36);  // BBGGRR
-                uint patColor = p.Length >= 44 ? BitConverter.ToUInt32(p, 40) : 0;
-                // 0xFFFFFFFF = transparent/no fill → fall through to pattern color
+                uint bgColor  = BitConverter.ToUInt32(p, 34);
+                uint patColor = p.Length >= 42 ? BitConverter.ToUInt32(p, 38) : 0;
+                HwpLog.Write($"[ParseBorderFill] solid: bgColor=0x{bgColor:X8}, patColor=0x{patColor:X8}");
+                // 0xFFFFFFFF = transparent/none
                 if (bgColor != 0xFFFFFFFF && bgColor != 0)
                     bf.BackgroundColor = FormatRgb(bgColor);
                 else if (patColor != 0xFFFFFFFF && patColor != 0)
                     bf.BackgroundColor = FormatRgb(patColor);
             }
+            else if (fillType == 4 && p.Length >= 50)  // gradient
+            {
+                // gradient: type(4B) angle(4B) startColor(4B) endColor(4B) ...
+                uint startColor = BitConverter.ToUInt32(p, 42);
+                uint endColor   = BitConverter.ToUInt32(p, 46);
+                HwpLog.Write($"[ParseBorderFill] gradient: startColor=0x{startColor:X8}, endColor=0x{endColor:X8}");
+                // 그라디언트의 시작색을 배경색으로 사용 (근사치)
+                if (startColor != 0xFFFFFFFF && startColor != 0)
+                    bf.BackgroundColor = FormatRgb(startColor);
+            }
         }
+
+        HwpLog.Write($"[ParseBorderFill] → BackgroundColor={bf.BackgroundColor ?? "null"}, TopKind={bf.TopKind}");
         return bf;
     }
 
@@ -1253,39 +1274,22 @@ public sealed class HwpReader : IDocumentReader
                 body.PageDef = ParsePageDef(rec.Payload);
             }
             else if (rec.TagId == TAG_PAGE_BORDER_FILL && body.PageBackgroundBorderFillId < 0
-                     && rec.Payload.Length >= 4)
+                     && rec.Payload.Length >= 14)
             {
-                // HWPTAG_PAGE_BORDER_FILL 레이아웃 (KS X 5700) — 정확한 구조 미확정, 복수 offset 로깅
+                // HWPTAG_PAGE_BORDER_FILL 레이아웃 (KS X 5700, 14바이트):
+                //   0-3  : flags (UINT32)
+                //            bit 0: ref area (0=text area, 1=paper 기준)
+                //            bit 2: position (0=앞, 1=뒤)
+                //   4-5  : top margin    (UINT16, HWPUNIT) — 1417 ≈ 5mm
+                //   6-7  : bottom margin (UINT16, HWPUNIT)
+                //   8-9  : left margin   (UINT16, HWPUNIT)
+                //   10-11: right margin  (UINT16, HWPUNIT)
+                //   12-13: borderFillId  (UINT16, 1-based index into DocInfo BorderFills)
                 var pb = rec.Payload;
-                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: full payload={BitConverter.ToString(pb.Take(Math.Min(pb.Length, 14)).ToArray())} len={pb.Length}");
-
-                // 가능한 offset 조합 모두 시도
-                if (pb.Length >= 2)
-                {
-                    ushort f0 = BitConverter.ToUInt16(pb, 0);
-                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@0={f0}");
-                }
-                if (pb.Length >= 4)
-                {
-                    uint f0_32 = BitConverter.ToUInt32(pb, 0);
-                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint32@0=0x{f0_32:X8}");
-                    ushort f2 = BitConverter.ToUInt16(pb, 2);
-                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@2={f2}");
-                }
-                if (pb.Length >= 6)
-                {
-                    ushort f4 = BitConverter.ToUInt16(pb, 4);
-                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@4={f4}");
-                }
-                if (pb.Length >= 8)
-                {
-                    ushort f6 = BitConverter.ToUInt16(pb, 6);
-                    uint f4_32 = BitConverter.ToUInt32(pb, 4);
-                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@6={f6}, uint32@4=0x{f4_32:X8}");
-                }
-
-                // 임시: 첫 번째 나올 수 있는 1-3 값을 사용하거나, 기본값 사용하지 않음
-                // (정확한 offset 확정 후 수정 예정)
+                ushort fillId = BitConverter.ToUInt16(pb, 12);
+                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: borderFillId@12={fillId}");
+                if (fillId >= 1)
+                    body.PageBackgroundBorderFillId = fillId;
             }
             i++;
         }
