@@ -1580,9 +1580,28 @@ public sealed class HwpReader : IDocumentReader
 
         var table = new Table();
 
-        // Column definitions (균등 분할 — HWP 셀 너비 정보는 추후 확장)
+        // 열 너비 결정: colspan=1인 셀의 너비 우선 사용,
+        // 미결정 열은 colspan>1 셀의 너비를 균등 분할로 보완
+        var colWidths = new double[ht.ColCount];
+        // 1단계: colspan=1 셀에서 개별 열 너비 추출
+        foreach (var hc in ht.Cells)
+        {
+            if (hc.ColSpan == 1 && hc.WidthMm > 0 && hc.Col < ht.ColCount)
+                colWidths[hc.Col] = hc.WidthMm;
+        }
+        // 2단계: 아직 미결정 열은 병합 셀 너비를 균등 분할하여 보완
+        foreach (var hc in ht.Cells)
+        {
+            if (hc.ColSpan <= 1 || hc.WidthMm <= 0) continue;
+            double perCol = hc.WidthMm / hc.ColSpan;
+            for (int c = hc.Col; c < hc.Col + hc.ColSpan && c < ht.ColCount; c++)
+            {
+                if (colWidths[c] == 0)
+                    colWidths[c] = perCol;
+            }
+        }
         for (int c = 0; c < ht.ColCount; c++)
-            table.Columns.Add(new TableColumn { WidthMm = 0 });
+            table.Columns.Add(new TableColumn { WidthMm = colWidths[c] });
 
         // 셀을 (row, col) 키로 인덱싱
         var cellMap = new Dictionary<(int r, int c), HwpTableCell>();
@@ -1592,6 +1611,18 @@ public sealed class HwpReader : IDocumentReader
                 cellMap[(hc.Row, hc.Col)] = hc;
         }
 
+        // 병합 셀이 차지하는 위치 (시작 위치 제외) — 이 위치는 WPF 셀 추가 시 건너뛴다
+        var occupied = new HashSet<(int r, int c)>();
+        foreach (var hc in ht.Cells)
+        {
+            for (int rr = hc.Row; rr < hc.Row + hc.RowSpan && rr < ht.RowCount; rr++)
+                for (int cc = hc.Col; cc < hc.Col + hc.ColSpan && cc < ht.ColCount; cc++)
+                {
+                    if (rr == hc.Row && cc == hc.Col) continue;
+                    occupied.Add((rr, cc));
+                }
+        }
+
         for (int r = 0; r < ht.RowCount; r++)
         {
             var row = new TableRow();
@@ -1599,6 +1630,8 @@ public sealed class HwpReader : IDocumentReader
 
             for (int c = 0; c < ht.ColCount; c++)
             {
+                // 병합 셀에 의해 이미 점유된 위치는 WPF 셀을 추가하지 않는다
+                if (occupied.Contains((r, c))) continue;
                 var tableCell = new TableCell();
                 if (cellMap.TryGetValue((r, c), out var hc))
                 {
