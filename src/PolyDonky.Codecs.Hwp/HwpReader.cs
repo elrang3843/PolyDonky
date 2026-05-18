@@ -612,20 +612,25 @@ public sealed class HwpReader : IDocumentReader
                         if (hMm <= 0)
                             hMm = BitConverter.ToUInt32(p, 28) * HwpUnitToMm;
 
-                        // 진단: offset 44+ 주변의 값들을 모두 로깅 (borderFillId 위치 추적)
-                        HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT bytes @40-52: {BitConverter.ToString(p.Skip(40).Take(Math.Min(p.Length - 40, 12)).ToArray())}");
+                        // 진단: offset 44+ 주변의 값들을 모두 로깅
+                        HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT bytes @40-56: {BitConverter.ToString(p.Skip(40).Take(Math.Min(p.Length - 40, 16)).ToArray())}");
                         if (p.Length >= 46)
                         {
                             ushort bfId16_44 = BitConverter.ToUInt16(p, 44);
                             ushort bfId16_46 = p.Length >= 48 ? BitConverter.ToUInt16(p, 46) : (ushort)0;
-                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT uint16@44={bfId16_44}, uint16@46={bfId16_46}");
+                            ushort bfId16_48 = p.Length >= 50 ? BitConverter.ToUInt16(p, 48) : (ushort)0;
+                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT uint16@44={bfId16_44}, @46={bfId16_46}, @48={bfId16_48}");
                         }
-                        if (p.Length >= 48)
+                        // 유효한 borderFillId (1-3)을 찾기 위해 전체 페이로드 스캔
+                        for (int off = 40; off + 2 <= Math.Min(p.Length, 80); off += 2)
                         {
-                            uint bfId32_44 = BitConverter.ToUInt32(p, 44);
-                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT uint32@44=0x{bfId32_44:X8}");
+                            ushort candidate = BitConverter.ToUInt16(p, off);
+                            if (candidate >= 1 && candidate <= 3)
+                            {
+                                HwpLog.Write($"[ParseGsoControl] Found potential borderFillId={candidate} at offset {off}!");
+                                if (shapeBorderFillId < 0) shapeBorderFillId = candidate;
+                            }
                         }
-                        // 해당 위치를 찾을 때까지: 아무도 할당하지 않음 (offset 확정 대기)
                         hasShape = true;
                     }
                     break;
