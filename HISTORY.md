@@ -87,7 +87,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP 균등 분배(distribute) 정렬 → Alignment.Distributed 올바른 매핑**: PARA_SHAPE 의 정렬 값 4(균등 분배)·5(나눔)를 `Alignment.Justify` 로 잘못 매핑하던 문제. "공 문" 같은 넓은 자간 타이틀이 일반 양쪽 맞춤으로 렌더링되어 원본과 달라졌다. 이제 값 4·5 를 `Alignment.Distributed` 로 정확히 변환한다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
-- **HWP 표 너비 제약 추가 — 페이지 오버플로우 방지**: HWP 파일의 표는 저장된 전체 너비 정보가 없으므로, 모든 열 너비의 합으로 표 너비(Table.WidthMm)를 계산. FlowDocumentBuilder에서 표 너비가 설정되면 열 너비를 표 너비에 맞게 정규화(scale = WidthMm / totalColWidth)하여, 페이지 유효 너비 내에 표가 맞도록 렌더링. 결과: 표가 오른쪽 페이지 경계를 넘어가지 않음. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`, `src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+- **표 열 너비 가용 너비 초과 시 자동 스케일 다운**: `BuildFromBlocks`에서 계산한 `contentWDip`(페이지 콘텐츠 너비)을 `AppendBlocks` → `BuildTable` 체인으로 전달. 열 너비 합이 가용 너비를 초과하면 `scale = constraintDip / totalColWidthDip`으로 모든 열을 비례 축소. 이전에는 각 열이 픽셀 단위로 설정되면서 페이지 경계를 넘어가던 문제 해결. (`src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+
+- **HWP 표 너비 계산**: HWP 파일의 표는 저장된 전체 너비 정보가 없으므로, 모든 열 너비의 합으로 `Table.WidthMm`을 계산. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 표 병합 셀 렌더링 수정**: `ConvertHwpTable`에서 병합 셀(colspan>1)이 차지하는 점유 위치에 WPF 빈 셀을 추가하지 않도록 수정. 이전에는 HWP 파일이 병합 셀의 모든 좌표에 별도 LIST_HEADER 레코드를 기록하는 방식이라, 변환 후 각 위치에 빈 셀이 중복 생성되어 테이블이 깨져 표시되었다. 이제 시작 셀(colspan×rowspan)이 점유하는 위치를 `occupied` 집합으로 추적하고, 해당 위치는 셀 생성을 건너뛴다. 결과: Owner/Group/Other 열 병합이 포함된 퍼미션 표가 4열(병합) × 10열(개별) 구조로 올바르게 렌더링됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 

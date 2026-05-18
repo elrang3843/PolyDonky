@@ -282,7 +282,7 @@ public static class FlowDocumentBuilder
             fd.IsColumnWidthFlexible = false;
         }
 
-        AppendBlocks(fd.Blocks, blocks.ToList(), outlineStyles, fnNums: fnNums, enNums: enNums, outlineNumbers: outlineNumbers, fieldCtx: fieldCtx);
+        AppendBlocks(fd.Blocks, blocks.ToList(), outlineStyles, fnNums: fnNums, enNums: enNums, outlineNumbers: outlineNumbers, fieldCtx: fieldCtx, availableWidthDip: contentWDip);
         return fd;
     }
 
@@ -292,7 +292,8 @@ public static class FlowDocumentBuilder
         IReadOnlyDictionary<string, int>? fnNums = null,
         IReadOnlyDictionary<string, int>? enNums = null,
         IReadOnlyDictionary<Paragraph, string>? outlineNumbers = null,
-        FieldRenderContext? fieldCtx = null)
+        FieldRenderContext? fieldCtx = null,
+        double availableWidthDip = 0)
     {
         // 중첩 리스트 지원: (WPF List, Kind) 스택.
         // 인덱스 0 = 최상위 리스트, 인덱스 n = n 단계 중첩 리스트.
@@ -433,10 +434,10 @@ public static class FlowDocumentBuilder
                                 cell.Blocks.Any(b => b is ShapeObject s && s.RotationAngleDeg != 0)));
                             target.Add(hasRotatedShape
                                 ? BuildFlexContainer(t, outlineStyles)
-                                : BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx));
+                                : BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx, availableWidthDip));
                         }
                         else
-                            target.Add(BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx));
+                            target.Add(BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx, availableWidthDip));
                     }
                     else
                         target.Add(BuildTableAnchor(t));   // 오버레이 모드 — 앵커만 추가
@@ -998,26 +999,28 @@ public static class FlowDocumentBuilder
 
     internal static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null,
         IReadOnlyDictionary<string,int>? fnNums = null, IReadOnlyDictionary<string,int>? enNums = null,
-        FieldRenderContext? fieldCtx = null)
+        FieldRenderContext? fieldCtx = null, double availableWidthDip = 0)
     {
         var wtable = new Wpf.Table { CellSpacing = 0 };
 
         ApplyTableLevelPropertiesToWpf(wtable, table);
 
-        // 표 너비가 설정되어 있으면, 각 열 너비를 표 너비에 맞게 정규화
-        double totalColWidthMm = table.Columns.Sum(c => c.WidthMm);
+        // 열 너비 합이 가용 너비를 초과하면 비례 스케일 다운.
+        // availableWidthDip > 0 이면 가용 너비 기준, 아니면 table.WidthMm 자체를 기준.
+        double totalColWidthDip = table.Columns.Sum(c => MmToDip(c.WidthMm));
         double scale = 1.0;
-        if (table.WidthMm > 0 && totalColWidthMm > 0)
-            scale = table.WidthMm / totalColWidthMm;
+        double constraintDip = availableWidthDip > 0 ? availableWidthDip : 0;
+        if (constraintDip > 0 && totalColWidthDip > constraintDip)
+            scale = constraintDip / totalColWidthDip;
 
         foreach (var col in table.Columns)
         {
-            // WidthMm > 0 이면 명시 폭, 아니면 Star(1*) — 가용 폭을 균등 분배.
+            // WidthMm > 0 이면 명시 폭(스케일 적용), 아니면 Star(1*) — 가용 폭 균등 분배.
             // Auto 로 두면 셀 콘텐츠 기준으로 좁게 잡혀 텍스트 줄바꿈이 과도해지고
             // 셀 높이가 비정상적으로 커져 표 전체가 페이지를 넘기는 증상이 발생한다.
             GridLength width;
             if (col.WidthMm > 0)
-                width = new GridLength(MmToDip(col.WidthMm * scale));
+                width = new GridLength(MmToDip(col.WidthMm) * scale);
             else
                 width = new GridLength(1, GridUnitType.Star);
             wtable.Columns.Add(new Wpf.TableColumn { Width = width });
