@@ -83,6 +83,7 @@ public sealed class HwpReader : IDocumentReader
     private const uint TAG_CTRL_HEADER         = 0x047;  // HWPTAG_CTRL_HEADER
     private const uint TAG_LIST_HEADER         = 0x048;  // HWPTAG_LIST_HEADER
     private const uint TAG_PAGE_DEF            = 0x049;  // HWPTAG_PAGE_DEF
+    private const uint TAG_PAGE_BORDER_FILL     = 0x04B;  // HWPTAG_PAGE_BORDER_FILL
     private const uint TAG_SHAPE_COMPONENT     = 0x04C;  // HWPTAG_SHAPE_COMPONENT
     private const uint TAG_TABLE               = 0x04D;  // HWPTAG_TABLE
     private const uint TAG_LINE_COMPONENT      = 0x04E;  // HWPTAG_SHAPE_COMPONENT_LINE
@@ -294,6 +295,16 @@ public sealed class HwpReader : IDocumentReader
         {
             if (!bodyDir.TryOpenStream($"Section{i}", out var sectionStream))
                 break;
+
+            // HWP 섹션은 항상 새 페이지에서 시작 — 두 번째 섹션부터 페이지 나누기 단락 삽입.
+            if (i > 0 && body.Blocks.Count > 0)
+            {
+                body.Blocks.Add(new HwpParagraphBlock
+                {
+                    Paragraph = new HwpParagraph { IsSectionBreak = true }
+                });
+                HwpLog.Write($"[ParseBodyText] Section{i} start → 섹션 경계 페이지 나누기 삽입");
+            }
 
             using (sectionStream)
             {
@@ -553,6 +564,9 @@ public sealed class HwpReader : IDocumentReader
         bool hasShape = ctrlWMm > 0 || ctrlHMm > 0;
         HwpShapeKind kind = HwpShapeKind.Rectangle;
         int binDataId = 0;
+        int shapeBorderFillId = -1;  // SHAPE_COMPONENT 의 borderFillId (채우기 색상 참조)
+        // CTRL_HEADER flags bit 15 (0x8000): 1 = 텍스트 뒤 배치(BehindText), 0 = 텍스트 앞(InFrontOfText)
+        bool isBehindText = (ctrlFlags & 0x8000) != 0;
         List<HwpParagraph>? tbContent = null;
 
         // 진단: GSO 컨트롤 자식 레코드 추적
@@ -581,12 +595,21 @@ public sealed class HwpReader : IDocumentReader
                         //   20-23 : nlevel (uint32)
                         //   24-27 : objW (uint32, HWPUNIT) — 초기 너비
                         //   28-31 : objH (uint32, HWPUNIT) — 초기 높이
+                        //   32-35 : rotation angle (uint32, 1/100 degree)
+                        //   36-39 : rotation center X (uint32, HWPUNIT)
+                        //   40-43 : rotation center Y (uint32, HWPUNIT)
+                        //   44-47 : borderFillId (uint32, 1-based index into DocInfo BorderFills) — 채우기 색상
                         // CTRL_HEADER 의 위치를 우선 사용 (절대 좌표). SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대.
                         var p = rec.Payload;
                         if (wMm <= 0)
                             wMm = BitConverter.ToUInt32(p, 24) * HwpUnitToMm;
                         if (hMm <= 0)
                             hMm = BitConverter.ToUInt32(p, 28) * HwpUnitToMm;
+                        if (p.Length >= 48 && shapeBorderFillId < 0)
+                        {
+                            int bfId = (int)BitConverter.ToUInt32(p, 44);
+                            if (bfId >= 1) shapeBorderFillId = bfId;
+                        }
                         hasShape = true;
                     }
                     break;
@@ -756,6 +779,8 @@ public sealed class HwpReader : IDocumentReader
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm, Kind = kind,
                     BinDataId = binDataId,
                     AnchorPageIndex = anchorPageIndex,
+                    BorderFillId = shapeBorderFillId,
+                    IsBehindText = isBehindText,
                 });
                 break;
         }
@@ -1206,6 +1231,22 @@ public sealed class HwpReader : IDocumentReader
             {
                 body.PageDef = ParsePageDef(rec.Payload);
             }
+            else if (rec.TagId == TAG_PAGE_BORDER_FILL && body.PageBackgroundBorderFillId < 0
+                     && rec.Payload.Length >= 10)
+            {
+                // HWPTAG_PAGE_BORDER_FILL 레이아웃 (KS X 5700):
+                //   0-3: flags (uint32) — bit 0: 0=text area, 1=paper 기준; bit 2: 0=front, 1=back
+                //   4-5: borderFillId for text area (uint16, 1-based)
+                //   6-7: borderFillId for paper (uint16, 1-based)  ← 페이지 배경색
+                //   8-9: borderFillId for header area (uint16)
+                // (실제 오프셋은 HWP 버전에 따라 다를 수 있음 — 여기서는 보수적 파싱)
+                ushort paperFillId = BitConverter.ToUInt16(rec.Payload, 6);
+                if (paperFillId >= 1)
+                {
+                    body.PageBackgroundBorderFillId = paperFillId;
+                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: paperFillId={paperFillId}");
+                }
+            }
             i++;
         }
         return i;
@@ -1334,6 +1375,18 @@ public sealed class HwpReader : IDocumentReader
             if (pd.MarginFooterMm > 0) ps.MarginFooterMm = pd.MarginFooterMm;
         }
 
+        // ── Page background color (SECD PAGE_BORDER_FILL에서 추출) ──────────
+        if (body.PageBackgroundBorderFillId >= 1 &&
+            body.PageBackgroundBorderFillId - 1 < docInfo.BorderFills.Count)
+        {
+            var bgFill = docInfo.BorderFills[body.PageBackgroundBorderFillId - 1];
+            if (!string.IsNullOrEmpty(bgFill.BackgroundColor))
+            {
+                section.Page.PaperColor = bgFill.BackgroundColor;
+                HwpLog.Write($"[HwpReader] 페이지 배경색: {bgFill.BackgroundColor}");
+            }
+        }
+
         // ── Headers / Footers ──────────────────────────────────────────────
         // 처음 발견된 머리말/꼬리말을 Center 슬롯에 배치 (HWP는 Left/Center/Right 슬롯 구조가 없음).
         if (body.Headers.Count > 0)
@@ -1450,7 +1503,7 @@ public sealed class HwpReader : IDocumentReader
             var so = new ShapeObject
             {
                 Kind         = MapShapeKind(sh.Kind),
-                WrapMode     = ImageWrapMode.InFrontOfText,
+                WrapMode     = sh.IsBehindText ? ImageWrapMode.BehindText : ImageWrapMode.InFrontOfText,
                 OverlayXMm   = sh.XMm,
                 OverlayYMm   = sh.YMm,
                 WidthMm      = sh.WidthMm  > 1 ? sh.WidthMm  : 40,
@@ -1460,6 +1513,22 @@ public sealed class HwpReader : IDocumentReader
                 StrokeThicknessPt = 1.0,
                 OleData      = oleData,  // OLE 바이너리 데이터 (Ole kind 일 때만 사용)
             };
+
+            // SHAPE_COMPONENT 의 borderFillId → 채우기 색상 / 테두리 적용
+            if (sh.BorderFillId >= 1 && sh.BorderFillId - 1 < docInfo.BorderFills.Count)
+            {
+                var bf = docInfo.BorderFills[sh.BorderFillId - 1];
+                if (!string.IsNullOrEmpty(bf.BackgroundColor))
+                    so.FillColor = bf.BackgroundColor;
+                // 테두리 없는 채우기(순수 배경)면 stroke 투명 처리
+                if (bf.TopKind == 0 && bf.LeftKind == 0 && bf.BottomKind == 0 && bf.RightKind == 0
+                    && !string.IsNullOrEmpty(bf.BackgroundColor))
+                {
+                    so.StrokeColor = "#00000000";  // 투명
+                    so.StrokeThicknessPt = 0;
+                }
+            }
+
             section.Blocks.Add(so);
         }
 
@@ -1479,6 +1548,12 @@ public sealed class HwpReader : IDocumentReader
     /// </summary>
     private static IEnumerable<Core.Paragraph> ConvertHwpParagraphMulti(HwpParagraph hp, HwpDocInfo? docInfo = null)
     {
+        // 섹션 경계 단락: 텍스트 없이 페이지 나누기만 발생시킴.
+        if (hp.IsSectionBreak)
+        {
+            yield return new Core.Paragraph { Style = { ForcePageBreakBefore = true } };
+            yield break;
+        }
         if (string.IsNullOrWhiteSpace(hp.Text)) yield break;
 
         var fullText = hp.Text.Replace("\r", "");
@@ -1965,6 +2040,7 @@ public sealed class HwpReader : IDocumentReader
     private sealed class HwpBodyText
     {
         public HwpPageDef?            PageDef    { get; set; }
+        public int                    PageBackgroundBorderFillId { get; set; } = -1; // SECD PAGE_BORDER_FILL 에서 추출
         public List<HwpBlock>         Blocks     { get; } = new();
         public List<HwpHeaderFooter>  Headers    { get; } = new();
         public List<HwpHeaderFooter>  Footers    { get; } = new();
@@ -2039,6 +2115,7 @@ public sealed class HwpReader : IDocumentReader
         public int    CharShapeId { get; set; } = -1;
         public bool   PageBreakBefore { get; set; } = false;
         public bool   IsIntermediateLine { get; set; } = false;  // soft line break 분할 시 중간 줄 표시
+        public bool   IsSectionBreak { get; set; } = false;      // HWP 섹션 경계 → ForcePageBreakBefore 단락 생성
     }
 
     private sealed class HwpTextBox
@@ -2070,6 +2147,8 @@ public sealed class HwpReader : IDocumentReader
         public HwpShapeKind Kind      { get; set; }
         public int          BinDataId { get; set; }  // OLE 도형용
         public int          AnchorPageIndex { get; set; }
+        public int          BorderFillId { get; set; } = -1;  // SHAPE_COMPONENT 의 borderFillId (1-based)
+        public bool         IsBehindText { get; set; }        // CTRL_HEADER flags bit 15
     }
 
     private record struct HwpRecord(uint TagId, uint Level, byte[] Payload);
