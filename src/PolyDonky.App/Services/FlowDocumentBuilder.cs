@@ -1006,10 +1006,10 @@ public static class FlowDocumentBuilder
         ApplyTableLevelPropertiesToWpf(wtable, table);
 
         // 열 너비 합이 가용 너비를 초과하면 비례 스케일 다운.
-        // availableWidthDip > 0 이면 가용 너비 기준, 아니면 table.WidthMm 자체를 기준.
+        // availableWidthDip > 0 이면 가용 너비에서 4px 여유를 빼고 기준, 아니면 제약 없음.
         double totalColWidthDip = table.Columns.Sum(c => MmToDip(c.WidthMm));
         double scale = 1.0;
-        double constraintDip = availableWidthDip > 0 ? availableWidthDip : 0;
+        double constraintDip = (availableWidthDip > 0 ? availableWidthDip - 4 : 0);
         if (constraintDip > 0 && totalColWidthDip > constraintDip)
             scale = constraintDip / totalColWidthDip;
 
