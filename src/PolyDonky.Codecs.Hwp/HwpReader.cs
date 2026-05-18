@@ -220,6 +220,10 @@ public sealed class HwpReader : IDocumentReader
                     catch { info.FontNames.Add(""); }
                     break;
 
+                case TAG_BORDER_FILL:
+                    info.BorderFills.Add(ParseBorderFill(payload));
+                    break;
+
                 case TAG_BIN_DATA when payload.Length >= 4:
                     {
                         binSeq++;
@@ -905,6 +909,74 @@ public sealed class HwpReader : IDocumentReader
         return $"#{r:X2}{g:X2}{b:X2}";
     }
 
+    /// <summary>
+    /// HWPTAG_BORDER_FILL (KS X 5700) 페이로드 파싱.
+    /// Layout:
+    ///   0-1  : attr (WORD)
+    ///   2-7  : top border (HWPLINE = type 1B, width 1B, color BBGGRR 4B)
+    ///   8-13 : left border
+    ///   14-19: bottom border
+    ///   20-25: right border
+    ///   26-31: diagonal border
+    ///   32-35: fill kind (0=none, 1=color, 2=image, 4=gradient)
+    ///   36-39: background color (BBGGRR, fill kind=1 only)
+    ///   40-43: pattern color (BBGGRR, used if background is 0xFFFFFFFF)
+    /// </summary>
+    private static HwpBorderFill ParseBorderFill(byte[] p)
+    {
+        var bf = new HwpBorderFill();
+        // HWPLINE 파서: type(1B), width(1B), color BBGGRR(4B) = 6B
+        static (byte kind, byte width, string? color) ReadLine(byte[] b, int off)
+        {
+            if (off + 6 > b.Length) return (0, 0, null);
+            byte kind  = b[off];
+            byte width = b[off + 1];
+            uint bbggrr = BitConverter.ToUInt32(b, off + 2);
+            string? color = (kind == 0) ? null : FormatRgb(bbggrr);
+            return (kind, width, color);
+        }
+
+        if (p.Length >= 8)  { var (k, w, c) = ReadLine(p, 2);  bf.TopKind = k; bf.TopWidth = w; bf.TopColor = c; }
+        if (p.Length >= 14) { var (k, w, c) = ReadLine(p, 8);  bf.LeftKind = k; bf.LeftWidth = w; bf.LeftColor = c; }
+        if (p.Length >= 20) { var (k, w, c) = ReadLine(p, 14); bf.BottomKind = k; bf.BottomWidth = w; bf.BottomColor = c; }
+        if (p.Length >= 26) { var (k, w, c) = ReadLine(p, 20); bf.RightKind = k; bf.RightWidth = w; bf.RightColor = c; }
+
+        // fill (offset 32+)
+        if (p.Length >= 40)
+        {
+            uint fillKind = BitConverter.ToUInt32(p, 32);
+            if (fillKind == 1)  // color fill
+            {
+                uint bgColor  = BitConverter.ToUInt32(p, 36);  // BBGGRR
+                uint patColor = p.Length >= 44 ? BitConverter.ToUInt32(p, 40) : 0;
+                // 0xFFFFFFFF = transparent/no fill → fall through to pattern color
+                if (bgColor != 0xFFFFFFFF && bgColor != 0)
+                    bf.BackgroundColor = FormatRgb(bgColor);
+                else if (patColor != 0xFFFFFFFF && patColor != 0)
+                    bf.BackgroundColor = FormatRgb(patColor);
+            }
+        }
+        return bf;
+    }
+
+    // HWP 선 너비 인덱스(0-15) → pt 변환 (KS X 5700 §4.2.1)
+    private static readonly double[] HwpLineWidthTable =
+        [0.284, 0.340, 0.425, 0.567, 0.709, 0.850, 1.134, 1.417,
+         1.701, 1.984, 2.835, 4.252, 5.669, 8.504, 11.339, 14.173];
+
+    private static double HwpLineWidthToPt(byte widthIdx) =>
+        widthIdx < HwpLineWidthTable.Length ? HwpLineWidthTable[widthIdx] : 0.75;
+
+    private static BorderLineStyle HwpLineKindToStyle(byte kind) => kind switch
+    {
+        1 => BorderLineStyle.Solid,
+        2 => BorderLineStyle.Dashed,
+        3 => BorderLineStyle.Dotted,
+        4 => BorderLineStyle.DashDot,
+        5 => BorderLineStyle.Double,
+        _ => BorderLineStyle.Solid,
+    };
+
     // ── 머리말/꼬리말 파싱 ───────────────────────────────────────────────────
 
     /// <summary>
@@ -1013,14 +1085,14 @@ public sealed class HwpReader : IDocumentReader
 
                         var p = rec.Payload;
                         curCell = new HwpTableCell();
-                        // LIST_HEADER payload (KS X 5700):
-                        //   0-3: paraCount
-                        //   4-7: reserved
+                        // LIST_HEADER payload (KS X 5700 §4.2.10):
+                        //   0-1: nParagraphs, 2-7: flags/direction
                         //   8-9: col, 10-11: row (uint16 each)
                         //   12-13: colSpan, 14-15: rowSpan (uint16 each)
                         //   16-19: width (int32, HWPUNIT), 20-23: height (int32, HWPUNIT)
-                        //   24-27: background color (uint32, ABGR)
-                        //   28+: border properties...
+                        //   24-25: cellPaddingTop, 26-27: cellPaddingBottom (uint16 HWPUNIT)
+                        //   28-29: cellPaddingLeft, 30-31: cellPaddingRight (uint16 HWPUNIT)
+                        //   32-33: borderFillId (uint16, 1-based index into DocInfo BorderFills)
                         if (p.Length >= 16)
                         {
                             curCell.Col     = BitConverter.ToUInt16(p, 8);
@@ -1042,14 +1114,17 @@ public sealed class HwpReader : IDocumentReader
                             if (heightUnit > 0)
                                 curCell.HeightMm = heightUnit * HwpUnitToMm;
                         }
-                        // 셀 배경색 (offset 24-27, uint32 ABGR)
-                        if (p.Length >= 28)
+                        // 셀 내부 여백 (offset 24-31, uint16 HWPUNIT 각)
+                        if (p.Length >= 32)
                         {
-                            uint bgColorAbgr = BitConverter.ToUInt32(p, 24);
-                            // 0xFFFFFFFF = 투명/기본, 그 외는 색상 적용
-                            if (bgColorAbgr != 0xFFFFFFFF && bgColorAbgr != 0)
-                                curCell.BackgroundColor = FormatRgbAbgr(bgColorAbgr);
+                            curCell.PaddingTopMm    = BitConverter.ToUInt16(p, 24) * HwpUnitToMm;
+                            curCell.PaddingBottomMm = BitConverter.ToUInt16(p, 26) * HwpUnitToMm;
+                            curCell.PaddingLeftMm   = BitConverter.ToUInt16(p, 28) * HwpUnitToMm;
+                            curCell.PaddingRightMm  = BitConverter.ToUInt16(p, 30) * HwpUnitToMm;
                         }
+                        // borderFillId (offset 32-33, uint16, 1-based)
+                        if (p.Length >= 34)
+                            curCell.BorderFillId = BitConverter.ToUInt16(p, 32);
                     }
                     break;
 
@@ -1530,11 +1605,32 @@ public sealed class HwpReader : IDocumentReader
                     tableCell.ColumnSpan = hc.ColSpan;
                     tableCell.RowSpan = hc.RowSpan;
 
-                    // 셀 속성 적용 (너비, 배경색)
+                    // 셀 너비
                     if (hc.WidthMm > 0)
                         tableCell.WidthMm = hc.WidthMm;
-                    if (!string.IsNullOrEmpty(hc.BackgroundColor))
-                        tableCell.BackgroundColor = hc.BackgroundColor;
+
+                    // 셀 내부 여백
+                    if (hc.PaddingTopMm > 0)    tableCell.PaddingTopMm    = hc.PaddingTopMm;
+                    if (hc.PaddingBottomMm > 0) tableCell.PaddingBottomMm = hc.PaddingBottomMm;
+                    if (hc.PaddingLeftMm > 0)   tableCell.PaddingLeftMm   = hc.PaddingLeftMm;
+                    if (hc.PaddingRightMm > 0)  tableCell.PaddingRightMm  = hc.PaddingRightMm;
+
+                    // BORDER_FILL 테이블에서 배경색 및 테두리 조회
+                    if (docInfo != null && hc.BorderFillId >= 1 &&
+                        hc.BorderFillId - 1 < docInfo.BorderFills.Count)
+                    {
+                        var bf = docInfo.BorderFills[hc.BorderFillId - 1];
+                        if (!string.IsNullOrEmpty(bf.BackgroundColor))
+                            tableCell.BackgroundColor = bf.BackgroundColor;
+                        if (bf.TopKind != 0 && !string.IsNullOrEmpty(bf.TopColor))
+                            tableCell.BorderTop = new CellBorderSide(HwpLineWidthToPt(bf.TopWidth), bf.TopColor, HwpLineKindToStyle(bf.TopKind));
+                        if (bf.LeftKind != 0 && !string.IsNullOrEmpty(bf.LeftColor))
+                            tableCell.BorderLeft = new CellBorderSide(HwpLineWidthToPt(bf.LeftWidth), bf.LeftColor, HwpLineKindToStyle(bf.LeftKind));
+                        if (bf.BottomKind != 0 && !string.IsNullOrEmpty(bf.BottomColor))
+                            tableCell.BorderBottom = new CellBorderSide(HwpLineWidthToPt(bf.BottomWidth), bf.BottomColor, HwpLineKindToStyle(bf.BottomKind));
+                        if (bf.RightKind != 0 && !string.IsNullOrEmpty(bf.RightColor))
+                            tableCell.BorderRight = new CellBorderSide(HwpLineWidthToPt(bf.RightWidth), bf.RightColor, HwpLineKindToStyle(bf.RightKind));
+                    }
 
                     // 행 높이: 첫 셀의 높이로 설정 (같은 행의 모든 셀이 같은 높이)
                     if (c == 0 && hc.HeightMm > 0)
@@ -1763,10 +1859,30 @@ public sealed class HwpReader : IDocumentReader
     private sealed class HwpDocInfo
     {
         public int SectionCount { get; set; }
-        public List<string>        FontNames    { get; } = new();
-        public List<HwpBinInfo>    BinInfos     { get; } = new();
-        public List<HwpCharShape>  CharShapes   { get; } = new();
-        public List<HwpParaShape>  ParaShapes   { get; } = new();
+        public List<string>          FontNames    { get; } = new();
+        public List<HwpBinInfo>      BinInfos     { get; } = new();
+        public List<HwpCharShape>    CharShapes   { get; } = new();
+        public List<HwpParaShape>    ParaShapes   { get; } = new();
+        public List<HwpBorderFill>   BorderFills  { get; } = new();
+    }
+
+    private sealed class HwpBorderFill
+    {
+        // 테두리 선 (top/left/bottom/right): kind=0 이면 없음
+        public byte TopKind    { get; set; }
+        public byte TopWidth   { get; set; }
+        public string? TopColor    { get; set; }
+        public byte LeftKind   { get; set; }
+        public byte LeftWidth  { get; set; }
+        public string? LeftColor   { get; set; }
+        public byte BottomKind { get; set; }
+        public byte BottomWidth{ get; set; }
+        public string? BottomColor { get; set; }
+        public byte RightKind  { get; set; }
+        public byte RightWidth { get; set; }
+        public string? RightColor  { get; set; }
+        // 배경 채움
+        public string? BackgroundColor { get; set; }   // #RRGGBB or null
     }
 
     private sealed class HwpCharShape
@@ -1845,9 +1961,13 @@ public sealed class HwpReader : IDocumentReader
         public int Col { get; set; }
         public int RowSpan { get; set; } = 1;
         public int ColSpan { get; set; } = 1;
-        public double WidthMm { get; set; }    // 셀 너비 (mm)
-        public double HeightMm { get; set; }   // 셀 높이 (mm)
-        public string? BackgroundColor { get; set; }  // ABGR hex (예: "#FFFFFF")
+        public double WidthMm { get; set; }          // 셀 너비 (mm)
+        public double HeightMm { get; set; }         // 셀 높이 (mm)
+        public double PaddingTopMm { get; set; }     // 셀 위 여백
+        public double PaddingBottomMm { get; set; }  // 셀 아래 여백
+        public double PaddingLeftMm { get; set; }    // 셀 왼쪽 여백
+        public double PaddingRightMm { get; set; }   // 셀 오른쪽 여백
+        public int BorderFillId { get; set; } = -1;  // DocInfo BorderFills 참조 (1-based)
         public List<HwpParagraph> Paragraphs { get; set; } = new();
         // 중첩 표 지원: 셀이 단락 대신 표를 포함할 수 있음.
         public List<object> Blocks { get; set; } = new();  // HwpParagraph 또는 HwpTableBlock
