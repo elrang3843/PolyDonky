@@ -635,6 +635,22 @@ public sealed class HwpReader : IDocumentReader
                     break;
                 case TAG_RECT_COMPONENT:
                     kind = HwpShapeKind.Rectangle;
+                    // RECT_COMPONENT 페이로드: offset 0-3 에 fill 관련 정보가 있을 수 있음
+                    if (rec.Payload.Length >= 4 && shapeBorderFillId < 0)
+                    {
+                        // 먼저 paylaod 길이와 내용을 로깅해서 구조 파악
+                        var p = rec.Payload;
+                        HwpLog.Write($"[ParseGsoControl] RECT_COMPONENT payload len={p.Length}, " +
+                            $"bytes={string.Join("-", p.Take(Math.Min(20, p.Length)).Select(b => $"{b:X2}"))}");
+                        // offset 0-3 또는 다른 위치에 fillId가 있을 가능성
+                        // 임시로 offset 0, 2, 4 등을 체크
+                        if (p.Length >= 4)
+                        {
+                            ushort val0 = BitConverter.ToUInt16(p, 0);
+                            ushort val2 = BitConverter.ToUInt16(p, 2);
+                            HwpLog.Write($"[ParseGsoControl] RECT_COMPONENT: @0={val0}, @2={val2}");
+                        }
+                    }
                     break;
                 case TAG_ELLIPSE_COMPONENT:
                     kind = HwpShapeKind.Ellipse;
