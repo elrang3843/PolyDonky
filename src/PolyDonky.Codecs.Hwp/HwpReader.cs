@@ -604,19 +604,28 @@ public sealed class HwpReader : IDocumentReader
                         //   32-35 : rotation angle (uint32, 1/100 degree)
                         //   36-39 : rotation center X (uint32, HWPUNIT)
                         //   40-43 : rotation center Y (uint32, HWPUNIT)
-                        //   44-47 : borderFillId (uint32, 1-based index into DocInfo BorderFills) — 채우기 색상
+                        //   44+   : borderFillId 위치 불확정 — 상세 로깅으로 진단 필요
                         // CTRL_HEADER 의 위치를 우선 사용 (절대 좌표). SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대.
                         var p = rec.Payload;
                         if (wMm <= 0)
                             wMm = BitConverter.ToUInt32(p, 24) * HwpUnitToMm;
                         if (hMm <= 0)
                             hMm = BitConverter.ToUInt32(p, 28) * HwpUnitToMm;
-                        if (p.Length >= 48 && shapeBorderFillId < 0)
+
+                        // 진단: offset 44+ 주변의 값들을 모두 로깅 (borderFillId 위치 추적)
+                        HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT bytes @40-52: {BitConverter.ToString(p.Skip(40).Take(Math.Min(p.Length - 40, 12)).ToArray())}");
+                        if (p.Length >= 46)
                         {
-                            int bfId = (int)BitConverter.ToUInt32(p, 44);
-                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT borderFillId at offset 44: {bfId} (payload.Length={p.Length})");
-                            if (bfId >= 1) shapeBorderFillId = bfId;
+                            ushort bfId16_44 = BitConverter.ToUInt16(p, 44);
+                            ushort bfId16_46 = p.Length >= 48 ? BitConverter.ToUInt16(p, 46) : (ushort)0;
+                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT uint16@44={bfId16_44}, uint16@46={bfId16_46}");
                         }
+                        if (p.Length >= 48)
+                        {
+                            uint bfId32_44 = BitConverter.ToUInt32(p, 44);
+                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT uint32@44=0x{bfId32_44:X8}");
+                        }
+                        // 해당 위치를 찾을 때까지: 아무도 할당하지 않음 (offset 확정 대기)
                         hasShape = true;
                     }
                     break;
@@ -1241,18 +1250,37 @@ public sealed class HwpReader : IDocumentReader
             else if (rec.TagId == TAG_PAGE_BORDER_FILL && body.PageBackgroundBorderFillId < 0
                      && rec.Payload.Length >= 4)
             {
-                // HWPTAG_PAGE_BORDER_FILL 레이아웃 (KS X 5700):
-                //   0-1: flags (WORD)
-                //         bit 0: ref area (0=텍스트 영역, 1=용지 전체 기준)
-                //         bit 2: position (0=앞, 1=뒤/behind)
-                //         bits 3-6: 적용 면 (left/right/top/bottom)
-                //   2-3: borderFillId (WORD, 1-based index into DocInfo BorderFills)
+                // HWPTAG_PAGE_BORDER_FILL 레이아웃 (KS X 5700) — 정확한 구조 미확정, 복수 offset 로깅
                 var pb = rec.Payload;
-                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: payload={BitConverter.ToString(pb.Take(Math.Min(pb.Length, 8)).ToArray())} len={pb.Length}");
-                ushort fillId = BitConverter.ToUInt16(pb, 2);
-                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: borderFillId@2={fillId}");
-                if (fillId >= 1)
-                    body.PageBackgroundBorderFillId = fillId;
+                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: full payload={BitConverter.ToString(pb.Take(Math.Min(pb.Length, 14)).ToArray())} len={pb.Length}");
+
+                // 가능한 offset 조합 모두 시도
+                if (pb.Length >= 2)
+                {
+                    ushort f0 = BitConverter.ToUInt16(pb, 0);
+                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@0={f0}");
+                }
+                if (pb.Length >= 4)
+                {
+                    uint f0_32 = BitConverter.ToUInt32(pb, 0);
+                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint32@0=0x{f0_32:X8}");
+                    ushort f2 = BitConverter.ToUInt16(pb, 2);
+                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@2={f2}");
+                }
+                if (pb.Length >= 6)
+                {
+                    ushort f4 = BitConverter.ToUInt16(pb, 4);
+                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@4={f4}");
+                }
+                if (pb.Length >= 8)
+                {
+                    ushort f6 = BitConverter.ToUInt16(pb, 6);
+                    uint f4_32 = BitConverter.ToUInt32(pb, 4);
+                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: uint16@6={f6}, uint32@4=0x{f4_32:X8}");
+                }
+
+                // 임시: 첫 번째 나올 수 있는 1-3 값을 사용하거나, 기본값 사용하지 않음
+                // (정확한 offset 확정 후 수정 예정)
             }
             i++;
         }
