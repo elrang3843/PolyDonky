@@ -575,6 +575,13 @@ public sealed class HwpReader : IDocumentReader
         HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, wrapType={wrapType}, isBehindText={isBehindText}");
         List<HwpParagraph>? tbContent = null;
 
+        // 도형별 추가 속성 (도형 서브컴포넌트에서 채워짐)
+        double shapeRotationDeg = 0;
+        ShapeArrow shapeStartArrow = ShapeArrow.None;
+        ShapeArrow shapeEndArrow   = ShapeArrow.None;
+        double shapeCornerRadiusPct = 0;
+        List<(double X, double Y)>? shapePoints = null;
+
         // 진단: GSO 컨트롤 자식 레코드 추적
         int gsoStartIdx = startIdx;
         var gsoChildTags = new List<string>();
@@ -590,41 +597,44 @@ public sealed class HwpReader : IDocumentReader
 
             switch (rec.TagId)
             {
-                case TAG_SHAPE_COMPONENT when rec.Payload.Length >= 32:
+                case TAG_SHAPE_COMPONENT when rec.Payload.Length >= 28:
                     {
-                        // SHAPE_COMPONENT (HWPTAG_SHAPE_COMPONENT) 레이아웃 (KS X 5700):
-                        //   0-3   : childCtrlId (4 ASCII chars: "rect","elli","spol","pic ","ole ","txt ","cont")
-                        //   4-7   : groupLevel (uint16) + localFileVersion (uint16)
-                        //   8-11  : xPosShape (int32, HWPUNIT) — 그룹 내부면 부모 기준 상대 위치
-                        //   12-15 : yPosShape (int32, HWPUNIT)
-                        //   16-19 : groupingLevel / ngrp (uint32)
-                        //   20-23 : nlevel (uint32)
-                        //   24-27 : objW (uint32, HWPUNIT) — 초기 너비
-                        //   28-31 : objH (uint32, HWPUNIT) — 초기 높이
-                        //   32-35 : rotation angle (uint32, 1/100 degree)
-                        //   36-39 : rotation center X (uint32, HWPUNIT)
-                        //   40-43 : rotation center Y (uint32, HWPUNIT)
-                        //   44+   : borderFillId 위치 불확정 — 상세 로깅으로 진단 필요
+                        // SHAPE_COMPONENT (KS X 5700) 실제 레이아웃:
+                        //   0-3   : childCtrlId (4-char ASCII: "rect","elli","spol","pic ","ole ","txt ","cont")
+                        //   4-5   : groupLevel   (WORD)
+                        //   6-7   : localFileVersion (WORD)
+                        //   8-11  : xPosShape (INT32, HWPUNIT) — 그룹 내 상대 또는 페이지 절대
+                        //   12-15 : yPosShape (INT32, HWPUNIT)
+                        //   16-17 : nGrp       (WORD) — 그룹 내 객체 수
+                        //   18-19 : groupId    (WORD)
+                        //   20-23 : objWidth   (UINT32, HWPUNIT) ← 이전 코드는 24 로 잘못 읽었음
+                        //   24-27 : objHeight  (UINT32, HWPUNIT) ← 이전 코드는 28 로 잘못 읽었음
+                        //   28-31 : rotation angle (UINT32, 1/100 degree)
+                        //   32-35 : rotation center X (INT32, HWPUNIT)
+                        //   36-39 : rotation center Y (INT32, HWPUNIT)
+                        //   40-49 : shadow/scale 필드 (10 bytes, 세부 불확정)
+                        //   50-51 : borderFillId (UINT16, 1-based) ← 실측 확인
                         // CTRL_HEADER 의 위치를 우선 사용 (절대 좌표). SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대.
                         var p = rec.Payload;
-                        if (wMm <= 0)
-                            wMm = BitConverter.ToUInt32(p, 24) * HwpUnitToMm;
-                        if (hMm <= 0)
-                            hMm = BitConverter.ToUInt32(p, 28) * HwpUnitToMm;
+                        if (wMm <= 0 && p.Length >= 24)
+                            wMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
+                        if (hMm <= 0 && p.Length >= 28)
+                            hMm = BitConverter.ToUInt32(p, 24) * HwpUnitToMm;
 
-                        // SHAPE_COMPONENT offset 50: borderFillId (UINT16, 1-based)
-                        // KS X 5700 실측:
-                        //   36-39: rotation_center_x (INT32)
-                        //   40-43: rotation_center_y (INT32)
-                        //   44-45: shadow_offset_x   (INT16? — 실측값 0)
-                        //   46-47: shadow_offset_y   (INT16? — 실측값 = centerY HWPUNIT)
-                        //   48-49: ??? (항상 0)
-                        //   50-51: borderFillId      (UINT16, 1-based) ← 실측 확인
+                        // 회전각: offset 28, 1/100 degree → degree
+                        if (p.Length >= 32)
+                        {
+                            uint rot100 = BitConverter.ToUInt32(p, 28);
+                            if (rot100 > 0 && rot100 < 36000)
+                                shapeRotationDeg = rot100 / 100.0;
+                        }
+
+                        // borderFillId at offset 50 (실측 확인)
                         if (p.Length >= 52 && shapeBorderFillId < 0)
                         {
                             int bfId = BitConverter.ToUInt16(p, 50);
-                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT borderFillId@50={bfId}");
-                            if (bfId >= 1) shapeBorderFillId = bfId;
+                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT borderFillId@50={bfId}, rotation={shapeRotationDeg:F1}deg");
+                            if (bfId >= 1 && bfId <= 1024) shapeBorderFillId = bfId;
                         }
                         hasShape = true;
                     }
@@ -632,23 +642,31 @@ public sealed class HwpReader : IDocumentReader
 
                 case TAG_LINE_COMPONENT:
                     kind = HwpShapeKind.Line;
+                    // LINE_COMPONENT payload (KS X 5700):
+                    //   0-1: lineAttr (WORD)
+                    //     bits 0-2: start arrow kind (0=none,1=open,2=filled,3=diamond,4=circle)
+                    //     bits 4-6: end arrow kind
+                    if (rec.Payload.Length >= 2)
+                    {
+                        ushort la = BitConverter.ToUInt16(rec.Payload, 0);
+                        shapeStartArrow = MapArrow((uint)((la >> 0) & 0x7));
+                        shapeEndArrow   = MapArrow((uint)((la >> 4) & 0x7));
+                        HwpLog.Write($"[ParseGsoControl] LINE_COMPONENT lineAttr=0x{la:X4}, " +
+                            $"startArrow={shapeStartArrow}, endArrow={shapeEndArrow}");
+                    }
                     break;
                 case TAG_RECT_COMPONENT:
                     kind = HwpShapeKind.Rectangle;
-                    // RECT_COMPONENT 페이로드: offset 0-3 에 fill 관련 정보가 있을 수 있음
-                    if (rec.Payload.Length >= 4 && shapeBorderFillId < 0)
+                    // RECT_COMPONENT payload (KS X 5700):
+                    //   0-1: roundedCornerPercent (UINT16, 0~100)
+                    if (rec.Payload.Length >= 2)
                     {
-                        // 먼저 paylaod 길이와 내용을 로깅해서 구조 파악
-                        var p = rec.Payload;
-                        HwpLog.Write($"[ParseGsoControl] RECT_COMPONENT payload len={p.Length}, " +
-                            $"bytes={string.Join("-", p.Take(Math.Min(20, p.Length)).Select(b => $"{b:X2}"))}");
-                        // offset 0-3 또는 다른 위치에 fillId가 있을 가능성
-                        // 임시로 offset 0, 2, 4 등을 체크
-                        if (p.Length >= 4)
+                        ushort roundPct = BitConverter.ToUInt16(rec.Payload, 0);
+                        HwpLog.Write($"[ParseGsoControl] RECT_COMPONENT roundedCornerPct={roundPct}");
+                        if (roundPct > 0 && roundPct <= 100)
                         {
-                            ushort val0 = BitConverter.ToUInt16(p, 0);
-                            ushort val2 = BitConverter.ToUInt16(p, 2);
-                            HwpLog.Write($"[ParseGsoControl] RECT_COMPONENT: @0={val0}, @2={val2}");
+                            shapeCornerRadiusPct = roundPct;
+                            kind = HwpShapeKind.RoundedRect;
                         }
                     }
                     break;
@@ -660,9 +678,45 @@ public sealed class HwpReader : IDocumentReader
                     break;
                 case TAG_POLYGON_COMPONENT:
                     kind = HwpShapeKind.Polygon;
+                    // POLYGON_COMPONENT payload (KS X 5700):
+                    //   0-1: nPoints (UINT16)
+                    //   2..: points (INT32 x, INT32 y) × nPoints, HWPUNIT 도형 내부 좌표
+                    if (rec.Payload.Length >= 2)
+                    {
+                        int nPts = BitConverter.ToUInt16(rec.Payload, 0);
+                        var pts = new List<(double X, double Y)>(nPts);
+                        for (int j = 0; j < nPts; j++)
+                        {
+                            int off = 2 + j * 8;
+                            if (off + 8 > rec.Payload.Length) break;
+                            double px = BitConverter.ToInt32(rec.Payload, off)     * HwpUnitToMm;
+                            double py = BitConverter.ToInt32(rec.Payload, off + 4) * HwpUnitToMm;
+                            pts.Add((px, py));
+                        }
+                        if (pts.Count >= 2) shapePoints = pts;
+                        HwpLog.Write($"[ParseGsoControl] POLYGON_COMPONENT: nPoints={nPts}, parsed={pts.Count}");
+                    }
                     break;
                 case TAG_CURVE_COMPONENT:
                     kind = HwpShapeKind.Curve;
+                    // CURVE_COMPONENT payload (KS X 5700):
+                    //   0-1: nPoints (UINT16)
+                    //   2..: anchor points (INT32 x, INT32 y) × nPoints, HWPUNIT 도형 내부 좌표
+                    if (rec.Payload.Length >= 2)
+                    {
+                        int nCrvPts = BitConverter.ToUInt16(rec.Payload, 0);
+                        var crvPts = new List<(double X, double Y)>(nCrvPts);
+                        for (int j = 0; j < nCrvPts; j++)
+                        {
+                            int off = 2 + j * 8;
+                            if (off + 8 > rec.Payload.Length) break;
+                            double px = BitConverter.ToInt32(rec.Payload, off)     * HwpUnitToMm;
+                            double py = BitConverter.ToInt32(rec.Payload, off + 4) * HwpUnitToMm;
+                            crvPts.Add((px, py));
+                        }
+                        if (crvPts.Count >= 2) shapePoints = crvPts;
+                        HwpLog.Write($"[ParseGsoControl] CURVE_COMPONENT: nPoints={nCrvPts}, parsed={crvPts.Count}");
+                    }
                     break;
                 case TAG_OLE_COMPONENT:
                     kind = HwpShapeKind.Ole;
@@ -813,6 +867,11 @@ public sealed class HwpReader : IDocumentReader
                     AnchorPageIndex = anchorPageIndex,
                     BorderFillId = shapeBorderFillId,
                     IsBehindText = isBehindText,
+                    RotationAngleDeg = shapeRotationDeg,
+                    StartArrow = shapeStartArrow,
+                    EndArrow = shapeEndArrow,
+                    CornerRadiusPct = shapeCornerRadiusPct,
+                    Points = shapePoints,
                 });
                 break;
         }
@@ -1560,40 +1619,79 @@ public sealed class HwpReader : IDocumentReader
             if (sh.Kind == HwpShapeKind.Ole && sh.BinDataId > 0)
                 oleData = ReadBinData(root, sh.BinDataId);
 
+            var soWidthMm  = sh.WidthMm  > 1 ? sh.WidthMm  : 40;
+            var soHeightMm = sh.HeightMm > 1 ? sh.HeightMm : 20;
             var so = new ShapeObject
             {
-                Kind         = MapShapeKind(sh.Kind),
-                WrapMode     = sh.IsBehindText ? ImageWrapMode.BehindText : ImageWrapMode.InFrontOfText,
-                OverlayXMm   = sh.XMm,
-                OverlayYMm   = sh.YMm,
-                WidthMm      = sh.WidthMm  > 1 ? sh.WidthMm  : 40,
-                HeightMm     = sh.HeightMm > 1 ? sh.HeightMm : 20,
-                AnchorPageIndex = sh.AnchorPageIndex,
-                StrokeColor  = "#000000",
+                Kind              = MapShapeKind(sh.Kind),
+                WrapMode          = sh.IsBehindText ? ImageWrapMode.BehindText : ImageWrapMode.InFrontOfText,
+                OverlayXMm        = sh.XMm,
+                OverlayYMm        = sh.YMm,
+                WidthMm           = soWidthMm,
+                HeightMm          = soHeightMm,
+                AnchorPageIndex   = sh.AnchorPageIndex,
+                RotationAngleDeg  = sh.RotationAngleDeg,
+                StartArrow        = sh.StartArrow,
+                EndArrow          = sh.EndArrow,
+                StrokeColor       = "#000000",
                 StrokeThicknessPt = 1.0,
-                OleData      = oleData,  // OLE 바이너리 데이터 (Ole kind 일 때만 사용)
+                OleData           = oleData,
             };
 
-            // SHAPE_COMPONENT 의 borderFillId → 채우기 색상 / 테두리 적용
+            // 둥근 모서리 반지름 (RECT_COMPONENT 의 roundedCornerPercent 기반)
+            if (sh.Kind == HwpShapeKind.RoundedRect && sh.CornerRadiusPct > 0)
+                so.CornerRadiusMm = Math.Min(soWidthMm, soHeightMm) * sh.CornerRadiusPct / 100.0;
+
+            // 폴리곤 / 곡선 꼭짓점 복사 (도형 내부 좌표 mm)
+            if (sh.Points != null && sh.Points.Count >= 2)
+            {
+                foreach (var (px, py) in sh.Points)
+                    so.Points.Add(new ShapePoint { X = px, Y = py });
+            }
+
+            // SHAPE_COMPONENT 의 borderFillId → 채우기 색상 / 테두리(획) 속성 적용
             if (sh.BorderFillId >= 1 && sh.BorderFillId - 1 < docInfo.BorderFills.Count)
             {
                 var bf = docInfo.BorderFills[sh.BorderFillId - 1];
-                HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} → bg={bf.BackgroundColor} topKind={bf.TopKind} leftKind={bf.LeftKind}");
+
                 if (!string.IsNullOrEmpty(bf.BackgroundColor))
                     so.FillColor = bf.BackgroundColor;
-                // 테두리 없는 채우기(순수 배경)면 stroke 투명 처리
-                if (bf.TopKind == 0 && bf.LeftKind == 0 && bf.BottomKind == 0 && bf.RightKind == 0
-                    && !string.IsNullOrEmpty(bf.BackgroundColor))
+
+                // 4면 테두리 중 None 아닌 첫 번째를 획(stroke)에 적용.
+                // 도형 테두리는 4면이 보통 동일하므로 Top → Left → Bottom → Right 우선.
+                byte sKind  = bf.TopKind;
+                byte sWidth = bf.TopWidth;
+                string? sColor = bf.TopColor;
+                if (sKind == 0) { sKind = bf.LeftKind;   sWidth = bf.LeftWidth;   sColor = bf.LeftColor; }
+                if (sKind == 0) { sKind = bf.BottomKind; sWidth = bf.BottomWidth; sColor = bf.BottomColor; }
+                if (sKind == 0) { sKind = bf.RightKind;  sWidth = bf.RightWidth;  sColor = bf.RightColor; }
+
+                if (sKind > 0)
                 {
-                    so.StrokeColor = "#00000000";  // 투명
-                    so.StrokeThicknessPt = 0;
+                    so.StrokeColor        = sColor ?? "#000000";
+                    so.StrokeThicknessPt  = HwpLineWidthToPt(sWidth);
+                    so.StrokeDash         = HwpLineKindToDash(sKind);
                 }
+                else
+                {
+                    // 테두리 없는 채우기 → 획 투명
+                    so.StrokeColor        = "#00000000";
+                    so.StrokeThicknessPt  = 0;
+                }
+
+                HwpLog.Write($"[BuildDocument] Shape borderFillId={sh.BorderFillId} " +
+                    $"strokeKind={sKind} strokeColor={sColor ?? "null"} strokePt={so.StrokeThicknessPt:F2} " +
+                    $"dash={so.StrokeDash} fill={so.FillColor ?? "null"}");
             }
             else
             {
-                HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} (count={docInfo.BorderFills.Count}) → no fill lookup, FillColor=null");
+                HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} " +
+                    $"(count={docInfo.BorderFills.Count}) → no fill lookup");
             }
-            HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) wrapMode={so.WrapMode} fillColor={so.FillColor ?? "null"} strokeColor={so.StrokeColor} anchorPage={so.AnchorPageIndex}");
+            HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm " +
+                $"pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) rot={so.RotationAngleDeg:F1}deg " +
+                $"wrapMode={so.WrapMode} fillColor={so.FillColor ?? "null"} strokeColor={so.StrokeColor} " +
+                $"anchorPage={so.AnchorPageIndex} points={so.Points.Count}");
 
             section.Blocks.Add(so);
         }
@@ -1874,13 +1972,31 @@ public sealed class HwpReader : IDocumentReader
 
     private static ShapeKind MapShapeKind(HwpShapeKind k) => k switch
     {
-        HwpShapeKind.Line      => ShapeKind.Line,
-        HwpShapeKind.Ellipse   => ShapeKind.Ellipse,
-        HwpShapeKind.Polygon   => ShapeKind.Polygon,
-        HwpShapeKind.Curve     => ShapeKind.Spline,
-        HwpShapeKind.Arc       => ShapeKind.HalfCircle,
-        HwpShapeKind.Ole       => ShapeKind.Ole,
-        _                      => ShapeKind.Rectangle,
+        HwpShapeKind.Line        => ShapeKind.Line,
+        HwpShapeKind.Ellipse     => ShapeKind.Ellipse,
+        HwpShapeKind.Polygon     => ShapeKind.Polygon,
+        HwpShapeKind.Curve       => ShapeKind.Spline,
+        HwpShapeKind.Arc         => ShapeKind.HalfCircle,
+        HwpShapeKind.Ole         => ShapeKind.Ole,
+        HwpShapeKind.RoundedRect => ShapeKind.RoundedRect,
+        _                        => ShapeKind.Rectangle,
+    };
+
+    private static StrokeDash HwpLineKindToDash(byte kind) => kind switch
+    {
+        2 => StrokeDash.Dashed,
+        3 => StrokeDash.Dotted,
+        4 => StrokeDash.DashDot,
+        _ => StrokeDash.Solid,
+    };
+
+    private static ShapeArrow MapArrow(uint kind) => kind switch
+    {
+        1 => ShapeArrow.Open,
+        2 => ShapeArrow.Filled,
+        3 => ShapeArrow.Diamond,
+        4 => ShapeArrow.Circle,
+        _ => ShapeArrow.None,
     };
 
     // ── HWP 텍스트 추출 ────────────────────────────────────────────────────────
@@ -2223,13 +2339,18 @@ public sealed class HwpReader : IDocumentReader
         public int          BinDataId { get; set; }  // OLE 도형용
         public int          AnchorPageIndex { get; set; }
         public int          BorderFillId { get; set; } = -1;  // SHAPE_COMPONENT 의 borderFillId (1-based)
-        public bool         IsBehindText { get; set; }        // CTRL_HEADER flags bit 15
+        public bool         IsBehindText { get; set; }
+        public double       RotationAngleDeg { get; set; }
+        public ShapeArrow   StartArrow { get; set; }
+        public ShapeArrow   EndArrow   { get; set; }
+        public double       CornerRadiusPct { get; set; }     // RECT_COMPONENT roundedCornerPercent (0-100)
+        public List<(double X, double Y)>? Points { get; set; }  // POLYGON/CURVE 꼭짓점 (도형 내부 좌표 mm)
     }
 
     private record struct HwpRecord(uint TagId, uint Level, byte[] Payload);
 
     private enum HwpShapeKind
     {
-        Rectangle, Line, Ellipse, Arc, Polygon, Curve, Ole, Picture, Container, TextBox
+        Rectangle, RoundedRect, Line, Ellipse, Arc, Polygon, Curve, Ole, Picture, Container, TextBox
     }
 }

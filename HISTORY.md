@@ -44,6 +44,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Fixed
+
+- **HWP 도형 속성 정확도 개선**: `SHAPE_COMPONENT` 너비/높이 오프셋을 KS X 5700 기준(offset 20/24)으로 수정(이전 코드는 4바이트 밀린 24/28을 읽었음), 회전각(offset 28, 1/100도) 추출 추가, `borderFillId` sanity 범위 상향(≤1024). `RECT_COMPONENT`에서 둥근 모서리 비율(`roundedCornerPercent`) 읽기 추가(`RoundedRect` 종류 자동 선택). `LINE_COMPONENT`에서 시작/끝 화살표 유형 파싱 추가. `POLYGON_COMPONENT`·`CURVE_COMPONENT`에서 꼭짓점 좌표 배열 추출 추가. `BuildDocument`에서 `borderFill` Top/Left/Bottom/Right 테두리 중 첫 번째 Non-None을 도형 획(stroke) 색상·두께·선 종류에 올바르게 반영(이전에는 획 제거 조건만 처리하고 실제 색상·두께는 항상 기본값으로 남음). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 ### Added
 
 - **HWP 용지 설정·글상자·도형·이미지 ingest**: `HwpReader`에서 `TAG_PAGE_DEF(0x03C)` 파싱으로 용지 크기·방향·여백을 `PageSettings`에 반영, `TAG_CTRL_HEADER(0x03A)` + `TAG_LIST_HEADER(0x03B)` 레벨 기반 파싱으로 글상자(`TextBoxObject`) 추출, `TAG_SHAPE_COMPONENT(0x03F)` + 서브태그(`0x041–0x049`)로 도형 종류·위치·크기 파싱, `TAG_PICTURE_COMPONENT(0x048)` + `BinData/BIN####` 스트림 읽기로 이미지(`ImageBlock`) 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
