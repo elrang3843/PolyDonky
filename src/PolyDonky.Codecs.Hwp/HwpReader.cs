@@ -565,8 +565,14 @@ public sealed class HwpReader : IDocumentReader
         HwpShapeKind kind = HwpShapeKind.Rectangle;
         int binDataId = 0;
         int shapeBorderFillId = -1;  // SHAPE_COMPONENT 의 borderFillId (채우기 색상 참조)
-        // CTRL_HEADER flags bit 15 (0x8000): 1 = 텍스트 뒤 배치(BehindText), 0 = 텍스트 앞(InFrontOfText)
-        bool isBehindText = (ctrlFlags & 0x8000) != 0;
+        // CTRL_HEADER flags bits 0-2: wrapType
+        //   0-3: 어울림 (square wrap) — 텍스트 뒤에 배치됨 (BehindText)
+        //   4:   글자처럼 취급 (inline) — BehindText 로 처리
+        //   5:   글 앞 (InFrontOfText)
+        //   6:   글 뒤 (BehindText)
+        uint wrapType = ctrlFlags & 0x7;
+        bool isBehindText = wrapType != 5;
+        HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, wrapType={wrapType}, isBehindText={isBehindText}");
         List<HwpParagraph>? tbContent = null;
 
         // 진단: GSO 컨트롤 자식 레코드 추적
@@ -608,6 +614,7 @@ public sealed class HwpReader : IDocumentReader
                         if (p.Length >= 48 && shapeBorderFillId < 0)
                         {
                             int bfId = (int)BitConverter.ToUInt32(p, 44);
+                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT borderFillId at offset 44: {bfId} (payload.Length={p.Length})");
                             if (bfId >= 1) shapeBorderFillId = bfId;
                         }
                         hasShape = true;
@@ -1232,20 +1239,20 @@ public sealed class HwpReader : IDocumentReader
                 body.PageDef = ParsePageDef(rec.Payload);
             }
             else if (rec.TagId == TAG_PAGE_BORDER_FILL && body.PageBackgroundBorderFillId < 0
-                     && rec.Payload.Length >= 10)
+                     && rec.Payload.Length >= 4)
             {
                 // HWPTAG_PAGE_BORDER_FILL 레이아웃 (KS X 5700):
-                //   0-3: flags (uint32) — bit 0: 0=text area, 1=paper 기준; bit 2: 0=front, 1=back
-                //   4-5: borderFillId for text area (uint16, 1-based)
-                //   6-7: borderFillId for paper (uint16, 1-based)  ← 페이지 배경색
-                //   8-9: borderFillId for header area (uint16)
-                // (실제 오프셋은 HWP 버전에 따라 다를 수 있음 — 여기서는 보수적 파싱)
-                ushort paperFillId = BitConverter.ToUInt16(rec.Payload, 6);
-                if (paperFillId >= 1)
-                {
-                    body.PageBackgroundBorderFillId = paperFillId;
-                    HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: paperFillId={paperFillId}");
-                }
+                //   0-1: flags (WORD)
+                //         bit 0: ref area (0=텍스트 영역, 1=용지 전체 기준)
+                //         bit 2: position (0=앞, 1=뒤/behind)
+                //         bits 3-6: 적용 면 (left/right/top/bottom)
+                //   2-3: borderFillId (WORD, 1-based index into DocInfo BorderFills)
+                var pb = rec.Payload;
+                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: payload={BitConverter.ToString(pb.Take(Math.Min(pb.Length, 8)).ToArray())} len={pb.Length}");
+                ushort fillId = BitConverter.ToUInt16(pb, 2);
+                HwpLog.Write($"[SkipControl] PAGE_BORDER_FILL: borderFillId@2={fillId}");
+                if (fillId >= 1)
+                    body.PageBackgroundBorderFillId = fillId;
             }
             i++;
         }
@@ -1518,6 +1525,7 @@ public sealed class HwpReader : IDocumentReader
             if (sh.BorderFillId >= 1 && sh.BorderFillId - 1 < docInfo.BorderFills.Count)
             {
                 var bf = docInfo.BorderFills[sh.BorderFillId - 1];
+                HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} → bg={bf.BackgroundColor} topKind={bf.TopKind} leftKind={bf.LeftKind}");
                 if (!string.IsNullOrEmpty(bf.BackgroundColor))
                     so.FillColor = bf.BackgroundColor;
                 // 테두리 없는 채우기(순수 배경)면 stroke 투명 처리
@@ -1528,6 +1536,11 @@ public sealed class HwpReader : IDocumentReader
                     so.StrokeThicknessPt = 0;
                 }
             }
+            else
+            {
+                HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} (count={docInfo.BorderFills.Count}) → no fill lookup, FillColor=null");
+            }
+            HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) wrapMode={so.WrapMode} fillColor={so.FillColor ?? "null"} strokeColor={so.StrokeColor} anchorPage={so.AnchorPageIndex}");
 
             section.Blocks.Add(so);
         }
