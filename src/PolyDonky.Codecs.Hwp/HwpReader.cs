@@ -1604,10 +1604,19 @@ public sealed class HwpReader : IDocumentReader
             yield return new Core.Paragraph { Style = { ForcePageBreakBefore = true } };
             yield break;
         }
-        if (string.IsNullOrWhiteSpace(hp.Text)) yield break;
+        if (string.IsNullOrWhiteSpace(hp.Text))
+        {
+            // 빈 단락도 페이지 구조(anchorPage 기준 페이지 생성)를 위해 보존.
+            yield return new Core.Paragraph { Style = { ForcePageBreakBefore = hp.PageBreakBefore } };
+            yield break;
+        }
 
         var fullText = hp.Text.Replace("\r", "");
-        if (string.IsNullOrWhiteSpace(fullText)) yield break;
+        if (string.IsNullOrWhiteSpace(fullText))
+        {
+            yield return new Core.Paragraph { Style = { ForcePageBreakBefore = hp.PageBreakBefore } };
+            yield break;
+        }
 
         // soft line break 단위로 분리. 첫 줄에만 PageBreakBefore 적용.
         var lines = fullText.Split('\n');
