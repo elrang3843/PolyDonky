@@ -1253,7 +1253,7 @@ public sealed class HwpReader : IDocumentReader
                     if (table != null) section.Blocks.Add(table);
                     break;
                 case HwpThematicBreakBlock:
-                    section.Blocks.Add(new ThematicBreakBlock());
+                    section.Blocks.Add(new ThematicBreakBlock { LineColor = "#000000" });
                     break;
             }
         }
