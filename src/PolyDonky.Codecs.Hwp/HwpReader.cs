@@ -878,9 +878,9 @@ public sealed class HwpReader : IDocumentReader
         if (ps.IndentRightMm < 0) ps.IndentRightMm = 0;
         if (ps.IndentFirstLineMm < -50) ps.IndentFirstLineMm = -50;
         if (ps.IndentFirstLineMm >  50) ps.IndentFirstLineMm =  50;
-        // 단락 위·아래 여백 상한선: 36pt(약 12.7mm) 초과는 스펙 오독 가능성
-        if (ps.SpaceBeforePt > 36) ps.SpaceBeforePt = 0;
-        if (ps.SpaceAfterPt  > 36) ps.SpaceAfterPt  = 0;
+        // 단락 위·아래 여백 상한선: 18pt 초과는 스펙 오독 가능성 (일반 문서는 12pt 이하가 표준)
+        if (ps.SpaceBeforePt > 18) ps.SpaceBeforePt = 0;
+        if (ps.SpaceAfterPt  > 18) ps.SpaceAfterPt  = 0;
 
         return ps;
     }
