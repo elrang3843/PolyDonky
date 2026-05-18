@@ -2948,7 +2948,8 @@ public static class FlowDocumentBuilder
         {
             Alignment.Center => TextAlignment.Center,
             Alignment.Right => TextAlignment.Right,
-            Alignment.Justify or Alignment.Distributed => TextAlignment.Justify,
+            Alignment.Distributed => TextAlignment.Center,  // HWP 균등 분배 → WPF에서는 Center 로 근사 (전체 너비 배분은 미지원)
+            Alignment.Justify => TextAlignment.Justify,
             _ => TextAlignment.Left,
         };
 
