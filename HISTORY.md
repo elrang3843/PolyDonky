@@ -87,7 +87,11 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP 균등 분배(distribute) 정렬 → Alignment.Distributed 올바른 매핑**: PARA_SHAPE 의 정렬 값 4(균등 분배)·5(나눔)를 `Alignment.Justify` 로 잘못 매핑하던 문제. "공 문" 같은 넓은 자간 타이틀이 일반 양쪽 맞춤으로 렌더링되어 원본과 달라졌다. 이제 값 4·5 를 `Alignment.Distributed` 로 정확히 변환한다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
-- **PARA_SHAPE 단락 여백 상한선 클램핑**: SpaceBeforePt/SpaceAfterPt 가 36pt 초과인 경우 오프셋 오독으로 인한 비현실적 값으로 간주해 0 으로 클램핑. 이로써 과도한 단락 여백이 표의 행을 다음 페이지로 밀어내는 현상을 추가 방지. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+- **PARA_SHAPE 단락 여백 상한선 클램핑 (36pt → 18pt 강화)**: SpaceBeforePt/SpaceAfterPt 가 초과인 경우 오프셋 오독으로 인한 비현실적 값으로 간주해 0 으로 클램핑. 초기 36pt 임계값에서 18pt 로 강화 — 표준 문서의 단락 여백은 12pt 이하가 일반적이므로, 18pt 초과는 오독 가능성이 높다. 이로써 과도한 단락 여백이 표의 행을 다음 페이지로 밀어내는 현상을 추가 방지. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **ThematicBreakBlock 선 색상 검은색(#000000) 설정**: HWP 에서 변환된 수평선(section divider, "제목" / "첨부" 아래 선)이 회색으로 렌더링되던 문제 수정. `ThematicBreakBlock.LineColor` 를 명시적으로 `#000000` 으로 설정하여 검은색으로 표시. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`, `src/PolyDonky.Core/ThematicBreakBlock.cs`)
+
+- **Alignment.Distributed WPF 렌더링**: WPF TextAlignment 의 명시적 분배 정렬 미지원으로 인해 `Alignment.Distributed` 를 `TextAlignment.Justify` 로 렌더링하던 문제. `TextAlignment.Center` 로 변경하여 제목 등 분배 정렬 문단이 가운데 정렬로 표시되도록 개선. 완벽한 character spacing 효과(예: "공   문") 는 WPF 의 제한으로 미지원이나, 가운데 정렬로 시각적으로 보다 가깝게 근사. (`src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
 
 - **HWP GSO 도형·글상자 위치 보정**: 모든 GSO 객체(도형·글상자·이미지)가 (0,0) 위치에 겹쳐 그려지던 문제 수정. SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대 좌표이므로 절대 위치로 사용할 수 없었음. CTRL_HEADER 의 페이로드(offset 8=xOffset, 12=yOffset, 16=height, 20=width)에서 절대 위치/크기를 읽어 적용. Test1.hwp 의 5 개 도형이 각각 다른 위치에 배치되고, Welcome to Hwp.hwp 의 표지 글상자도 올바른 위치(136.6, 25.1)에 표시됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
