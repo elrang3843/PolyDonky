@@ -403,9 +403,9 @@ public sealed class HwpReader : IDocumentReader
                             HwpLog.Write($"[ParseSectionRecords] Page break before PARA_HEADER@{i} → page {currentPageIndex}");
                         }
                     }
-                    else if (rec.Payload.Length >= 8)
+                    else if (rec.Payload.Length >= 10)
                     {
-                        current.ParaShapeId = (int)BitConverter.ToUInt32(rec.Payload, 4);
+                        current.ParaShapeId = BitConverter.ToUInt16(rec.Payload, 8);
                     }
                     sawFirstParagraph = true;
                     break;
@@ -648,8 +648,8 @@ public sealed class HwpReader : IDocumentReader
                             case TAG_PARA_HEADER when ir.Level == paraLevel:
                                 if (tbCur != null) tbParas.Add(tbCur);
                                 tbCur = new HwpParagraph();
-                                if (ir.Payload.Length >= 8)
-                                    tbCur.ParaShapeId = (int)BitConverter.ToUInt32(ir.Payload, 4);
+                                if (ir.Payload.Length >= 10)
+                                    tbCur.ParaShapeId = BitConverter.ToUInt16(ir.Payload, 8);
                                 break;
                             case TAG_PARA_TEXT when ir.Level == textLevel:
                                 if (tbCur == null) tbCur = new HwpParagraph();
@@ -919,8 +919,8 @@ public sealed class HwpReader : IDocumentReader
                 case TAG_PARA_HEADER when rec.Level == minLevel:
                     if (cur != null) hf.Paragraphs.Add(cur);
                     cur = new HwpParagraph();
-                    if (rec.Payload.Length >= 8)
-                        cur.ParaShapeId = (int)BitConverter.ToUInt32(rec.Payload, 4);
+                    if (rec.Payload.Length >= 10)
+                        cur.ParaShapeId = BitConverter.ToUInt16(rec.Payload, 8);
                     break;
 
                 case TAG_PARA_TEXT when rec.Level == minLevel + 1:
@@ -1048,8 +1048,8 @@ public sealed class HwpReader : IDocumentReader
                         curCell.Blocks.Add(curPara);
                     }
                     curPara = new HwpParagraph();
-                    if (rec.Payload.Length >= 8)
-                        curPara.ParaShapeId = (int)BitConverter.ToUInt32(rec.Payload, 4);
+                    if (rec.Payload.Length >= 10)
+                        curPara.ParaShapeId = BitConverter.ToUInt16(rec.Payload, 8);
                     break;
 
                 case TAG_PARA_TEXT when rec.Level == minLevel + 1 && curPara != null:
