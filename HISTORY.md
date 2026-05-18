@@ -87,7 +87,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP 균등 분배(distribute) 정렬 → Alignment.Distributed 올바른 매핑**: PARA_SHAPE 의 정렬 값 4(균등 분배)·5(나눔)를 `Alignment.Justify` 로 잘못 매핑하던 문제. "공 문" 같은 넓은 자간 타이틀이 일반 양쪽 맞춤으로 렌더링되어 원본과 달라졌다. 이제 값 4·5 를 `Alignment.Distributed` 로 정확히 변환한다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
-- **PARA_SHAPE 단락 여백 상한선 클램핑 (36pt → 18pt 강화)**: SpaceBeforePt/SpaceAfterPt 가 초과인 경우 오프셋 오독으로 인한 비현실적 값으로 간주해 0 으로 클램핑. 초기 36pt 임계값에서 18pt 로 강화 — 표준 문서의 단락 여백은 12pt 이하가 일반적이므로, 18pt 초과는 오독 가능성이 높다. 이로써 과도한 단락 여백이 표의 행을 다음 페이지로 밀어내는 현상을 추가 방지. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+- **HWP 표 셀 속성(너비·높이·배경색) import 지원**: HwpTableCell 에 WidthMm, HeightMm, BackgroundColor 필드 추가. ParseTable 의 LIST_HEADER 처리 시 KS X 5700 스펙 기준 셀 속성을 읽음 (offset 16-19: width, 20-23: height, 24-27: background color ABGR). ConvertHwpTable 에서 읽은 속성을 Core.TableCell/TableRow 에 반영. 결과: Linux 기본명령어.hwp 등의 표 셀이 원본 너비·높이·배경색으로 렌더링됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP PARA_HEADER paraShapeId 오독 수정 (글상자·표·머리말/꼬리말)**: 메인 본문(`TAG_PARA_HEADER` level=0)은 `offset 8 uint16`으로 `paraShapeId`를 올바르게 읽지만, 글상자·표 셀·머리말/꼬리말 내부 단락들은 여전히 `offset 4 uint32`(`nCtrlMask` 필드)를 `paraShapeId`로 잘못 읽어 정렬·들여쓰기·여백이 완전히 틀렸던 버그. 4곳 모두 `BitConverter.ToUInt16(payload, 8)` + payload 길이 조건 `>= 10` 으로 수정. 결과: "공문" 제목(표 셀 안)의 가운데/균등분배 정렬, 서명 표 단락 여백 등이 올바른 PARA_SHAPE 참조로 개선됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 

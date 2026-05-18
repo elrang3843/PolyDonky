@@ -895,6 +895,16 @@ public sealed class HwpReader : IDocumentReader
         return $"#{r:X2}{g:X2}{b:X2}";
     }
 
+    private static string FormatRgbAbgr(uint abgr)
+    {
+        // ABGR format: 0xAABBGGRR (alpha, blue, green, red)
+        // Extract BGR and format as RGB hex
+        byte r = (byte)(abgr & 0xFF);
+        byte g = (byte)((abgr >> 8) & 0xFF);
+        byte b = (byte)((abgr >> 16) & 0xFF);
+        return $"#{r:X2}{g:X2}{b:X2}";
+    }
+
     // ── 머리말/꼬리말 파싱 ───────────────────────────────────────────────────
 
     /// <summary>
@@ -1003,14 +1013,42 @@ public sealed class HwpReader : IDocumentReader
 
                         var p = rec.Payload;
                         curCell = new HwpTableCell();
-                        // Offset 8: col, 10: row, 12: colSpan, 14: rowSpan (uint16 each)
-                        // 정확한 오프셋은 KS X 5700 스펙 참조 — 안전 fallback 사용.
+                        // LIST_HEADER payload (KS X 5700):
+                        //   0-3: paraCount
+                        //   4-7: reserved
+                        //   8-9: col, 10-11: row (uint16 each)
+                        //   12-13: colSpan, 14-15: rowSpan (uint16 each)
+                        //   16-19: width (int32, HWPUNIT), 20-23: height (int32, HWPUNIT)
+                        //   24-27: background color (uint32, ABGR)
+                        //   28+: border properties...
                         if (p.Length >= 16)
                         {
                             curCell.Col     = BitConverter.ToUInt16(p, 8);
                             curCell.Row     = BitConverter.ToUInt16(p, 10);
                             curCell.ColSpan = Math.Max(1, (int)BitConverter.ToUInt16(p, 12));
                             curCell.RowSpan = Math.Max(1, (int)BitConverter.ToUInt16(p, 14));
+                        }
+                        // 셀 너비 (offset 16-19, int32 HWPUNIT)
+                        if (p.Length >= 20)
+                        {
+                            int widthUnit = BitConverter.ToInt32(p, 16);
+                            if (widthUnit > 0)
+                                curCell.WidthMm = widthUnit * HwpUnitToMm;
+                        }
+                        // 셀 높이 (offset 20-23, int32 HWPUNIT)
+                        if (p.Length >= 24)
+                        {
+                            int heightUnit = BitConverter.ToInt32(p, 20);
+                            if (heightUnit > 0)
+                                curCell.HeightMm = heightUnit * HwpUnitToMm;
+                        }
+                        // 셀 배경색 (offset 24-27, uint32 ABGR)
+                        if (p.Length >= 28)
+                        {
+                            uint bgColorAbgr = BitConverter.ToUInt32(p, 24);
+                            // 0xFFFFFFFF = 투명/기본, 그 외는 색상 적용
+                            if (bgColorAbgr != 0xFFFFFFFF && bgColorAbgr != 0)
+                                curCell.BackgroundColor = FormatRgbAbgr(bgColorAbgr);
                         }
                     }
                     break;
@@ -1482,6 +1520,8 @@ public sealed class HwpReader : IDocumentReader
         for (int r = 0; r < ht.RowCount; r++)
         {
             var row = new TableRow();
+            double rowHeightMm = 0;  // 행의 높이 (첫 셀의 높이 사용)
+
             for (int c = 0; c < ht.ColCount; c++)
             {
                 var tableCell = new TableCell();
@@ -1489,6 +1529,16 @@ public sealed class HwpReader : IDocumentReader
                 {
                     tableCell.ColumnSpan = hc.ColSpan;
                     tableCell.RowSpan = hc.RowSpan;
+
+                    // 셀 속성 적용 (너비, 배경색)
+                    if (hc.WidthMm > 0)
+                        tableCell.WidthMm = hc.WidthMm;
+                    if (!string.IsNullOrEmpty(hc.BackgroundColor))
+                        tableCell.BackgroundColor = hc.BackgroundColor;
+
+                    // 행 높이: 첫 셀의 높이로 설정 (같은 행의 모든 셀이 같은 높이)
+                    if (c == 0 && hc.HeightMm > 0)
+                        rowHeightMm = hc.HeightMm;
 
                     // 셀의 블록들(단락 또는 중첩 표) 변환
                     foreach (var block in hc.Blocks)
@@ -1512,6 +1562,9 @@ public sealed class HwpReader : IDocumentReader
 
                 row.Cells.Add(tableCell);
             }
+            // 행 높이 설정 (첫 셀에서 읽은 높이)
+            if (rowHeightMm > 0)
+                row.HeightMm = rowHeightMm;
             table.Rows.Add(row);
         }
 
@@ -1792,6 +1845,9 @@ public sealed class HwpReader : IDocumentReader
         public int Col { get; set; }
         public int RowSpan { get; set; } = 1;
         public int ColSpan { get; set; } = 1;
+        public double WidthMm { get; set; }    // 셀 너비 (mm)
+        public double HeightMm { get; set; }   // 셀 높이 (mm)
+        public string? BackgroundColor { get; set; }  // ABGR hex (예: "#FFFFFF")
         public List<HwpParagraph> Paragraphs { get; set; } = new();
         // 중첩 표 지원: 셀이 단락 대신 표를 포함할 수 있음.
         public List<object> Blocks { get; set; } = new();  // HwpParagraph 또는 HwpTableBlock
