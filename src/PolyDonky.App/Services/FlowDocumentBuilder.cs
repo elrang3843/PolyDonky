@@ -1004,14 +1004,22 @@ public static class FlowDocumentBuilder
 
         ApplyTableLevelPropertiesToWpf(wtable, table);
 
+        // 표 너비가 설정되어 있으면, 각 열 너비를 표 너비에 맞게 정규화
+        double totalColWidthMm = table.Columns.Sum(c => c.WidthMm);
+        double scale = 1.0;
+        if (table.WidthMm > 0 && totalColWidthMm > 0)
+            scale = table.WidthMm / totalColWidthMm;
+
         foreach (var col in table.Columns)
         {
             // WidthMm > 0 이면 명시 폭, 아니면 Star(1*) — 가용 폭을 균등 분배.
             // Auto 로 두면 셀 콘텐츠 기준으로 좁게 잡혀 텍스트 줄바꿈이 과도해지고
             // 셀 높이가 비정상적으로 커져 표 전체가 페이지를 넘기는 증상이 발생한다.
-            var width = col.WidthMm > 0
-                ? new GridLength(MmToDip(col.WidthMm))
-                : new GridLength(1, GridUnitType.Star);
+            GridLength width;
+            if (col.WidthMm > 0)
+                width = new GridLength(MmToDip(col.WidthMm * scale));
+            else
+                width = new GridLength(1, GridUnitType.Star);
             wtable.Columns.Add(new Wpf.TableColumn { Width = width });
         }
 

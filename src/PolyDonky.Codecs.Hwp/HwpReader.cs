@@ -1054,14 +1054,13 @@ public sealed class HwpReader : IDocumentReader
             {
                 case TAG_TABLE when rec.Level == minLevel && rec.Payload.Length >= 16:
                     {
-                        // TAG_TABLE layout:
+                        // TAG_TABLE layout (KS X 5700):
                         //   0-3: properties (flags)
-                        //   4-5: rowCnt
-                        //   6-7: colCnt
+                        //   4-5: rowCnt, 6-7: colCnt
                         //   8-9: cellSpacing
-                        //   10-13: margin left/right (각 2바이트)
-                        //   14-17: margin top/bottom
-                        //   ...
+                        //   10-11: margin left, 12-13: margin right
+                        //   14-15: margin top, 16-17: margin bottom
+                        //   18-19: width (HWPUNIT), 20-21: height (HWPUNIT)
                         var p = rec.Payload;
                         tbl.RowCount = BitConverter.ToUInt16(p, 4);
                         tbl.ColCount = BitConverter.ToUInt16(p, 6);
@@ -1600,6 +1599,16 @@ public sealed class HwpReader : IDocumentReader
                     colWidths[c] = perCol;
             }
         }
+
+        // 표 너비 설정: HWP 파일에서 저장된 너비가 없으므로,
+        // 모든 열 너비의 합으로 표 전체 너비 계산
+        double tableWidthMm = colWidths.Sum();
+        if (tableWidthMm > 0)
+            table.WidthMm = tableWidthMm;
+
+        if (ht.HeightMm > 0)
+            table.HeightMm = ht.HeightMm;
+
         for (int c = 0; c < ht.ColCount; c++)
             table.Columns.Add(new TableColumn { WidthMm = colWidths[c] });
 
