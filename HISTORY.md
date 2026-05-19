@@ -46,6 +46,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Fixed
 
+- **HWP 도형 X/Y 좌표 swap 수정**: KS X 5700 §4.7.2 GShapeObject 구조에서 bytes 8-11 = yPos, bytes 12-15 = xPos인데 x/y가 뒤바뀐 채로 읽어 모든 도형·글상자가 페이지 오른쪽 상단에 몰리던 버그 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 글상자 채우기 색상 미적용 수정**: `HwpTextBox`에 `BorderFillId`가 없어 글상자 배경색(예: 노란색)이 누락되던 버그 수정 — `BorderFillId`를 `HwpTextBox`에 추가하고 `BuildDocument`에서 `BackgroundColor`·`BorderColor`에 반영. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP 도형 채우기 색상 오류 수정**: `ParseBorderFill`에서 HWP COLORREF alpha 바이트(`0xFF` = 투명)를 확인하지 않아 투명색이 파란색(`#0000FF`)으로 잘못 변환되던 버그 수정 — `(color >> 24) == 0xFF` 검사 추가. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 도형 borderFillId 읽기 오류 수정**: `SHAPE_COMPONENT` offset 50의 값을 `borderFillId`로 읽었으나 해당 위치는 항상 1인 version/count 필드임 — 252-byte 페이로드 실측 분석으로 실제 `borderFillId`가 offset 201(uint8)에 있음을 확인하고 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)

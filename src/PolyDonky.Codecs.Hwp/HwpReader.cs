@@ -477,8 +477,9 @@ public sealed class HwpReader : IDocumentReader
                             if (p.Length >= 8)  gsoFlags = BitConverter.ToUInt32(p, 4);
                             if (p.Length >= 24)
                             {
-                                gsoXMm = BitConverter.ToInt32(p, 8)  * HwpUnitToMm;
-                                gsoYMm = BitConverter.ToInt32(p, 12) * HwpUnitToMm;
+                                // KS X 5700 §4.7.2 GShapeObject: yPos(8-11), xPos(12-15), w(16-19), h(20-23)
+                                gsoYMm = BitConverter.ToInt32(p, 8)  * HwpUnitToMm;
+                                gsoXMm = BitConverter.ToInt32(p, 12) * HwpUnitToMm;
                                 gsoWMm = BitConverter.ToUInt32(p, 16) * HwpUnitToMm;
                                 gsoHMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
                             }
@@ -828,6 +829,7 @@ public sealed class HwpReader : IDocumentReader
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm,
                     Paragraphs = tbContent ?? new List<HwpParagraph>(),
                     AnchorPageIndex = anchorPageIndex,
+                    BorderFillId = shapeBorderFillId,
                 });
                 break;
 
@@ -1522,6 +1524,16 @@ public sealed class HwpReader : IDocumentReader
                 HeightMm     = tb.HeightMm > 1 ? tb.HeightMm : 30,
                 AnchorPageIndex = tb.AnchorPageIndex,
             };
+            if (tb.BorderFillId >= 1 && tb.BorderFillId - 1 < docInfo.BorderFills.Count)
+            {
+                var bf = docInfo.BorderFills[tb.BorderFillId - 1];
+                tbo.BackgroundColor = bf.BackgroundColor;
+                if (bf.TopKind > 0 && bf.TopColor != null)
+                {
+                    tbo.BorderColor = bf.TopColor;
+                    tbo.BorderThicknessPt = HwpLineWidthToPt(bf.TopWidth);
+                }
+            }
             foreach (var tp in tb.Paragraphs)
                 foreach (var para in ConvertHwpParagraphMulti(tp, docInfo))
                     tbo.Content.Add(para);
@@ -2285,6 +2297,7 @@ public sealed class HwpReader : IDocumentReader
         public double HeightMm { get; set; }
         public List<HwpParagraph> Paragraphs { get; set; } = new();
         public int    AnchorPageIndex { get; set; }
+        public int    BorderFillId { get; set; } = -1;
     }
 
     private sealed class HwpImage
