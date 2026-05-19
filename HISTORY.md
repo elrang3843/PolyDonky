@@ -46,6 +46,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Fixed
 
+- **HWP OLE 차트·그림 인라인 렌더링 수정**: `BinData` 스트림 이름에 확장자가 붙는 경우(`.OLE`, `.bmp` 등)를 prefix 검색으로 처리, `OLE_COMPONENT`의 `binDataId` offset 12 추가, 단락 앵커 객체(`anchorType != 0`)를 `IsInline = true`로 구분해 `WrapMode = Inline`으로 단락 흐름에 배치(기존: 페이지 오버레이 좌표 `(0,0)`으로 잘못 표시됨). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP 도형 X/Y 좌표 swap 수정**: KS X 5700 §4.7.2 GShapeObject 구조에서 bytes 8-11 = yPos, bytes 12-15 = xPos인데 x/y가 뒤바뀐 채로 읽어 모든 도형·글상자가 페이지 오른쪽 상단에 몰리던 버그 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 글상자 채우기 색상 미적용 수정**: `HwpTextBox`에 `BorderFillId`가 없어 글상자 배경색(예: 노란색)이 누락되던 버그 수정 — `BorderFillId`를 `HwpTextBox`에 추가하고 `BuildDocument`에서 `BackgroundColor`·`BorderColor`에 반영. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
