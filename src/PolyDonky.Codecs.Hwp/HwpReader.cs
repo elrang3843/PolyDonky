@@ -1525,11 +1525,14 @@ public sealed class HwpReader : IDocumentReader
 
     private static string DetectMediaType(byte[] data)
     {
-        if (data.Length < 4) return "image/png";
+        if (data.Length < 4) return "application/octet-stream";
         if (data[0] == 0x89 && data[1] == 0x50) return "image/png";
         if (data[0] == 0xFF && data[1] == 0xD8) return "image/jpeg";
         if (data[0] == 0x47 && data[1] == 0x49) return "image/gif";
         if (data[0] == 0x42 && data[1] == 0x4D) return "image/bmp";
+        // OLE2 compound document: D0 CF 11 E0
+        if (data[0] == 0xD0 && data[1] == 0xCF && data[2] == 0x11 && data[3] == 0xE0)
+            return "application/x-ole-storage";
         // EMF: record type "01 00 00 00" + " EMF" signature at offset 40
         if (data.Length >= 44
             && data[0] == 0x01 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x00
@@ -1538,7 +1541,7 @@ public sealed class HwpReader : IDocumentReader
         // WMF placeable: D7 CD C6 9A
         if (data[0] == 0xD7 && data[1] == 0xCD && data[2] == 0xC6 && data[3] == 0x9A)
             return "image/x-wmf";
-        return "image/png";
+        return "application/octet-stream";
     }
 
     // ── Document model construction ────────────────────────────────────────
@@ -1709,6 +1712,13 @@ public sealed class HwpReader : IDocumentReader
                     var detectedType = DetectMediaType(imgData);
                     HwpLog.Write($"[BuildDocument] Image MediaType={detectedType}, dataLen={imgData.Length}B");
 
+                    // OLE2 / unknown binary은 이미지로 표시 불가 → 건너뜀
+                    if (detectedType is "application/x-ole-storage" or "application/octet-stream")
+                    {
+                        HwpLog.Write($"[BuildDocument] Image SKIPPED (non-image mediaType: {detectedType})");
+                        break;
+                    }
+
                     var ib = new ImageBlock
                     {
                         Data      = imgData,
@@ -1716,7 +1726,16 @@ public sealed class HwpReader : IDocumentReader
                         WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
                         HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
                     };
-                    if (img.IsInline)
+                    // anchorType=1(단락앵커): 페이지 좌표로 overlay 배치 (단락 위치 추적 불가 시 근사)
+                    if (img.IsInline && (img.XMm > 0 || img.YMm > 0))
+                    {
+                        // 단락앵커이지만 페이지 절대 좌표가 있으면 overlay로 배치
+                        ib.WrapMode        = ImageWrapMode.InFrontOfText;
+                        ib.OverlayXMm      = img.XMm;
+                        ib.OverlayYMm      = img.YMm;
+                        ib.AnchorPageIndex = img.AnchorPageIndex;
+                    }
+                    else if (img.IsInline)
                     {
                         ib.WrapMode = ImageWrapMode.Inline;
                         ib.HAlign   = ImageHAlign.Center;
@@ -1737,7 +1756,11 @@ public sealed class HwpReader : IDocumentReader
                     var sh = shBlk.Shape;
                     byte[]? oleData = null;
                     if (sh.Kind == HwpShapeKind.Ole && sh.BinDataId > 0)
+                    {
                         oleData = ReadBinData(root, sh.BinDataId);
+                        // OLE binDataId를 사용 완료로 표시 → 이후 이미지 sequential scan이 건너뜀
+                        usedBinIds.Add(sh.BinDataId);
+                    }
 
                     var soWidthMm  = sh.WidthMm  > 1 ? sh.WidthMm  : 40;
                     var soHeightMm = sh.HeightMm > 1 ? sh.HeightMm : 20;

@@ -46,6 +46,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Fixed
 
+- **HWP 클립아트 이미지 렌더링 수정**: BIN0001.OLE(OLE2 차트)가 sequential scan을 통해 이미지로 잘못 선택되던 버그 수정 — OLE 도형의 `binDataId`를 `usedBinIds`에 즉시 등록해 이미지 scan이 BIN0002.bmp(실제 이미지)를 올바르게 선택하도록 수정. `DetectMediaType`에 OLE2(`D0 CF 11 E0`) 케이스 추가, fallback을 `image/png`→`application/octet-stream`으로 수정. OLE2·octet-stream 데이터는 ImageBlock 생성을 건너뜀. 단락앵커(anchorType=1) 이미지를 절대 페이지 좌표가 있으면 overlay로 배치. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP 다각형(POLYGON_COMPONENT·CURVE_COMPONENT) 꼭짓점 좌표 정규화 수정**: 좌표값이 HWPUNIT이 아닌 도형 내부 독자 스케일(~26,600 units/mm)로 저장돼 마름모 등 다각형이 400,000mm 크기로 오파싱되던 버그 수정 — raw INT32 min/max를 도형 bounding-box(wMm×hMm)로 선형 정규화. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP OLE 차트·그림 인라인 렌더링 수정**: `BinData` 스트림 이름에 확장자가 붙는 경우(`.OLE`, `.bmp` 등)를 prefix 검색으로 처리, `OLE_COMPONENT`의 `binDataId` offset 12 추가, 단락 앵커 객체(`anchorType != 0`)를 `IsInline = true`로 구분해 `WrapMode = Inline`으로 단락 흐름에 배치(기존: 페이지 오버레이 좌표 `(0,0)`으로 잘못 표시됨). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
