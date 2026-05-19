@@ -599,41 +599,30 @@ public sealed class HwpReader : IDocumentReader
             {
                 case TAG_SHAPE_COMPONENT when rec.Payload.Length >= 28:
                     {
-                        // SHAPE_COMPONENT (KS X 5700) 실제 레이아웃:
-                        //   0-3   : childCtrlId (4-char ASCII: "rect","elli","spol","pic ","ole ","txt ","cont")
-                        //   4-5   : groupLevel   (WORD)
-                        //   6-7   : localFileVersion (WORD)
-                        //   8-11  : xPosShape (INT32, HWPUNIT) — 그룹 내 상대 또는 페이지 절대
-                        //   12-15 : yPosShape (INT32, HWPUNIT)
-                        //   16-17 : nGrp       (WORD) — 그룹 내 객체 수
-                        //   18-19 : groupId    (WORD)
-                        //   20-23 : objWidth   (UINT32, HWPUNIT) ← 이전 코드는 24 로 잘못 읽었음
-                        //   24-27 : objHeight  (UINT32, HWPUNIT) ← 이전 코드는 28 로 잘못 읽었음
-                        //   28-31 : rotation angle (UINT32, 1/100 degree)
-                        //   32-35 : rotation center X (INT32, HWPUNIT)
-                        //   36-39 : rotation center Y (INT32, HWPUNIT)
-                        //   40-49 : shadow/scale 필드 (10 bytes, 세부 불확정)
-                        //   50-51 : borderFillId (UINT16, 1-based) ← 실측 확인
-                        // CTRL_HEADER 의 위치를 우선 사용 (절대 좌표). SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대.
                         var p = rec.Payload;
                         if (wMm <= 0 && p.Length >= 24)
                             wMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
                         if (hMm <= 0 && p.Length >= 28)
                             hMm = BitConverter.ToUInt32(p, 24) * HwpUnitToMm;
 
-                        // 회전각: offset 28, 1/100 degree → degree
-                        if (p.Length >= 32)
+                        // 회전각: 변환 행렬(offset 52) — double[0]=cos(θ), double[1]=sin(θ)
+                        if (p.Length >= 68)
                         {
-                            uint rot100 = BitConverter.ToUInt32(p, 28);
-                            if (rot100 > 0 && rot100 < 36000)
-                                shapeRotationDeg = rot100 / 100.0;
+                            double scaleX = BitConverter.ToDouble(p, 52);
+                            double shearY = BitConverter.ToDouble(p, 60);
+                            if (Math.Abs(scaleX) <= 1.0 && Math.Abs(shearY) <= 1.0 && (Math.Abs(scaleX) > 0.001 || Math.Abs(shearY) > 0.001))
+                            {
+                                double rad = Math.Atan2(shearY, scaleX);
+                                shapeRotationDeg = rad * 180.0 / Math.PI;
+                                if (shapeRotationDeg < 0) shapeRotationDeg += 360.0;
+                            }
                         }
 
-                        // borderFillId at offset 50 (실측 확인)
-                        if (p.Length >= 52 && shapeBorderFillId < 0)
+                        // borderFillId: SHAPE_COMPONENT offset 201 (uint8, 0=없음, 1+=BorderFill 1-based 인덱스)
+                        // 실측: 252-byte 페이로드 분석으로 확인된 오프셋
+                        if (shapeBorderFillId < 0 && p.Length > 201)
                         {
-                            int bfId = BitConverter.ToUInt16(p, 50);
-                            HwpLog.Write($"[ParseGsoControl] SHAPE_COMPONENT borderFillId@50={bfId}, rotation={shapeRotationDeg:F1}deg");
+                            int bfId = p[201];
                             if (bfId >= 1 && bfId <= 1024) shapeBorderFillId = bfId;
                         }
                         hasShape = true;
@@ -642,27 +631,18 @@ public sealed class HwpReader : IDocumentReader
 
                 case TAG_LINE_COMPONENT:
                     kind = HwpShapeKind.Line;
-                    // LINE_COMPONENT payload (KS X 5700):
-                    //   0-1: lineAttr (WORD)
-                    //     bits 0-2: start arrow kind (0=none,1=open,2=filled,3=diamond,4=circle)
-                    //     bits 4-6: end arrow kind
                     if (rec.Payload.Length >= 2)
                     {
                         ushort la = BitConverter.ToUInt16(rec.Payload, 0);
                         shapeStartArrow = MapArrow((uint)((la >> 0) & 0x7));
                         shapeEndArrow   = MapArrow((uint)((la >> 4) & 0x7));
-                        HwpLog.Write($"[ParseGsoControl] LINE_COMPONENT lineAttr=0x{la:X4}, " +
-                            $"startArrow={shapeStartArrow}, endArrow={shapeEndArrow}");
                     }
                     break;
                 case TAG_RECT_COMPONENT:
                     kind = HwpShapeKind.Rectangle;
-                    // RECT_COMPONENT payload (KS X 5700):
-                    //   0-1: roundedCornerPercent (UINT16, 0~100)
                     if (rec.Payload.Length >= 2)
                     {
                         ushort roundPct = BitConverter.ToUInt16(rec.Payload, 0);
-                        HwpLog.Write($"[ParseGsoControl] RECT_COMPONENT roundedCornerPct={roundPct}");
                         if (roundPct > 0 && roundPct <= 100)
                         {
                             shapeCornerRadiusPct = roundPct;
@@ -694,7 +674,6 @@ public sealed class HwpReader : IDocumentReader
                             pts.Add((px, py));
                         }
                         if (pts.Count >= 2) shapePoints = pts;
-                        HwpLog.Write($"[ParseGsoControl] POLYGON_COMPONENT: nPoints={nPts}, parsed={pts.Count}");
                     }
                     break;
                 case TAG_CURVE_COMPONENT:
@@ -715,23 +694,16 @@ public sealed class HwpReader : IDocumentReader
                             crvPts.Add((px, py));
                         }
                         if (crvPts.Count >= 2) shapePoints = crvPts;
-                        HwpLog.Write($"[ParseGsoControl] CURVE_COMPONENT: nPoints={nCrvPts}, parsed={crvPts.Count}");
                     }
                     break;
                 case TAG_OLE_COMPONENT:
                     kind = HwpShapeKind.Ole;
-                    // OLE 도 binDataId 가 포함되는 경우가 많아 동일한 휴리스틱 사용.
                     if (rec.Payload.Length >= 4 && binDataId == 0)
                         binDataId = TryReadBinDataId(rec.Payload);
                     break;
 
                 case TAG_PICTURE_COMPONENT when rec.Payload.Length >= 4:
                     kind = HwpShapeKind.Picture;
-                    // Try to read binDataId:
-                    //   offset 0-1: border fill flags
-                    //   offset 2-3: picture type / attrs
-                    //   Further offsets hold the actual binDataId; try offset 50 (after border data),
-                    //   falling back to a sequential counter managed by body.
                     binDataId = TryReadBinDataId(rec.Payload);
                     break;
 
@@ -1050,9 +1022,7 @@ public sealed class HwpReader : IDocumentReader
     {
         var bf = new HwpBorderFill();
 
-        HwpLog.Write($"[ParseBorderFill] len={p.Length}, bytes={BitConverter.ToString(p.Take(Math.Min(p.Length, 48)).ToArray())}");
-
-        // HWPLINE 파서: type(1B), width(1B), color 0xBBGGRR(4B) = 6B
+        // HWPLINE 파서: type(1B), width(1B), color 0xAABBGGRR(4B) = 6B
         static (byte kind, byte width, string? color) ReadLine(byte[] b, int off)
         {
             if (off + 6 > b.Length) return (0, 0, null);
@@ -1068,21 +1038,21 @@ public sealed class HwpReader : IDocumentReader
         if (p.Length >= 20) { var (k, w, c) = ReadLine(p, 14); bf.RightKind = k; bf.RightWidth = w; bf.RightColor = c; }
         if (p.Length >= 26) { var (k, w, c) = ReadLine(p, 20); bf.BottomKind = k; bf.BottomWidth = w; bf.BottomColor = c; }
 
-        // fill: fillType WORD at offset 32 (not uint32!)
+        // fill: fillType WORD at offset 32
         if (p.Length >= 34)
         {
             ushort fillType = BitConverter.ToUInt16(p, 32);
-            HwpLog.Write($"[ParseBorderFill] fillType@32={fillType}");
 
             if (fillType == 1 && p.Length >= 38)  // solid color
             {
                 uint bgColor  = BitConverter.ToUInt32(p, 34);
                 uint patColor = p.Length >= 42 ? BitConverter.ToUInt32(p, 38) : 0;
-                HwpLog.Write($"[ParseBorderFill] solid: bgColor=0x{bgColor:X8}, patColor=0x{patColor:X8}");
-                // 0xFFFFFFFF = transparent/none
-                if (bgColor != 0xFFFFFFFF && bgColor != 0)
+                // HWP COLORREF: 0xAABBGGRR — alpha byte 0xFF = transparent
+                bool bgTransparent  = bgColor  == 0xFFFFFFFF || bgColor  == 0 || (bgColor  >> 24) == 0xFF;
+                bool patTransparent = patColor == 0xFFFFFFFF || patColor == 0 || (patColor >> 24) == 0xFF;
+                if (!bgTransparent)
                     bf.BackgroundColor = FormatRgb(bgColor);
-                else if (patColor != 0xFFFFFFFF && patColor != 0)
+                else if (!patTransparent)
                     bf.BackgroundColor = FormatRgb(patColor);
             }
             else if (fillType == 4 && p.Length >= 50)  // gradient
@@ -1090,14 +1060,12 @@ public sealed class HwpReader : IDocumentReader
                 // gradient: type(4B) angle(4B) startColor(4B) endColor(4B) ...
                 uint startColor = BitConverter.ToUInt32(p, 42);
                 uint endColor   = BitConverter.ToUInt32(p, 46);
-                HwpLog.Write($"[ParseBorderFill] gradient: startColor=0x{startColor:X8}, endColor=0x{endColor:X8}");
                 // 그라디언트의 시작색을 배경색으로 사용 (근사치)
-                if (startColor != 0xFFFFFFFF && startColor != 0)
+                if (startColor != 0xFFFFFFFF && startColor != 0 && (startColor >> 24) != 0xFF)
                     bf.BackgroundColor = FormatRgb(startColor);
             }
         }
 
-        HwpLog.Write($"[ParseBorderFill] → BackgroundColor={bf.BackgroundColor ?? "null"}, TopKind={bf.TopKind}");
         return bf;
     }
 
