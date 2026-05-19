@@ -69,7 +69,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP LINE_COMPONENT Y축 방향 수정**: `SHAPE_COMPONENT_LINE` 좌표계가 bounding box 하단=0, 위쪽으로 증가하는 수학 좌표계임을 반영 — 화면 좌표계(상단=0, 아래로 증가)로 변환 시 Y를 `hMm - y`로 뒤집어 대각선 직선이 올바른 방향으로 렌더링되도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
-- **HWP BORDER_FILL 투명 검사 too-aggressive 버그 수정**: `ParseBorderFill`의 투명도 검사 `(color >> 24) == 0xFF` 가 너무 광범위해, reserved 바이트가 0xFF인 일반 색상(예: `0xFFFF0000` = `#0000FF` blue)도 투명으로 잘못 판정해 `hatchColor`가 `faceColor` 자리에 채워지던 버그 수정 — `hatchStyle=0` 인 fill의 글상자 배경색이 실제 색 대신 패턴색으로 표시되던 문제. 투명 마커를 `0xFFFFFFFF` (모든 비트 1) 만으로 한정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+- **HWP BORDER_FILL 채우기 색상 ABGR 해석 수정**: 진단 로그로 확인된 HWP5 색상 포맷이 Windows COLORREF(BBGGRR)가 아닌 **ABGR**(low byte = alpha)임을 반영. 기존 `(color >> 24) == 0xFF` 투명도 검사는 R 바이트를 alpha로 잘못 검사해 `#FFFF00` 노란색(R=FF, G=FF, B=00, A=00)을 투명으로 판정하고 `hatchColor`로 대체하는 버그를 유발. `FormatAbgr` 함수 추가 — alpha(low byte)==0xFF인 경우만 투명으로 처리, 나머지는 올바른 #RRGGBB 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 글상자 기본 테두리 추가**: `BorderFill` 에 외곽선(TopKind 등)이 없는 경우 ShapeObject 기본 획(`StrokeColor="#000000"`)과 일관성을 유지하기 위해 글상자에도 기본 0.75pt 검정 테두리를 적용. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 도형 회전각 오류 수정**: offset 28의 값을 1/100도 단위 회전각으로 읽었으나 해당 위치는 크기 필드의 일부임 — 변환 행렬(offset 52의 cos(θ), offset 60의 sin(θ))로부터 `atan2`로 정확한 각도를 추출하도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 

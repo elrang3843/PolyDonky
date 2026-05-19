@@ -1084,6 +1084,19 @@ public sealed class HwpReader : IDocumentReader
         return $"#{r:X2}{g:X2}{b:X2}";
     }
 
+    // HWP5 채우기 색상은 ABGR 형식으로 저장됨 (low byte = alpha/투명도, high byte = R).
+    // 파일의 UINT32 little-endian 값 = 0xRRGGBBAA.
+    // 투명 마커: alpha(low byte) == 0xFF 또는 전체가 0xFFFFFFFF.
+    private static string? FormatAbgr(uint abgr)
+    {
+        byte a = (byte)(abgr & 0xFF);
+        if (a == 0xFF || abgr == 0xFFFFFFFF) return null;  // transparent
+        byte r = (byte)((abgr >> 24) & 0xFF);
+        byte g = (byte)((abgr >> 16) & 0xFF);
+        byte b = (byte)((abgr >> 8) & 0xFF);
+        return $"#{r:X2}{g:X2}{b:X2}";
+    }
+
     private static string FormatRgbAbgr(uint abgr)
     {
         // ABGR format: 0xAABBGGRR (alpha, blue, green, red)
@@ -1142,26 +1155,17 @@ public sealed class HwpReader : IDocumentReader
 
             if (fillType == 1 && p.Length >= 38)  // solid color
             {
-                uint bgColor  = BitConverter.ToUInt32(p, 34);
-                uint patColor = p.Length >= 42 ? BitConverter.ToUInt32(p, 38) : 0;
-                // HWP COLORREF 투명 마커: 0xFFFFFFFF (모든 비트 1).
-                // 주의: 이전 코드의 `(color >> 24) == 0xFF` 검사는 너무 광범위해 일반 색의
-                // reserved 바이트가 0xFF인 경우(예: 0xFFFF0000 = #0000FF blue)도 투명으로
-                // 잘못 판정해 hatchColor가 fillColor 자리에 대신 채워지는 버그가 있었다.
-                bool bgTransparent  = bgColor  == 0xFFFFFFFF;
-                if (!bgTransparent)
-                    bf.BackgroundColor = FormatRgb(bgColor);
-                else if (patColor != 0 && patColor != 0xFFFFFFFF)
-                    bf.BackgroundColor = FormatRgb(patColor);
+                // HWP5 채우기 색상은 ABGR 형식 (low byte = alpha).
+                // FormatAbgr: alpha==0xFF → null(투명), 나머지 → #RRGGBB.
+                uint bkColor  = BitConverter.ToUInt32(p, 34);
+                uint patColor = p.Length >= 42 ? BitConverter.ToUInt32(p, 38) : 0xFFFFFFFF;
+                bf.BackgroundColor = FormatAbgr(bkColor) ?? FormatAbgr(patColor);
             }
             else if (fillType == 4 && p.Length >= 50)  // gradient
             {
                 // gradient: type(4B) angle(4B) startColor(4B) endColor(4B) ...
                 uint startColor = BitConverter.ToUInt32(p, 42);
-                uint endColor   = BitConverter.ToUInt32(p, 46);
-                // 그라디언트의 시작색을 배경색으로 사용 (근사치)
-                if (startColor != 0xFFFFFFFF && startColor != 0 && (startColor >> 24) != 0xFF)
-                    bf.BackgroundColor = FormatRgb(startColor);
+                bf.BackgroundColor = FormatAbgr(startColor);
             }
         }
 
@@ -1723,10 +1727,23 @@ public sealed class HwpReader : IDocumentReader
                     {
                         var bf = docInfo.BorderFills[tb2.BorderFillId - 1];
                         tbo.BackgroundColor = bf.BackgroundColor;
-                        if (bf.TopKind > 0 && bf.TopColor != null)
+
+                        // 명시적 테두리 종류가 있으면 사용; 없으면 HWP 기본 테두리(얇은 검정) 적용.
+                        // (ShapeObject.StrokeColor 기본값="#000000" 과 일관성 유지)
+                        byte bk = bf.TopKind;
+                        if (bk == 0) bk = bf.LeftKind;
+                        if (bk == 0) bk = bf.BottomKind;
+                        if (bk == 0) bk = bf.RightKind;
+                        if (bk > 0 && bf.TopColor != null)
                         {
                             tbo.BorderColor = bf.TopColor;
                             tbo.BorderThicknessPt = HwpLineWidthToPt(bf.TopWidth);
+                        }
+                        else
+                        {
+                            // BorderFill에 외곽선 없으면 HWP 기본 얇은 검정 테두리 적용
+                            tbo.BorderColor = "#000000";
+                            tbo.BorderThicknessPt = 0.75;
                         }
                         HwpLog.Write($"[BuildDocument] TextBox → bg={tbo.BackgroundColor ?? "null"}, border={tbo.BorderColor ?? "null"}/{tbo.BorderThicknessPt:F2}pt");
                     }
