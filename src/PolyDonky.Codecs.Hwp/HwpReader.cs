@@ -222,7 +222,15 @@ public sealed class HwpReader : IDocumentReader
                     break;
 
                 case TAG_BORDER_FILL:
-                    info.BorderFills.Add(ParseBorderFill(payload));
+                    {
+                        var bfIdx = info.BorderFills.Count + 1;
+                        if (payload.Length >= 2)
+                        {
+                            var hexDump = BitConverter.ToString(payload, 0, Math.Min(50, payload.Length));
+                            HwpLog.Write($"[BORDER_FILL#{bfIdx}] len={payload.Length} bytes={hexDump}");
+                        }
+                        info.BorderFills.Add(ParseBorderFill(payload));
+                    }
                     break;
 
                 case TAG_BIN_DATA when payload.Length >= 4:
@@ -647,6 +655,14 @@ public sealed class HwpReader : IDocumentReader
                         int ey = BitConverter.ToInt32(rec.Payload, 12);
                         double sxMm = sx * HwpUnitToMm, syMm = sy * HwpUnitToMm;
                         double exMm = ex * HwpUnitToMm, eyMm = ey * HwpUnitToMm;
+                        HwpLog.Write($"[LINE_COMPONENT] raw=({sx},{sy})→({ex},{ey}) mm=({sxMm:F1},{syMm:F1})→({exMm:F1},{eyMm:F1}) hMm={hMm:F1}");
+                        // KS X 5700 LINE_COMPONENT Y 좌표: bounding box 기준, Y=0이 하단 (수학 좌표계).
+                        // 화면 좌표계(Y=0이 상단)로 변환: y_screen = hMm - y_shape
+                        if (hMm > 0)
+                        {
+                            syMm = hMm - syMm;
+                            eyMm = hMm - eyMm;
+                        }
                         // bounding box 좌표는 절대 위치일 수 있어 상대 변환
                         double bbX = Math.Min(sxMm, exMm), bbY = Math.Min(syMm, eyMm);
                         shapePoints = new List<(double X, double Y)>
@@ -654,7 +670,7 @@ public sealed class HwpReader : IDocumentReader
                             (sxMm - bbX, syMm - bbY),
                             (exMm - bbX, eyMm - bbY),
                         };
-                        HwpLog.Write($"[LINE_COMPONENT] pts=({sxMm:F1},{syMm:F1})→({exMm:F1},{eyMm:F1}) rel=({shapePoints[0].X:F1},{shapePoints[0].Y:F1})→({shapePoints[1].X:F1},{shapePoints[1].Y:F1})");
+                        HwpLog.Write($"[LINE_COMPONENT] afterFlip rel=({shapePoints[0].X:F1},{shapePoints[0].Y:F1})→({shapePoints[1].X:F1},{shapePoints[1].Y:F1})");
                     }
                     if (rec.Payload.Length >= 18)
                     {
