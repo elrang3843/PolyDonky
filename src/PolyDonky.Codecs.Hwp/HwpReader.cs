@@ -658,22 +658,33 @@ public sealed class HwpReader : IDocumentReader
                     break;
                 case TAG_POLYGON_COMPONENT:
                     kind = HwpShapeKind.Polygon;
-                    // POLYGON_COMPONENT payload (KS X 5700):
+                    // POLYGON_COMPONENT payload (KS X 5700 §5.7.9):
                     //   0-1: nPoints (UINT16)
                     //   2..: points (INT32 x, INT32 y) × nPoints, HWPUNIT 도형 내부 좌표
                     if (rec.Payload.Length >= 2)
                     {
                         int nPts = BitConverter.ToUInt16(rec.Payload, 0);
+                        // sanity: nPts*8+2 must fit in payload
+                        int expected = 2 + nPts * 8;
+                        // 일부 구현은 nPoints 앞에 추가 헤더가 있을 수 있어 offset 4 도 시도
+                        int dataOff = 2;
+                        if (expected > rec.Payload.Length && 4 + nPts * 8 <= rec.Payload.Length)
+                            dataOff = 4;
                         var pts = new List<(double X, double Y)>(nPts);
                         for (int j = 0; j < nPts; j++)
                         {
-                            int off = 2 + j * 8;
+                            int off = dataOff + j * 8;
                             if (off + 8 > rec.Payload.Length) break;
                             double px = BitConverter.ToInt32(rec.Payload, off)     * HwpUnitToMm;
                             double py = BitConverter.ToInt32(rec.Payload, off + 4) * HwpUnitToMm;
                             pts.Add((px, py));
                         }
                         if (pts.Count >= 2) shapePoints = pts;
+                        if (pts.Count > 0)
+                        {
+                            var sample = string.Join(", ", pts.Take(6).Select(p => $"({p.X:F1},{p.Y:F1})"));
+                            HwpLog.Write($"[POLYGON_COMPONENT] nPts={nPts}, dataOff={dataOff}, payloadLen={rec.Payload.Length}, pts(mm)={sample}");
+                        }
                     }
                     break;
                 case TAG_CURVE_COMPONENT:
@@ -1429,23 +1440,72 @@ public sealed class HwpReader : IDocumentReader
         if (foundName == null) return null;
 
         if (!binDir.TryOpenStream(foundName, out var binStream)) return null;
+        byte[] raw;
         using (binStream)
+            raw = ReadAllBytes(binStream);
+
+        // HWP BinData 는 보통 raw deflate 압축이지만, 일부는 압축 없이 저장됨.
+        // 압축 해제와 원본 모두 시도해서 알려진 이미지/OLE 매직이 보이는 쪽을 선택.
+        byte[]? decompressed = null;
+        try
         {
-            // HWP BinData 스트림은 raw deflate 압축(zlib 헤더 없음)으로 저장됨.
-            var compressed = ReadAllBytes(binStream);
-            try
-            {
-                using var ms  = new MemoryStream(compressed);
-                using var ds  = new DeflateStream(ms, CompressionMode.Decompress);
-                using var @out = new MemoryStream();
-                ds.CopyTo(@out);
-                return @out.ToArray();
-            }
-            catch
-            {
-                return compressed; // 압축되지 않은 경우 원본 반환
-            }
+            using var ms   = new MemoryStream(raw);
+            using var ds   = new DeflateStream(ms, CompressionMode.Decompress);
+            using var @out = new MemoryStream();
+            ds.CopyTo(@out);
+            decompressed = @out.ToArray();
         }
+        catch { /* 압축되지 않았을 수 있음 */ }
+
+        // OLE 스트림은 종종 4-byte size 헤더가 앞에 붙음 → magic 검색 시 offset 4 도 확인
+        static bool HasValidMagic(byte[] d, out int skipBytes)
+        {
+            skipBytes = 0;
+            if (d == null || d.Length < 4) return false;
+            // PNG / JPEG / GIF / BMP / OLE2 / EMF / WMF magic at offset 0
+            if (IsKnownMagic(d, 0)) return true;
+            // 4-byte size prefix?
+            if (d.Length >= 8 && IsKnownMagic(d, 4)) { skipBytes = 4; return true; }
+            return false;
+        }
+
+        if (decompressed != null && HasValidMagic(decompressed, out int skipD))
+            return skipD == 0 ? decompressed : decompressed[skipD..];
+
+        if (HasValidMagic(raw, out int skipR))
+            return skipR == 0 ? raw : raw[skipR..];
+
+        // 매직을 못 찾으면, 압축 해제가 됐다면 그것을, 아니면 원본을 반환
+        HwpLog.Write($"[ReadBinData] {foundName}: no known image magic found (raw={raw.Length}B, decompressed={decompressed?.Length ?? -1}B)");
+        return decompressed ?? raw;
+    }
+
+    private static bool IsKnownMagic(byte[] d, int off)
+    {
+        if (d.Length < off + 4) return false;
+        // PNG: 89 50 4E 47
+        if (d[off] == 0x89 && d[off + 1] == 0x50 && d[off + 2] == 0x4E && d[off + 3] == 0x47) return true;
+        // JPEG: FF D8 FF
+        if (d[off] == 0xFF && d[off + 1] == 0xD8 && d[off + 2] == 0xFF) return true;
+        // GIF: 47 49 46 38 (GIF8)
+        if (d[off] == 0x47 && d[off + 1] == 0x49 && d[off + 2] == 0x46 && d[off + 3] == 0x38) return true;
+        // BMP: 42 4D (BM) — sanity check via DIB header size at offset 14
+        if (d[off] == 0x42 && d[off + 1] == 0x4D && d.Length - off >= 18)
+        {
+            uint dibSize = BitConverter.ToUInt32(d, off + 14);
+            // BITMAPINFOHEADER=40, BITMAPV4HEADER=108, BITMAPV5HEADER=124, etc.
+            if (dibSize is >= 12 and <= 256) return true;
+        }
+        // OLE2 compound document: D0 CF 11 E0
+        if (d[off] == 0xD0 && d[off + 1] == 0xCF && d[off + 2] == 0x11 && d[off + 3] == 0xE0) return true;
+        // EMF: signature " EMF" at offset 40 of metafile header, but record type "01 00 00 00" at offset 0
+        if (d[off] == 0x01 && d[off + 1] == 0x00 && d[off + 2] == 0x00 && d[off + 3] == 0x00 && d.Length - off >= 44)
+        {
+            if (d[off + 40] == 0x20 && d[off + 41] == 0x45 && d[off + 42] == 0x4D && d[off + 43] == 0x46) return true;
+        }
+        // WMF placeable header: D7 CD C6 9A
+        if (d[off] == 0xD7 && d[off + 1] == 0xCD && d[off + 2] == 0xC6 && d[off + 3] == 0x9A) return true;
+        return false;
     }
 
     private static string DetectMediaType(byte[] data)
@@ -1455,6 +1515,14 @@ public sealed class HwpReader : IDocumentReader
         if (data[0] == 0xFF && data[1] == 0xD8) return "image/jpeg";
         if (data[0] == 0x47 && data[1] == 0x49) return "image/gif";
         if (data[0] == 0x42 && data[1] == 0x4D) return "image/bmp";
+        // EMF: record type "01 00 00 00" + " EMF" signature at offset 40
+        if (data.Length >= 44
+            && data[0] == 0x01 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x00
+            && data[40] == 0x20 && data[41] == 0x45 && data[42] == 0x4D && data[43] == 0x46)
+            return "image/x-emf";
+        // WMF placeable: D7 CD C6 9A
+        if (data[0] == 0xD7 && data[1] == 0xCD && data[2] == 0xC6 && data[3] == 0x9A)
+            return "image/x-wmf";
         return "image/png";
     }
 
