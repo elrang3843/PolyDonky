@@ -443,11 +443,16 @@ public sealed class HwpReader : IDocumentReader
                     catch { }
                     break;
 
-                case TAG_PARA_CHAR_SHAPE when rec.Level == 1 && current != null && current.CharShapeId < 0:
+                case TAG_PARA_CHAR_SHAPE when rec.Level == 1 && current != null:
                     // PARA_CHAR_SHAPE payload: 반복 (position uint32, charShapeId uint32).
-                    // 단순화: 첫 번째 pair 의 charShapeId 사용 (단락 전체 동일 가정).
-                    if (rec.Payload.Length >= 8)
-                        current.CharShapeId = (int)BitConverter.ToUInt32(rec.Payload, 4);
+                    // 모든 엔트리를 CharRuns 에 수집해 캐릭터별 서식 변화 보존.
+                    for (int kp = 0; kp + 8 <= rec.Payload.Length; kp += 8)
+                    {
+                        int cpos = (int)BitConverter.ToUInt32(rec.Payload, kp);
+                        int csid = (int)BitConverter.ToUInt32(rec.Payload, kp + 4);
+                        current.CharRuns.Add((cpos, csid));
+                        if (current.CharShapeId < 0) current.CharShapeId = csid;
+                    }
                     break;
 
                 // CTRL_HEADER 는 본문 단락(레벨 0)의 자식 인라인 컨트롤이므로 레벨 1 에서 처리.
@@ -610,6 +615,8 @@ public sealed class HwpReader : IDocumentReader
                 case TAG_SHAPE_COMPONENT when rec.Payload.Length >= 28:
                     {
                         var p = rec.Payload;
+                        // 진단: SHAPE_COMPONENT 전체 바이트 dump (테두리/채우기 인라인 필드 위치 파악용)
+                        HwpLog.Write($"[SHAPE_COMPONENT] len={p.Length} dump={BitConverter.ToString(p)}");
                         if (wMm <= 0 && p.Length >= 24)
                             wMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
                         if (hMm <= 0 && p.Length >= 28)
@@ -656,21 +663,15 @@ public sealed class HwpReader : IDocumentReader
                         double sxMm = sx * HwpUnitToMm, syMm = sy * HwpUnitToMm;
                         double exMm = ex * HwpUnitToMm, eyMm = ey * HwpUnitToMm;
                         HwpLog.Write($"[LINE_COMPONENT] raw=({sx},{sy})→({ex},{ey}) mm=({sxMm:F1},{syMm:F1})→({exMm:F1},{eyMm:F1}) hMm={hMm:F1}");
-                        // KS X 5700 LINE_COMPONENT Y 좌표: bounding box 기준, Y=0이 하단 (수학 좌표계).
-                        // 화면 좌표계(Y=0이 상단)로 변환: y_screen = hMm - y_shape
-                        if (hMm > 0)
-                        {
-                            syMm = hMm - syMm;
-                            eyMm = hMm - eyMm;
-                        }
-                        // bounding box 좌표는 절대 위치일 수 있어 상대 변환
+                        // bounding box 좌표는 절대 위치일 수 있어 상대 변환.
+                        // HWP LINE_COMPONENT 좌표계는 화면 좌표계(Y=상단 0) 와 동일하므로 Y-flip 불필요.
                         double bbX = Math.Min(sxMm, exMm), bbY = Math.Min(syMm, eyMm);
                         shapePoints = new List<(double X, double Y)>
                         {
                             (sxMm - bbX, syMm - bbY),
                             (exMm - bbX, eyMm - bbY),
                         };
-                        HwpLog.Write($"[LINE_COMPONENT] afterFlip rel=({shapePoints[0].X:F1},{shapePoints[0].Y:F1})→({shapePoints[1].X:F1},{shapePoints[1].Y:F1})");
+                        HwpLog.Write($"[LINE_COMPONENT] rel=({shapePoints[0].X:F1},{shapePoints[0].Y:F1})→({shapePoints[1].X:F1},{shapePoints[1].Y:F1})");
                     }
                     if (rec.Payload.Length >= 18)
                     {
@@ -815,9 +816,16 @@ public sealed class HwpReader : IDocumentReader
                                 try { tbCur.Text += ExtractHwpText(ir.Payload); }
                                 catch { }
                                 break;
-                            case TAG_PARA_CHAR_SHAPE when ir.Level == textLevel && tbCur != null && tbCur.CharShapeId < 0:
-                                if (ir.Payload.Length >= 8)
-                                    tbCur.CharShapeId = (int)BitConverter.ToUInt32(ir.Payload, 4);
+                            case TAG_PARA_CHAR_SHAPE when ir.Level == textLevel && tbCur != null:
+                                // PARA_CHAR_SHAPE 페이로드: (charPos UINT32, charShapeId UINT32) × N
+                                for (int kp = 0; kp + 8 <= ir.Payload.Length; kp += 8)
+                                {
+                                    int cpos = (int)BitConverter.ToUInt32(ir.Payload, kp);
+                                    int csid = (int)BitConverter.ToUInt32(ir.Payload, kp + 4);
+                                    tbCur.CharRuns.Add((cpos, csid));
+                                    if (tbCur.CharShapeId < 0) tbCur.CharShapeId = csid;  // 첫 번째 엔트리는 fallback
+                                }
+                                HwpLog.Write($"[TextBox.PARA_CHAR_SHAPE] entries={tbCur.CharRuns.Count} text='{tbCur.Text}'");
                                 break;
                         }
                         i++;
@@ -1224,9 +1232,14 @@ public sealed class HwpReader : IDocumentReader
                     catch { }
                     break;
 
-                case TAG_PARA_CHAR_SHAPE when rec.Level == minLevel + 1 && cur != null && cur.CharShapeId < 0:
-                    if (rec.Payload.Length >= 8)
-                        cur.CharShapeId = (int)BitConverter.ToUInt32(rec.Payload, 4);
+                case TAG_PARA_CHAR_SHAPE when rec.Level == minLevel + 1 && cur != null:
+                    for (int kp = 0; kp + 8 <= rec.Payload.Length; kp += 8)
+                    {
+                        int cpos = (int)BitConverter.ToUInt32(rec.Payload, kp);
+                        int csid = (int)BitConverter.ToUInt32(rec.Payload, kp + 4);
+                        cur.CharRuns.Add((cpos, csid));
+                        if (cur.CharShapeId < 0) cur.CharShapeId = csid;
+                    }
                     break;
             }
             i++;
@@ -1382,10 +1395,14 @@ public sealed class HwpReader : IDocumentReader
                     catch { }
                     break;
 
-                case TAG_PARA_CHAR_SHAPE when rec.Level == minLevel + 1
-                                          && curPara != null && curPara.CharShapeId < 0:
-                    if (rec.Payload.Length >= 8)
-                        curPara.CharShapeId = (int)BitConverter.ToUInt32(rec.Payload, 4);
+                case TAG_PARA_CHAR_SHAPE when rec.Level == minLevel + 1 && curPara != null:
+                    for (int kp = 0; kp + 8 <= rec.Payload.Length; kp += 8)
+                    {
+                        int cpos = (int)BitConverter.ToUInt32(rec.Payload, kp);
+                        int csid = (int)BitConverter.ToUInt32(rec.Payload, kp + 4);
+                        curPara.CharRuns.Add((cpos, csid));
+                        if (curPara.CharShapeId < 0) curPara.CharShapeId = csid;
+                    }
                     break;
             }
             i++;
@@ -1728,22 +1745,15 @@ public sealed class HwpReader : IDocumentReader
                         var bf = docInfo.BorderFills[tb2.BorderFillId - 1];
                         tbo.BackgroundColor = bf.BackgroundColor;
 
-                        // 명시적 테두리 종류가 있으면 사용; 없으면 HWP 기본 테두리(얇은 검정) 적용.
-                        // (ShapeObject.StrokeColor 기본값="#000000" 과 일관성 유지)
-                        byte bk = bf.TopKind;
-                        if (bk == 0) bk = bf.LeftKind;
-                        if (bk == 0) bk = bf.BottomKind;
-                        if (bk == 0) bk = bf.RightKind;
-                        if (bk > 0 && bf.TopColor != null)
+                        // 4면 중 외곽선 종류가 있는 첫 번째 면을 사용.
+                        byte bk = bf.TopKind;     byte bw = bf.TopWidth;     string? bc = bf.TopColor;
+                        if (bk == 0) { bk = bf.LeftKind;   bw = bf.LeftWidth;   bc = bf.LeftColor; }
+                        if (bk == 0) { bk = bf.BottomKind; bw = bf.BottomWidth; bc = bf.BottomColor; }
+                        if (bk == 0) { bk = bf.RightKind;  bw = bf.RightWidth;  bc = bf.RightColor; }
+                        if (bk > 0 && bc != null)
                         {
-                            tbo.BorderColor = bf.TopColor;
-                            tbo.BorderThicknessPt = HwpLineWidthToPt(bf.TopWidth);
-                        }
-                        else
-                        {
-                            // BorderFill에 외곽선 없으면 HWP 기본 얇은 검정 테두리 적용
-                            tbo.BorderColor = "#000000";
-                            tbo.BorderThicknessPt = 0.75;
+                            tbo.BorderColor = bc;
+                            tbo.BorderThicknessPt = HwpLineWidthToPt(bw);
                         }
                         HwpLog.Write($"[BuildDocument] TextBox → bg={tbo.BackgroundColor ?? "null"}, border={tbo.BorderColor ?? "null"}/{tbo.BorderThicknessPt:F2}pt");
                     }
@@ -1993,6 +2003,7 @@ public sealed class HwpReader : IDocumentReader
                 Text            = line,
                 ParaShapeId     = hp.ParaShapeId,
                 CharShapeId     = hp.CharShapeId,
+                CharRuns        = hp.CharRuns,  // 캐릭터별 서식 보존
                 PageBreakBefore = isFirstLine && hp.PageBreakBefore,
                 IsIntermediateLine = !isLastLine,  // 중간 줄 표시 (SpaceAfter 제거용)
             };
@@ -2037,28 +2048,53 @@ public sealed class HwpReader : IDocumentReader
             }
 
             // 글자 속성 적용
-            if (hp.CharShapeId >= 0 && hp.CharShapeId < docInfo.CharShapes.Count)
+            // 다중 CharShape 구간이 있으면 텍스트를 구간별로 잘라 별도 Run 생성.
+            var runs = hp.CharRuns;
+            if (runs != null && runs.Count > 1)
             {
-                var cs = docInfo.CharShapes[hp.CharShapeId];
-                if (!string.IsNullOrEmpty(cs.FontFamily)) run.Style.FontFamily = cs.FontFamily;
-                if (cs.FontSizePt > 0) run.Style.FontSizePt = cs.FontSizePt;
-                run.Style.Bold          = cs.Bold;
-                run.Style.Italic        = cs.Italic;
-                run.Style.Underline     = cs.Underline;
-                run.Style.Strikethrough = cs.Strikethrough;
-                run.Style.Superscript   = cs.Superscript;
-                run.Style.Subscript     = cs.Subscript;
-                if (!string.IsNullOrEmpty(cs.Color))
+                // charPos 기준 오름차순 정렬 (이미 정렬되어 있겠지만 안전을 위해)
+                var sorted = runs.OrderBy(r => r.CharPos).ToList();
+                for (int ri = 0; ri < sorted.Count; ri++)
                 {
-                    try { run.Style.Foreground = Color.FromHex(cs.Color); } catch { }
+                    int startPos = sorted[ri].CharPos;
+                    int endPos = (ri + 1 < sorted.Count) ? sorted[ri + 1].CharPos : text.Length;
+                    if (startPos >= text.Length) break;
+                    if (endPos > text.Length) endPos = text.Length;
+                    if (endPos <= startPos) continue;
+                    var segText = text.Substring(startPos, endPos - startPos);
+                    var segRun  = new Run { Text = segText };
+                    ApplyCharShape(segRun, docInfo, sorted[ri].CharShapeId);
+                    paragraph.Runs.Add(segRun);
                 }
-                if (cs.WidthPercent > 0) run.Style.WidthPercent = cs.WidthPercent;
-                if (cs.LetterSpacingPx != 0) run.Style.LetterSpacingPx = cs.LetterSpacingPx;
+                if (paragraph.Runs.Count > 0) return paragraph;
             }
+
+            // 단일 CharShape — 기존 동작.
+            ApplyCharShape(run, docInfo, hp.CharShapeId);
         }
 
         paragraph.Runs.Add(run);
         return paragraph;
+    }
+
+    private static void ApplyCharShape(Run run, HwpDocInfo docInfo, int charShapeId)
+    {
+        if (charShapeId < 0 || charShapeId >= docInfo.CharShapes.Count) return;
+        var cs = docInfo.CharShapes[charShapeId];
+        if (!string.IsNullOrEmpty(cs.FontFamily)) run.Style.FontFamily = cs.FontFamily;
+        if (cs.FontSizePt > 0) run.Style.FontSizePt = cs.FontSizePt;
+        run.Style.Bold          = cs.Bold;
+        run.Style.Italic        = cs.Italic;
+        run.Style.Underline     = cs.Underline;
+        run.Style.Strikethrough = cs.Strikethrough;
+        run.Style.Superscript   = cs.Superscript;
+        run.Style.Subscript     = cs.Subscript;
+        if (!string.IsNullOrEmpty(cs.Color))
+        {
+            try { run.Style.Foreground = Color.FromHex(cs.Color); } catch { }
+        }
+        if (cs.WidthPercent > 0) run.Style.WidthPercent = cs.WidthPercent;
+        if (cs.LetterSpacingPx != 0) run.Style.LetterSpacingPx = cs.LetterSpacingPx;
     }
 
     /// <summary>
@@ -2564,6 +2600,12 @@ public sealed class HwpReader : IDocumentReader
         public string Text { get; set; } = "";
         public int    ParaShapeId { get; set; } = -1;
         public int    CharShapeId { get; set; } = -1;
+        /// <summary>
+        /// PARA_CHAR_SHAPE 다중 엔트리: (charPos, charShapeId) 쌍의 시퀀스.
+        /// 각 엔트리는 charPos 부터 적용되는 캐릭터 서식 ID를 정의 (다음 엔트리의 charPos 까지 유효).
+        /// 비어 있으면 단일 CharShapeId 사용.
+        /// </summary>
+        public List<(int CharPos, int CharShapeId)> CharRuns { get; set; } = new();
         public bool   PageBreakBefore { get; set; } = false;
         public bool   IsIntermediateLine { get; set; } = false;  // soft line break 분할 시 중간 줄 표시
         public bool   IsSectionBreak { get; set; } = false;      // HWP 섹션 경계 → ForcePageBreakBefore 단락 생성
