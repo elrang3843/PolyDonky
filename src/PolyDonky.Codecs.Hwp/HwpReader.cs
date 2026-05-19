@@ -1144,12 +1144,14 @@ public sealed class HwpReader : IDocumentReader
             {
                 uint bgColor  = BitConverter.ToUInt32(p, 34);
                 uint patColor = p.Length >= 42 ? BitConverter.ToUInt32(p, 38) : 0;
-                // HWP COLORREF: 0xAABBGGRR — alpha byte 0xFF = transparent
-                bool bgTransparent  = bgColor  == 0xFFFFFFFF || bgColor  == 0 || (bgColor  >> 24) == 0xFF;
-                bool patTransparent = patColor == 0xFFFFFFFF || patColor == 0 || (patColor >> 24) == 0xFF;
+                // HWP COLORREF 투명 마커: 0xFFFFFFFF (모든 비트 1).
+                // 주의: 이전 코드의 `(color >> 24) == 0xFF` 검사는 너무 광범위해 일반 색의
+                // reserved 바이트가 0xFF인 경우(예: 0xFFFF0000 = #0000FF blue)도 투명으로
+                // 잘못 판정해 hatchColor가 fillColor 자리에 대신 채워지는 버그가 있었다.
+                bool bgTransparent  = bgColor  == 0xFFFFFFFF;
                 if (!bgTransparent)
                     bf.BackgroundColor = FormatRgb(bgColor);
-                else if (!patTransparent)
+                else if (patColor != 0 && patColor != 0xFFFFFFFF)
                     bf.BackgroundColor = FormatRgb(patColor);
             }
             else if (fillType == 4 && p.Length >= 50)  // gradient

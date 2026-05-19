@@ -69,6 +69,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP LINE_COMPONENT Y축 방향 수정**: `SHAPE_COMPONENT_LINE` 좌표계가 bounding box 하단=0, 위쪽으로 증가하는 수학 좌표계임을 반영 — 화면 좌표계(상단=0, 아래로 증가)로 변환 시 Y를 `hMm - y`로 뒤집어 대각선 직선이 올바른 방향으로 렌더링되도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
+- **HWP BORDER_FILL 투명 검사 too-aggressive 버그 수정**: `ParseBorderFill`의 투명도 검사 `(color >> 24) == 0xFF` 가 너무 광범위해, reserved 바이트가 0xFF인 일반 색상(예: `0xFFFF0000` = `#0000FF` blue)도 투명으로 잘못 판정해 `hatchColor`가 `faceColor` 자리에 채워지던 버그 수정 — `hatchStyle=0` 인 fill의 글상자 배경색이 실제 색 대신 패턴색으로 표시되던 문제. 투명 마커를 `0xFFFFFFFF` (모든 비트 1) 만으로 한정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP 도형 회전각 오류 수정**: offset 28의 값을 1/100도 단위 회전각으로 읽었으나 해당 위치는 크기 필드의 일부임 — 변환 행렬(offset 52의 cos(θ), offset 60의 sin(θ))로부터 `atan2`로 정확한 각도를 추출하도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 도형 속성 정확도 개선**: `SHAPE_COMPONENT` 너비/높이 오프셋을 KS X 5700 기준(offset 20/24)으로 수정(이전 코드는 4바이트 밀린 24/28을 읽었음), 회전각(offset 28, 1/100도) 추출 추가, `borderFillId` sanity 범위 상향(≤1024). `RECT_COMPONENT`에서 둥근 모서리 비율(`roundedCornerPercent`) 읽기 추가(`RoundedRect` 종류 자동 선택). `LINE_COMPONENT`에서 시작/끝 화살표 유형 파싱 추가. `POLYGON_COMPONENT`·`CURVE_COMPONENT`에서 꼭짓점 좌표 배열 추출 추가. `BuildDocument`에서 `borderFill` Top/Left/Bottom/Right 테두리 중 첫 번째 Non-None을 도형 획(stroke) 색상·두께·선 종류에 올바르게 반영(이전에는 획 제거 조건만 처리하고 실제 색상·두께는 항상 기본값으로 남음). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
