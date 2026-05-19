@@ -633,8 +633,38 @@ public sealed class HwpReader : IDocumentReader
 
                 case TAG_LINE_COMPONENT:
                     kind = HwpShapeKind.Line;
-                    if (rec.Payload.Length >= 2)
+                    // KS X 5700 HWPTAG_SHAPE_COMPONENT_LINE 페이로드:
+                    //   0-3:  startPtX (INT32, HWPUNIT) — bounding box 기준
+                    //   4-7:  startPtY
+                    //   8-11: endPtX
+                    //  12-15: endPtY
+                    //  16-17: attr (UINT16): arrow types
+                    if (rec.Payload.Length >= 16)
                     {
+                        int sx = BitConverter.ToInt32(rec.Payload, 0);
+                        int sy = BitConverter.ToInt32(rec.Payload, 4);
+                        int ex = BitConverter.ToInt32(rec.Payload, 8);
+                        int ey = BitConverter.ToInt32(rec.Payload, 12);
+                        double sxMm = sx * HwpUnitToMm, syMm = sy * HwpUnitToMm;
+                        double exMm = ex * HwpUnitToMm, eyMm = ey * HwpUnitToMm;
+                        // bounding box 좌표는 절대 위치일 수 있어 상대 변환
+                        double bbX = Math.Min(sxMm, exMm), bbY = Math.Min(syMm, eyMm);
+                        shapePoints = new List<(double X, double Y)>
+                        {
+                            (sxMm - bbX, syMm - bbY),
+                            (exMm - bbX, eyMm - bbY),
+                        };
+                        HwpLog.Write($"[LINE_COMPONENT] pts=({sxMm:F1},{syMm:F1})→({exMm:F1},{eyMm:F1}) rel=({shapePoints[0].X:F1},{shapePoints[0].Y:F1})→({shapePoints[1].X:F1},{shapePoints[1].Y:F1})");
+                    }
+                    if (rec.Payload.Length >= 18)
+                    {
+                        ushort la = BitConverter.ToUInt16(rec.Payload, 16);
+                        shapeStartArrow = MapArrow((uint)((la >> 0) & 0x7));
+                        shapeEndArrow   = MapArrow((uint)((la >> 4) & 0x7));
+                    }
+                    else if (rec.Payload.Length >= 2)
+                    {
+                        // 짧은 페이로드 fallback (구버전): attr 가 처음 2 바이트
                         ushort la = BitConverter.ToUInt16(rec.Payload, 0);
                         shapeStartArrow = MapArrow((uint)((la >> 0) & 0x7));
                         shapeEndArrow   = MapArrow((uint)((la >> 4) & 0x7));
@@ -788,6 +818,13 @@ public sealed class HwpReader : IDocumentReader
         // (RECT_COMPONENT 등 후속 shape component 가 kind 를 덮어쓰는 것을 방지)
         if (tbContent != null && tbContent.Count > 0)
             kind = HwpShapeKind.TextBox;
+
+        // Line 도형이고 endpoint 가 추출되지 않았으면 기본 하강 대각선 (0,0)→(w,h)
+        if (kind == HwpShapeKind.Line && (shapePoints == null || shapePoints.Count < 2) && wMm > 0 && hMm > 0)
+        {
+            shapePoints = new List<(double X, double Y)> { (0, 0), (wMm, hMm) };
+            HwpLog.Write($"[ParseGsoControl] Line endpoints not found → default diagonal (0,0)→({wMm:F1},{hMm:F1})");
+        }
 
         HwpLog.Write($"[ParseGsoControl] GSO at idx={gsoStartIdx}: kind={kind}, hasShape={hasShape}, " +
             $"size={wMm:F1}x{hMm:F1}mm, pos=({xMm:F1},{yMm:F1}), " +
@@ -1658,6 +1695,12 @@ public sealed class HwpReader : IDocumentReader
                         HeightMm        = tb2.HeightMm > 1 ? tb2.HeightMm : 30,
                         AnchorPageIndex = tb2.AnchorPageIndex,
                     };
+                    HwpLog.Write($"[BuildDocument] TextBox borderFillId={tb2.BorderFillId} (BorderFills.count={docInfo.BorderFills.Count})");
+                    for (int bi = 0; bi < docInfo.BorderFills.Count; bi++)
+                    {
+                        var bbf = docInfo.BorderFills[bi];
+                        HwpLog.Write($"  BorderFill[{bi+1}]: bg={bbf.BackgroundColor ?? "null"} top={bbf.TopColor ?? "null"}/k{bbf.TopKind}/w{bbf.TopWidth}");
+                    }
                     if (tb2.BorderFillId >= 1 && tb2.BorderFillId - 1 < docInfo.BorderFills.Count)
                     {
                         var bf = docInfo.BorderFills[tb2.BorderFillId - 1];
@@ -1667,6 +1710,7 @@ public sealed class HwpReader : IDocumentReader
                             tbo.BorderColor = bf.TopColor;
                             tbo.BorderThicknessPt = HwpLineWidthToPt(bf.TopWidth);
                         }
+                        HwpLog.Write($"[BuildDocument] TextBox → bg={tbo.BackgroundColor ?? "null"}, border={tbo.BorderColor ?? "null"}/{tbo.BorderThicknessPt:F2}pt");
                     }
                     foreach (var tp in tb2.Paragraphs)
                         foreach (var para in ConvertHwpParagraphMulti(tp, docInfo))
