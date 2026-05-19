@@ -67,6 +67,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP 도형 borderFillId 읽기 오류 수정**: `SHAPE_COMPONENT` offset 50의 값을 `borderFillId`로 읽었으나 해당 위치는 항상 1인 version/count 필드임 — 252-byte 페이로드 실측 분석으로 실제 `borderFillId`가 offset 201(uint8)에 있음을 확인하고 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
+- **HWP 단락앵커 그림 "글자 앞에 배치" 다음 페이지 이동 버그 수정**: `anchorType=1`(단락앵커) + `wrapType=0`(글자 앞/뒤 배치) 그림을 `IsInline=true`로 처리해 본문을 2페이지로 밀어내던 버그 수정 — `anchorType==2`(문자 앵커)인 경우만 인라인 흐름으로 처리하고, 단락·페이지 앵커 부동 객체는 overlay로 배치. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP BORDER_FILL 채우기 색상 ABGR 해석 수정**: 진단 로그로 확인된 HWP5 색상 포맷이 Windows COLORREF(BBGGRR)가 아닌 **ABGR**(low byte = alpha)임을 반영. 기존 `(color >> 24) == 0xFF` 투명도 검사는 R 바이트를 alpha로 잘못 검사해 `#FFFF00` 노란색(R=FF, G=FF, B=00, A=00)을 투명으로 판정하고 `hatchColor`로 대체하는 버그를 유발. `FormatAbgr` 함수 추가 — alpha(low byte)==0xFF인 경우만 투명으로 처리, 나머지는 올바른 #RRGGBB 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 단락 PARA_CHAR_SHAPE 다중 엔트리 보존**: 한 단락 내 캐릭터별로 다른 폰트·크기·색상·이탤릭 속성이 있는 경우, 기존 코드는 첫 번째 CharShapeId만 사용해 전체를 단일 Run으로 처리했으나, 이제 `(charPos, charShapeId)` 쌍 시퀀스를 `HwpParagraph.CharRuns`에 모두 수집해 텍스트를 구간별로 잘라 별도 Run을 생성. 글상자·표 셀·머리말/꼬리말·본문 모든 단락에 적용. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
