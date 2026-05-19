@@ -1755,16 +1755,56 @@ public static class FlowDocumentBuilder
             return new Wpf.BlockUIContainer(wrappedSvg) { Tag = image, Margin = svgMargin };
         }
 
-        var bitmap = new WpfMedia.Imaging.BitmapImage();
-        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
-        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
-        var imgStream = new MemoryStream(image.Data, writable: false);
-        bitmap.BeginInit();
-        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = imgStream;
-        bitmap.EndInit();
-        imgStream.Dispose();
-        bitmap.Freeze();
+        WpfMedia.Imaging.BitmapImage? bitmap = null;
+        try
+        {
+            // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+            // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+            var imgStream = new MemoryStream(image.Data, writable: false);
+            bitmap = new WpfMedia.Imaging.BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = imgStream;
+            bitmap.EndInit();
+            imgStream.Dispose();
+            bitmap.Freeze();
+        }
+        catch
+        {
+            // 지원되지 않는 이미지 포맷(EMF, WMF, HWP VtChart 등) → placeholder 로 대체
+            bitmap = null;
+        }
+
+        if (bitmap == null)
+        {
+            var fallbackHA = image.HAlign switch
+            {
+                ImageHAlign.Center => HorizontalAlignment.Center,
+                ImageHAlign.Right  => HorizontalAlignment.Right,
+                _                  => HorizontalAlignment.Left,
+            };
+            var fallbackBox = new System.Windows.Controls.Border
+            {
+                Width               = image.WidthMm  > 0 ? MmToDip(image.WidthMm)  : 80,
+                Height              = image.HeightMm > 0 ? MmToDip(image.HeightMm) : 60,
+                BorderBrush         = WpfMedia.Brushes.Gray,
+                BorderThickness     = new Thickness(1),
+                Background          = WpfMedia.Brushes.WhiteSmoke,
+                HorizontalAlignment = fallbackHA,
+                Child = new System.Windows.Controls.TextBlock
+                {
+                    Text                = "[이미지]",
+                    Foreground          = WpfMedia.Brushes.Gray,
+                    FontStyle           = FontStyles.Italic,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center,
+                },
+            };
+            if (!string.IsNullOrEmpty(image.Description)) fallbackBox.ToolTip = image.Description;
+            UIElement wrappedFallback = WrapImageWithTitle(fallbackBox, image, fallbackHA);
+            var fallbackMargin = new Thickness(0, MmToDip(image.MarginTopMm), 0, MmToDip(image.MarginBottomMm));
+            return new Wpf.BlockUIContainer(wrappedFallback) { Tag = image, Margin = fallbackMargin };
+        }
 
         // Image.Tag 에 container 를 저장하지 말 것 — container.Child = image 와 함께 순환 참조가 되어
         // WPF undo 스냅샷의 XamlWriter.Save() 가 StackOverflowException 으로 폭주한다.
@@ -1903,16 +1943,25 @@ public static class FlowDocumentBuilder
     {
         if (image.Data.Length == 0) return null;
 
-        var bitmap = new WpfMedia.Imaging.BitmapImage();
-        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
-        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
-        var imgStream = new MemoryStream(image.Data, writable: false);
-        bitmap.BeginInit();
-        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = imgStream;
-        bitmap.EndInit();
-        imgStream.Dispose();
-        bitmap.Freeze();
+        WpfMedia.Imaging.BitmapImage? bitmap = null;
+        try
+        {
+            // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+            // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+            var imgStream = new MemoryStream(image.Data, writable: false);
+            bitmap = new WpfMedia.Imaging.BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = imgStream;
+            bitmap.EndInit();
+            imgStream.Dispose();
+            bitmap.Freeze();
+        }
+        catch
+        {
+            // 지원되지 않는 이미지 포맷 → null 반환
+            return null;
+        }
 
         var control = new System.Windows.Controls.Image
         {
