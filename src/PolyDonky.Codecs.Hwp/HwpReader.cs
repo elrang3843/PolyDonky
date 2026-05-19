@@ -815,13 +815,17 @@ public sealed class HwpReader : IDocumentReader
         switch (kind)
         {
             case HwpShapeKind.Picture:
+            {
+                uint picAnchorType = (ctrlFlags >> 4) & 0x3;
                 body.Images.Add(new HwpImage
                 {
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm,
                     BinDataId = binDataId,
                     AnchorPageIndex = anchorPageIndex,
+                    IsInline = picAnchorType != 0,
                 });
                 break;
+            }
 
             case HwpShapeKind.TextBox:
                 body.TextBoxes.Add(new HwpTextBox
@@ -846,6 +850,7 @@ public sealed class HwpReader : IDocumentReader
                     EndArrow = shapeEndArrow,
                     CornerRadiusPct = shapeCornerRadiusPct,
                     Points = shapePoints,
+                    IsInline = ((ctrlFlags >> 4) & 0x3) != 0,
                 });
                 break;
         }
@@ -1380,14 +1385,12 @@ public sealed class HwpReader : IDocumentReader
 
     // ── BinData ID extraction ──────────────────────────────────────────────
 
-    // Try to extract the BinData reference ID from a PICTURE_COMPONENT payload.
-    // The exact offset is version-dependent; scan for a small plausible uint16.
+    // PICTURE_COMPONENT: binDataId는 offset 50 (uint16, 1-based)
+    // OLE_COMPONENT: binDataId는 offset 12 (uint16, 1-based)
     private static int TryReadBinDataId(byte[] p)
     {
-        // The BinData ID is a 1-based uint16 in the payload.
-        // Common positions: 50 (after border/fill/frame data), then 4, then 2.
-        // Plausible range: 1 to 256.
-        foreach (int off in new[] { 50, 4, 2, 52, 6 })
+        // KS X 5700 실측: PICTURE_COMPONENT @ 50, OLE_COMPONENT @ 12
+        foreach (int off in new[] { 50, 12, 4, 2, 52, 6 })
         {
             if (off + 2 > p.Length) continue;
             int candidate = BitConverter.ToUInt16(p, off);
@@ -1401,10 +1404,39 @@ public sealed class HwpReader : IDocumentReader
     {
         if (binId <= 0) return null;
         if (!root.TryOpenStorage("BinData", out var binDir)) return null;
-        var streamName = $"BIN{binId:X4}";
-        if (!binDir.TryOpenStream(streamName, out var binStream)) return null;
+
+        // BinData 스트림 이름에는 확장자가 붙을 수 있음 (예: BIN0001.OLE, BIN0002.bmp).
+        // 접두사 "BIN{id:X4}" 로 시작하는 첫 번째 항목을 찾는다.
+        var prefix = $"BIN{binId:X4}";
+        string? foundName = null;
+        foreach (var entry in binDir.EnumerateEntries())
+        {
+            if (entry.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                foundName = entry.Name;
+                break;
+            }
+        }
+        if (foundName == null) return null;
+
+        if (!binDir.TryOpenStream(foundName, out var binStream)) return null;
         using (binStream)
-            return ReadAllBytes(binStream);
+        {
+            // HWP BinData 스트림은 raw deflate 압축(zlib 헤더 없음)으로 저장됨.
+            var compressed = ReadAllBytes(binStream);
+            try
+            {
+                using var ms  = new MemoryStream(compressed);
+                using var ds  = new DeflateStream(ms, CompressionMode.Decompress);
+                using var @out = new MemoryStream();
+                ds.CopyTo(@out);
+                return @out.ToArray();
+            }
+            catch
+            {
+                return compressed; // 압축되지 않은 경우 원본 반환
+            }
+        }
     }
 
     private static string DetectMediaType(byte[] data)
@@ -1580,13 +1612,22 @@ public sealed class HwpReader : IDocumentReader
             {
                 Data      = imgData,
                 MediaType = DetectMediaType(imgData),
-                WrapMode  = ImageWrapMode.InFrontOfText,
                 WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
                 HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
-                OverlayXMm      = img.XMm,
-                OverlayYMm      = img.YMm,
-                AnchorPageIndex = img.AnchorPageIndex,
             };
+            if (img.IsInline)
+            {
+                // 단락 앵커 이미지: 인라인 흐름에 배치
+                ib.WrapMode = ImageWrapMode.Inline;
+                ib.HAlign   = ImageHAlign.Center;
+            }
+            else
+            {
+                ib.WrapMode         = ImageWrapMode.InFrontOfText;
+                ib.OverlayXMm      = img.XMm;
+                ib.OverlayYMm      = img.YMm;
+                ib.AnchorPageIndex = img.AnchorPageIndex;
+            }
             section.Blocks.Add(ib);
         }
 
@@ -1601,12 +1642,21 @@ public sealed class HwpReader : IDocumentReader
 
             var soWidthMm  = sh.WidthMm  > 1 ? sh.WidthMm  : 40;
             var soHeightMm = sh.HeightMm > 1 ? sh.HeightMm : 20;
+
+            ImageWrapMode wrapMode;
+            if (sh.IsInline)
+                wrapMode = ImageWrapMode.Inline;
+            else if (sh.IsBehindText)
+                wrapMode = ImageWrapMode.BehindText;
+            else
+                wrapMode = ImageWrapMode.InFrontOfText;
+
             var so = new ShapeObject
             {
                 Kind              = MapShapeKind(sh.Kind),
-                WrapMode          = sh.IsBehindText ? ImageWrapMode.BehindText : ImageWrapMode.InFrontOfText,
-                OverlayXMm        = sh.XMm,
-                OverlayYMm        = sh.YMm,
+                WrapMode          = wrapMode,
+                OverlayXMm        = sh.IsInline ? 0 : sh.XMm,
+                OverlayYMm        = sh.IsInline ? 0 : sh.YMm,
                 WidthMm           = soWidthMm,
                 HeightMm          = soHeightMm,
                 AnchorPageIndex   = sh.AnchorPageIndex,
@@ -1670,8 +1720,8 @@ public sealed class HwpReader : IDocumentReader
             }
             HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm " +
                 $"pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) rot={so.RotationAngleDeg:F1}deg " +
-                $"wrapMode={so.WrapMode} fillColor={so.FillColor ?? "null"} strokeColor={so.StrokeColor} " +
-                $"anchorPage={so.AnchorPageIndex} points={so.Points.Count}");
+                $"wrapMode={so.WrapMode} isInline={sh.IsInline} fillColor={so.FillColor ?? "null"} " +
+                $"strokeColor={so.StrokeColor} anchorPage={so.AnchorPageIndex} points={so.Points.Count}");
 
             section.Blocks.Add(so);
         }
@@ -2308,6 +2358,7 @@ public sealed class HwpReader : IDocumentReader
         public double HeightMm  { get; set; }
         public int    BinDataId { get; set; }
         public int    AnchorPageIndex { get; set; }
+        public bool   IsInline  { get; set; }  // anchorType=1/2 → 인라인 흐름
     }
 
     private sealed class HwpShape
@@ -2321,6 +2372,7 @@ public sealed class HwpReader : IDocumentReader
         public int          AnchorPageIndex { get; set; }
         public int          BorderFillId { get; set; } = -1;  // SHAPE_COMPONENT 의 borderFillId (1-based)
         public bool         IsBehindText { get; set; }
+        public bool         IsInline  { get; set; }  // anchorType != 0
         public double       RotationAngleDeg { get; set; }
         public ShapeArrow   StartArrow { get; set; }
         public ShapeArrow   EndArrow   { get; set; }
