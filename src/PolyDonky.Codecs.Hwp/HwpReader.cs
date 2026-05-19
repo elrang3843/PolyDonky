@@ -660,51 +660,64 @@ public sealed class HwpReader : IDocumentReader
                     kind = HwpShapeKind.Polygon;
                     // POLYGON_COMPONENT payload (KS X 5700 §5.7.9):
                     //   0-1: nPoints (UINT16)
-                    //   2..: points (INT32 x, INT32 y) × nPoints, HWPUNIT 도형 내부 좌표
+                    //   2..: points (INT32 x, INT32 y) × nPoints
+                    // 좌표계: HWPUNIT 이 아니라 도형 bounding-box 내부 독자 스케일 (~26,600 units/mm).
+                    // 정규화: raw 값의 min/max → (0..wMm, 0..hMm) 으로 선형 매핑.
                     if (rec.Payload.Length >= 2)
                     {
                         int nPts = BitConverter.ToUInt16(rec.Payload, 0);
-                        // sanity: nPts*8+2 must fit in payload
                         int expected = 2 + nPts * 8;
-                        // 일부 구현은 nPoints 앞에 추가 헤더가 있을 수 있어 offset 4 도 시도
                         int dataOff = 2;
                         if (expected > rec.Payload.Length && 4 + nPts * 8 <= rec.Payload.Length)
                             dataOff = 4;
-                        var pts = new List<(double X, double Y)>(nPts);
+                        var rawPts = new List<(long X, long Y)>(nPts);
                         for (int j = 0; j < nPts; j++)
                         {
                             int off = dataOff + j * 8;
                             if (off + 8 > rec.Payload.Length) break;
-                            double px = BitConverter.ToInt32(rec.Payload, off)     * HwpUnitToMm;
-                            double py = BitConverter.ToInt32(rec.Payload, off + 4) * HwpUnitToMm;
-                            pts.Add((px, py));
+                            rawPts.Add((BitConverter.ToInt32(rec.Payload, off), BitConverter.ToInt32(rec.Payload, off + 4)));
                         }
-                        if (pts.Count >= 2) shapePoints = pts;
-                        if (pts.Count > 0)
+                        if (rawPts.Count >= 2)
                         {
-                            var sample = string.Join(", ", pts.Take(6).Select(p => $"({p.X:F1},{p.Y:F1})"));
-                            HwpLog.Write($"[POLYGON_COMPONENT] nPts={nPts}, dataOff={dataOff}, payloadLen={rec.Payload.Length}, pts(mm)={sample}");
+                            long minX = rawPts.Min(p => p.X), maxX = rawPts.Max(p => p.X);
+                            long minY = rawPts.Min(p => p.Y), maxY = rawPts.Max(p => p.Y);
+                            double rangeX = maxX - minX, rangeY = maxY - minY;
+                            double bbW = wMm > 0 ? wMm : 10.0;
+                            double bbH = hMm > 0 ? hMm : 10.0;
+                            shapePoints = rawPts.Select(p => (
+                                rangeX > 0 ? (p.X - minX) / rangeX * bbW : bbW / 2.0,
+                                rangeY > 0 ? (p.Y - minY) / rangeY * bbH : bbH / 2.0
+                            )).ToList();
+                            var sample = string.Join(", ", shapePoints.Take(6).Select(p => $"({p.Item1:F1},{p.Item2:F1})"));
+                            HwpLog.Write($"[POLYGON_COMPONENT] nPts={nPts}, wMm={bbW:F1}, hMm={bbH:F1}, pts(mm)={sample}");
                         }
                     }
                     break;
                 case TAG_CURVE_COMPONENT:
                     kind = HwpShapeKind.Curve;
-                    // CURVE_COMPONENT payload (KS X 5700):
-                    //   0-1: nPoints (UINT16)
-                    //   2..: anchor points (INT32 x, INT32 y) × nPoints, HWPUNIT 도형 내부 좌표
+                    // CURVE_COMPONENT: 좌표계 동일 (독자 스케일), 동일한 bounding-box 정규화 적용.
                     if (rec.Payload.Length >= 2)
                     {
                         int nCrvPts = BitConverter.ToUInt16(rec.Payload, 0);
-                        var crvPts = new List<(double X, double Y)>(nCrvPts);
+                        var rawCrv = new List<(long X, long Y)>(nCrvPts);
                         for (int j = 0; j < nCrvPts; j++)
                         {
                             int off = 2 + j * 8;
                             if (off + 8 > rec.Payload.Length) break;
-                            double px = BitConverter.ToInt32(rec.Payload, off)     * HwpUnitToMm;
-                            double py = BitConverter.ToInt32(rec.Payload, off + 4) * HwpUnitToMm;
-                            crvPts.Add((px, py));
+                            rawCrv.Add((BitConverter.ToInt32(rec.Payload, off), BitConverter.ToInt32(rec.Payload, off + 4)));
                         }
-                        if (crvPts.Count >= 2) shapePoints = crvPts;
+                        if (rawCrv.Count >= 2)
+                        {
+                            long minX = rawCrv.Min(p => p.X), maxX = rawCrv.Max(p => p.X);
+                            long minY = rawCrv.Min(p => p.Y), maxY = rawCrv.Max(p => p.Y);
+                            double rangeX = maxX - minX, rangeY = maxY - minY;
+                            double bbW = wMm > 0 ? wMm : 10.0;
+                            double bbH = hMm > 0 ? hMm : 10.0;
+                            shapePoints = rawCrv.Select(p => (
+                                rangeX > 0 ? (p.X - minX) / rangeX * bbW : bbW / 2.0,
+                                rangeY > 0 ? (p.Y - minY) / rangeY * bbH : bbH / 2.0
+                            )).ToList();
+                        }
                     }
                     break;
                 case TAG_OLE_COMPONENT:
