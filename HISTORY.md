@@ -44,6 +44,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Added
+
+- **HWP OLE 차트 미리보기 막대 그래프 렌더링**: HWP의 OLE 차트(Hancom Chart, HCH 포맷)에는 미리보기 이미지가 내장되지 않아 `[OLE]` placeholder만 표시되던 한계를 개선 — `ShapeObject`에 `ChartCategories`/`ChartSeries`/`ChartYMax` 필드 추가, `HwpChartParser`에서 OLE 바이너리의 EUC-KR 인코딩된 "행N"/"열N" 라벨을 휴리스틱 스캔으로 추출, `FlowDocumentBuilder.BuildBarChart`에서 그리드라인·축·그룹 막대·범례를 갖춘 막대 그래프로 렌더링. 실제 데이터 값은 HCH 포맷 사양 비공개로 추출이 어려워 placeholder 값을 사용 (라벨은 정확). (`src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.Codecs.Hwp/HwpChartParser.cs`, `src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+
 ### Fixed
 
 - **HWP 클립아트 이미지 렌더링 수정**: BIN0001.OLE(OLE2 차트)가 sequential scan을 통해 이미지로 잘못 선택되던 버그 수정 — OLE 도형의 `binDataId`를 `usedBinIds`에 즉시 등록해 이미지 scan이 BIN0002.bmp(실제 이미지)를 올바르게 선택하도록 수정. `DetectMediaType`에 OLE2(`D0 CF 11 E0`) 케이스 추가, fallback을 `image/png`→`application/octet-stream`으로 수정. OLE2·octet-stream 데이터는 ImageBlock 생성을 건너뜀. 단락앵커(anchorType=1) 이미지를 절대 페이지 좌표가 있으면 overlay로 배치. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)

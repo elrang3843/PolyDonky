@@ -2288,9 +2288,16 @@ public static class FlowDocumentBuilder
         // StrokeThickness=0 일 때 Stroke 를 Transparent 로 설정해 렌더링 경계 계산 오류를 방지한다.
         WpfMedia.Brush effectiveStroke = strokeDip > 0 ? strokeBrushVal : WpfMedia.Brushes.Transparent;
 
-        // OLE 개체: 실제 렌더링 불가 → 회색 placeholder 박스
+        // OLE 개체: 차트 데이터가 있으면 막대 그래프 미리보기, 아니면 회색 placeholder.
         if (shape.Kind == ShapeKind.Ole)
         {
+            if (shape.ChartSeries != null && shape.ChartSeries.Count > 0 &&
+                shape.ChartCategories != null && shape.ChartCategories.Count > 0)
+            {
+                var chartCanvas = BuildBarChart(shape, wDip, hDip);
+                canvas.Children.Add(chartCanvas);
+                return canvas;
+            }
             var oleBox = new System.Windows.Controls.Border
             {
                 Width           = wDip,
@@ -2382,6 +2389,147 @@ public static class FlowDocumentBuilder
         }
 
         return canvas;
+    }
+
+    // OLE 차트(HWP Hancom Chart) 미리보기 — 그룹 막대 그래프 렌더링.
+    // 실제 HCH 데이터 추출은 한계가 있어 카테고리·시리즈 라벨은 추출하되 값은 placeholder.
+    private static System.Windows.Controls.Canvas BuildBarChart(ShapeObject shape, double wDip, double hDip)
+    {
+        var canvas = new System.Windows.Controls.Canvas
+        {
+            Width = wDip,
+            Height = hDip,
+            Background = WpfMedia.Brushes.White,
+        };
+
+        // 외곽 테두리
+        var border = new System.Windows.Controls.Border
+        {
+            Width = wDip, Height = hDip,
+            BorderBrush = WpfMedia.Brushes.Gray,
+            BorderThickness = new Thickness(1),
+        };
+        canvas.Children.Add(border);
+
+        var cats = shape.ChartCategories ?? new List<string>();
+        var series = shape.ChartSeries ?? new List<ChartSeries>();
+        if (cats.Count == 0 || series.Count == 0) return canvas;
+
+        // 플롯 영역: 좌측 축 라벨(30dip), 하단 카테고리 라벨(20dip), 우측 범례(50dip), 상단 여백(10dip)
+        const double padTop = 10, padBottom = 22, padLeft = 32;
+        double padRight = Math.Min(60, wDip * 0.25);
+        double plotW = Math.Max(20, wDip - padLeft - padRight);
+        double plotH = Math.Max(20, hDip - padTop - padBottom);
+        double yMax = shape.ChartYMax ?? 100;
+        if (yMax <= 0) yMax = 100;
+
+        // Y축 가이드라인 (0, 25, 50, 75, 100)
+        for (int g = 0; g <= 4; g++)
+        {
+            double y = padTop + plotH * (1.0 - g / 4.0);
+            var line = new System.Windows.Shapes.Line
+            {
+                X1 = padLeft, Y1 = y, X2 = padLeft + plotW, Y2 = y,
+                Stroke = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xE0, 0xE0, 0xE0)),
+                StrokeThickness = 0.5,
+            };
+            canvas.Children.Add(line);
+
+            var ylabel = new System.Windows.Controls.TextBlock
+            {
+                Text = ((int)(yMax * g / 4)).ToString(),
+                Foreground = WpfMedia.Brushes.Gray,
+                FontSize = 8,
+            };
+            System.Windows.Controls.Canvas.SetLeft(ylabel, 4);
+            System.Windows.Controls.Canvas.SetTop(ylabel, y - 5);
+            canvas.Children.Add(ylabel);
+        }
+
+        // X·Y 축
+        var xAxis = new System.Windows.Shapes.Line
+        {
+            X1 = padLeft, Y1 = padTop + plotH, X2 = padLeft + plotW, Y2 = padTop + plotH,
+            Stroke = WpfMedia.Brushes.Black, StrokeThickness = 0.8,
+        };
+        var yAxis = new System.Windows.Shapes.Line
+        {
+            X1 = padLeft, Y1 = padTop, X2 = padLeft, Y2 = padTop + plotH,
+            Stroke = WpfMedia.Brushes.Black, StrokeThickness = 0.8,
+        };
+        canvas.Children.Add(xAxis);
+        canvas.Children.Add(yAxis);
+
+        // 그룹 막대: 각 카테고리에 series.Count 개의 막대.
+        double groupW = plotW / cats.Count;
+        double barGap = 2;
+        double barW = Math.Max(2, (groupW - barGap * 2) / series.Count - 1);
+
+        for (int c = 0; c < cats.Count; c++)
+        {
+            double gx = padLeft + c * groupW + barGap;
+            for (int s = 0; s < series.Count; s++)
+            {
+                if (c >= series[s].Values.Count) continue;
+                double v = Math.Max(0, Math.Min(yMax, series[s].Values[c]));
+                double bh = plotH * v / yMax;
+                var fill = ParseHexColor(series[s].Color) ?? WpfMedia.Color.FromRgb(0x44, 0x72, 0xC4);
+                var bar = new System.Windows.Shapes.Rectangle
+                {
+                    Width = barW, Height = bh,
+                    Fill = new WpfMedia.SolidColorBrush(fill),
+                };
+                System.Windows.Controls.Canvas.SetLeft(bar, gx + s * (barW + 1));
+                System.Windows.Controls.Canvas.SetTop(bar, padTop + plotH - bh);
+                canvas.Children.Add(bar);
+            }
+            // 카테고리 라벨
+            var cl = new System.Windows.Controls.TextBlock
+            {
+                Text = cats[c],
+                Foreground = WpfMedia.Brushes.Black,
+                FontSize = 8,
+                TextAlignment = TextAlignment.Center,
+                Width = groupW,
+            };
+            System.Windows.Controls.Canvas.SetLeft(cl, padLeft + c * groupW);
+            System.Windows.Controls.Canvas.SetTop(cl, padTop + plotH + 2);
+            canvas.Children.Add(cl);
+        }
+
+        // 범례 (우측)
+        double legendX = padLeft + plotW + 5;
+        for (int s = 0; s < series.Count && s < 8; s++)
+        {
+            double ly = padTop + s * 12;
+            var swatch = new System.Windows.Shapes.Rectangle
+            {
+                Width = 8, Height = 8,
+                Fill = new WpfMedia.SolidColorBrush(ParseHexColor(series[s].Color) ?? WpfMedia.Color.FromRgb(0x44, 0x72, 0xC4)),
+            };
+            System.Windows.Controls.Canvas.SetLeft(swatch, legendX);
+            System.Windows.Controls.Canvas.SetTop(swatch, ly + 1);
+            canvas.Children.Add(swatch);
+
+            var ltext = new System.Windows.Controls.TextBlock
+            {
+                Text = series[s].Name,
+                Foreground = WpfMedia.Brushes.Black,
+                FontSize = 8,
+            };
+            System.Windows.Controls.Canvas.SetLeft(ltext, legendX + 11);
+            System.Windows.Controls.Canvas.SetTop(ltext, ly);
+            canvas.Children.Add(ltext);
+        }
+
+        return canvas;
+    }
+
+    private static WpfMedia.Color? ParseHexColor(string? hex)
+    {
+        if (string.IsNullOrEmpty(hex)) return null;
+        try { return (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(hex)!; }
+        catch { return null; }
     }
 
     // 오버레이 도형 회전 적용 — 절대 위치 배치이므로 RenderTransform 으로 충분.

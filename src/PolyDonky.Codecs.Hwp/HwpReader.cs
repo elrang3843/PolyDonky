@@ -1790,6 +1790,14 @@ public sealed class HwpReader : IDocumentReader
                         OleData           = oleData,
                     };
 
+                    // OLE → Chart 미리보기: Hancom Chart(HCH) 포맷에는 embedded preview image가 없으므로,
+                    // 데이터 추출이 가능하면 막대 그래프로, 아니면 일반적인 차트 외형 placeholder로 렌더링.
+                    if (sh.Kind == HwpShapeKind.Ole && oleData != null && oleData.Length > 16)
+                    {
+                        HwpChartParser.PopulateChart(so, oleData);
+                        HwpLog.Write($"[BuildDocument] OLE chart populated: categories={so.ChartCategories?.Count ?? 0}, series={so.ChartSeries?.Count ?? 0}");
+                    }
+
                     if (sh.Kind == HwpShapeKind.RoundedRect && sh.CornerRadiusPct > 0)
                         so.CornerRadiusMm = Math.Min(soWidthMm, soHeightMm) * sh.CornerRadiusPct / 100.0;
 

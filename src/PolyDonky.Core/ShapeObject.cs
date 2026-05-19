@@ -217,4 +217,24 @@ public sealed class ShapeObject : Block, IOverlayAnchored
 
     /// <summary>OLE 객체 바이너리 데이터 (Kind = Ole 인 경우만 사용). 무손실 보존용.</summary>
     public byte[]? OleData { get; set; }
+
+    // ── Chart 데이터 (HWP 차트 OLE에서 추출). Kind = Ole 이고 ChartSeries 가 있으면 막대 그래프로 렌더링. ──
+
+    /// <summary>차트 X축 카테고리 라벨 (행 라벨).</summary>
+    public List<string>? ChartCategories { get; set; }
+
+    /// <summary>차트 데이터 시리즈 (각 시리즈는 카테고리 수만큼의 값을 가짐).</summary>
+    public List<ChartSeries>? ChartSeries { get; set; }
+
+    /// <summary>차트 Y축 최대값 (자동 스케일이면 null).</summary>
+    public double? ChartYMax { get; set; }
+}
+
+/// <summary>차트 데이터 시리즈 (열).</summary>
+public sealed class ChartSeries
+{
+    public string Name { get; set; } = "";
+    public List<double> Values { get; set; } = new();
+    /// <summary>시리즈 색상 (#RRGGBB). null이면 기본 팔레트 사용.</summary>
+    public string? Color { get; set; }
 }
