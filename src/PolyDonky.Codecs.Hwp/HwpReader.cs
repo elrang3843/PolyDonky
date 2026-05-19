@@ -1726,19 +1726,18 @@ public sealed class HwpReader : IDocumentReader
                         WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
                         HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
                     };
-                    // anchorType=1(단락앵커): 페이지 좌표로 overlay 배치 (단락 위치 추적 불가 시 근사)
-                    if (img.IsInline && (img.XMm > 0 || img.YMm > 0))
-                    {
-                        // 단락앵커이지만 페이지 절대 좌표가 있으면 overlay로 배치
-                        ib.WrapMode        = ImageWrapMode.InFrontOfText;
-                        ib.OverlayXMm      = img.XMm;
-                        ib.OverlayYMm      = img.YMm;
-                        ib.AnchorPageIndex = img.AnchorPageIndex;
-                    }
-                    else if (img.IsInline)
+                    // anchorType=1(단락앵커): HWP의 X/Y는 페이지 절대 좌표가 아니라
+                    // 단락 기준 상대 오프셋이므로 overlay 좌표로 쓰면 안 됨.
+                    // 인라인 흐름에 배치하고 X 오프셋으로 가로 정렬만 근사한다.
+                    if (img.IsInline)
                     {
                         ib.WrapMode = ImageWrapMode.Inline;
-                        ib.HAlign   = ImageHAlign.Center;
+                        // X 오프셋으로 좌/중앙/우 근사 (본문 너비 ~180mm 가정)
+                        const double bodyW = 180.0;
+                        var cx = img.XMm + img.WidthMm / 2.0;
+                        ib.HAlign = cx < bodyW * 0.33 ? ImageHAlign.Left
+                                  : cx > bodyW * 0.67 ? ImageHAlign.Right
+                                  : ImageHAlign.Center;
                     }
                     else
                     {
@@ -1789,6 +1788,15 @@ public sealed class HwpReader : IDocumentReader
                         StrokeThicknessPt = 1.0,
                         OleData           = oleData,
                     };
+                    // 인라인 도형/차트: HWP X 오프셋(단락 상대)으로 가로 정렬 근사
+                    if (sh.IsInline)
+                    {
+                        const double bodyW = 180.0;
+                        var cx = sh.XMm + soWidthMm / 2.0;
+                        so.HAlign = cx < bodyW * 0.33 ? ImageHAlign.Left
+                                  : cx > bodyW * 0.67 ? ImageHAlign.Right
+                                  : ImageHAlign.Center;
+                    }
 
                     // OLE → Chart 미리보기: Hancom Chart(HCH) 포맷에는 embedded preview image가 없으므로,
                     // 데이터 추출이 가능하면 막대 그래프로, 아니면 일반적인 차트 외형 placeholder로 렌더링.
