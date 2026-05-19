@@ -566,13 +566,12 @@ public sealed class HwpReader : IDocumentReader
         HwpShapeKind kind = HwpShapeKind.Rectangle;
         int binDataId = 0;
         int shapeBorderFillId = -1;  // SHAPE_COMPONENT 의 borderFillId (채우기 색상 참조)
-        // CTRL_HEADER flags bits 0-2: wrapType
-        //   0-3: 어울림 (square wrap) — 텍스트 뒤에 배치됨 (BehindText)
-        //   4:   글자처럼 취급 (inline) — BehindText 로 처리
-        //   5:   글 앞 (InFrontOfText)
-        //   6:   글 뒤 (BehindText)
+        // CTRL_HEADER flags bits:
+        //   0-2: layout type (배치방식): 0=inline/float, 1=wrap, 2=fixed, 3=in-front, 4=behind, …
+        //   4-5: anchorType: 0=page, 1=paragraph, 2=character
+        //   bit 14: isBehindText (글 뒤에 배치) — KS X 5700 §4.7.2
         uint wrapType = ctrlFlags & 0x7;
-        bool isBehindText = wrapType != 5;
+        bool isBehindText = (ctrlFlags & 0x4000u) != 0;  // bit 14
         HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, wrapType={wrapType}, isBehindText={isBehindText}");
         List<HwpParagraph>? tbContent = null;
 

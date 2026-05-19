@@ -2288,6 +2288,29 @@ public static class FlowDocumentBuilder
         // StrokeThickness=0 일 때 Stroke 를 Transparent 로 설정해 렌더링 경계 계산 오류를 방지한다.
         WpfMedia.Brush effectiveStroke = strokeDip > 0 ? strokeBrushVal : WpfMedia.Brushes.Transparent;
 
+        // OLE 개체: 실제 렌더링 불가 → 회색 placeholder 박스
+        if (shape.Kind == ShapeKind.Ole)
+        {
+            var oleBox = new System.Windows.Controls.Border
+            {
+                Width           = wDip,
+                Height          = hDip,
+                BorderBrush     = WpfMedia.Brushes.DarkGray,
+                BorderThickness = new Thickness(1),
+                Background      = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xF0, 0xF0, 0xF0)),
+                Child = new System.Windows.Controls.TextBlock
+                {
+                    Text                = "[OLE]",
+                    Foreground          = WpfMedia.Brushes.Gray,
+                    FontStyle           = FontStyles.Italic,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center,
+                },
+            };
+            canvas.Children.Add(oleBox);
+            return canvas;
+        }
+
         // 단순 박스 도형(Rectangle·RoundedRect·Ellipse)은 WPF 전용 Shape 컨트롤 사용.
         // Path + RectangleGeometry + Stretch.None 조합은 일부 WPF 버전에서 채우기가 보이지 않는 경우가 있어
         // WPF Shape(System.Windows.Shapes.Rectangle / Ellipse) 으로 대체한다.
