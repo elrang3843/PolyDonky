@@ -724,11 +724,13 @@ public sealed class HwpReader : IDocumentReader
                     kind = HwpShapeKind.Ole;
                     if (rec.Payload.Length >= 4 && binDataId == 0)
                         binDataId = TryReadBinDataId(rec.Payload);
+                    HwpLog.Write($"[OLE_COMPONENT] payloadLen={rec.Payload.Length}, binDataId={binDataId}");
                     break;
 
                 case TAG_PICTURE_COMPONENT when rec.Payload.Length >= 4:
                     kind = HwpShapeKind.Picture;
                     binDataId = TryReadBinDataId(rec.Payload);
+                    HwpLog.Write($"[PICTURE_COMPONENT] payloadLen={rec.Payload.Length}, binDataId={binDataId}, head16={BitConverter.ToString(rec.Payload, 0, Math.Min(16, rec.Payload.Length))}");
                     break;
 
                 case TAG_CONTAINER_COMPONENT:
@@ -1674,10 +1676,13 @@ public sealed class HwpReader : IDocumentReader
                     byte[]? imgData = null;
                     int effectiveId = 0;
 
+                    HwpLog.Write($"[BuildDocument] Image BinDataId={img.BinDataId}, IsInline={img.IsInline}, size={img.WidthMm:F1}x{img.HeightMm:F1}mm");
+
                     if (img.BinDataId > 0)
                     {
                         imgData = ReadBinData(root, img.BinDataId);
                         if (imgData != null) effectiveId = img.BinDataId;
+                        HwpLog.Write($"[BuildDocument] Image ReadBinData(id={img.BinDataId}) → {(imgData == null ? "null" : $"{imgData.Length}B, magic={(imgData.Length >= 4 ? imgData[0].ToString("X2") + imgData[1].ToString("X2") + imgData[2].ToString("X2") + imgData[3].ToString("X2") : "?")}")}");
                     }
                     // Fallback: 다음 사용되지 않은 시퀀셜 BIN#### 사용
                     if (imgData == null)
@@ -1694,13 +1699,20 @@ public sealed class HwpReader : IDocumentReader
                             }
                         }
                     }
-                    if (imgData == null || imgData.Length == 0) break;
+                    if (imgData == null || imgData.Length == 0)
+                    {
+                        HwpLog.Write($"[BuildDocument] Image SKIPPED (no data found for any BinDataId)");
+                        break;
+                    }
                     usedBinIds.Add(effectiveId);
+
+                    var detectedType = DetectMediaType(imgData);
+                    HwpLog.Write($"[BuildDocument] Image MediaType={detectedType}, dataLen={imgData.Length}B");
 
                     var ib = new ImageBlock
                     {
                         Data      = imgData,
-                        MediaType = DetectMediaType(imgData),
+                        MediaType = detectedType,
                         WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
                         HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
                     };
