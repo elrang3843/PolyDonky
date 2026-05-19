@@ -484,6 +484,8 @@ public sealed class HwpReader : IDocumentReader
                                 gsoHMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
                             }
                             HwpLog.Write($"[ParseSectionRecords] GSO flags=0x{gsoFlags:X8}, anchorType={(gsoFlags >> 4) & 0x3}");
+                            // 앵커 단락 마킹: 이 단락은 GSO 앵커 전용이므로 빈 줄 생성 억제.
+                            if (current != null) current.HasGsoAnchor = true;
                             // 그리기 개체(GSO): 도형/글상자/이미지
                             i = ParseGsoControl(recs, i + 1, rec.Level + 1, body, gsoXMm, gsoYMm, gsoWMm, gsoHMm, currentPageIndex, gsoFlags);
                             continue;
@@ -1881,7 +1883,9 @@ public sealed class HwpReader : IDocumentReader
         }
         if (string.IsNullOrWhiteSpace(hp.Text))
         {
-            // 빈 단락도 페이지 구조(anchorPage 기준 페이지 생성)를 위해 보존.
+            // GSO 앵커 전용 빈 단락은 block 흐름에서 제거 (불필요한 빈 줄 누적 방지).
+            if (hp.HasGsoAnchor) yield break;
+            // 그 외 빈 단락은 페이지 구조(anchorPage 기준 페이지 생성)를 위해 보존.
             yield return new Core.Paragraph { Style = { ForcePageBreakBefore = hp.PageBreakBefore } };
             yield break;
         }
@@ -1889,7 +1893,8 @@ public sealed class HwpReader : IDocumentReader
         var fullText = hp.Text.Replace("\r", "");
         if (string.IsNullOrWhiteSpace(fullText))
         {
-            yield return new Core.Paragraph { Style = { ForcePageBreakBefore = hp.PageBreakBefore } };
+            if (!hp.HasGsoAnchor)
+                yield return new Core.Paragraph { Style = { ForcePageBreakBefore = hp.PageBreakBefore } };
             yield break;
         }
 
@@ -2483,6 +2488,11 @@ public sealed class HwpReader : IDocumentReader
         public bool   PageBreakBefore { get; set; } = false;
         public bool   IsIntermediateLine { get; set; } = false;  // soft line break 분할 시 중간 줄 표시
         public bool   IsSectionBreak { get; set; } = false;      // HWP 섹션 경계 → ForcePageBreakBefore 단락 생성
+        /// <summary>
+        /// GSO(도형·글상자·OLE·이미지) 앵커 단락 여부.
+        /// 텍스트가 없고 GSO 앵커만 있는 단락은 block 흐름에서 제거해 빈 줄 누적을 방지한다.
+        /// </summary>
+        public bool   HasGsoAnchor { get; set; } = false;
     }
 
     private sealed class HwpTextBox

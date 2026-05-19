@@ -51,6 +51,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Fixed
 
+- **HWP GSO 앵커 단락 공백 누적 수정**: 도형·OLE·이미지 등 GSO(그리기 개체) 앵커 단락이 빈 `Paragraph`로 section.Blocks에 쌓여 컨텐츠가 2페이지로 밀리던 버그 수정. `HwpParagraph.HasGsoAnchor` 플래그를 추가해 L1 CTRL_HEADER gso를 만날 때 마킹, `ConvertHwpParagraphMulti`에서 텍스트 없는 앵커 단락을 스킵. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 - **HWP 단락앵커 객체(이미지·OLE 차트) 위치 수정**: 단락앵커(anchorType=1) 객체의 HWP `XMm`/`YMm` 은 페이지 절대 좌표가 아니라 **단락 기준 상대 오프셋**이라는 사실을 반영. 이전 fix 가 이를 overlay 절대 좌표로 잘못 변환해 클립아트가 페이지 좌측 상단(`pos=(71.6, 4.9)`)에서 표 위로 올라오던 버그 수정. 단락앵커 이미지·OLE 도형은 인라인 흐름으로 두고 X 오프셋만 가로 정렬 근사(좌/중앙/우)에 사용. 페이지앵커(anchorType=0) 객체는 종전대로 overlay 절대 좌표 그대로. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 - **HWP 클립아트 이미지 렌더링 수정**: BIN0001.OLE(OLE2 차트)가 sequential scan을 통해 이미지로 잘못 선택되던 버그 수정 — OLE 도형의 `binDataId`를 `usedBinIds`에 즉시 등록해 이미지 scan이 BIN0002.bmp(실제 이미지)를 올바르게 선택하도록 수정. `DetectMediaType`에 OLE2(`D0 CF 11 E0`) 케이스 추가, fallback을 `image/png`→`application/octet-stream`으로 수정. OLE2·octet-stream 데이터는 ImageBlock 생성을 건너뜀. 단락앵커(anchorType=1) 이미지를 절대 페이지 좌표가 있으면 overlay로 배치. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
