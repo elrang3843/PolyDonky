@@ -816,28 +816,35 @@ public sealed class HwpReader : IDocumentReader
             case HwpShapeKind.Picture:
             {
                 uint picAnchorType = (ctrlFlags >> 4) & 0x3;
-                body.Images.Add(new HwpImage
+                var img = new HwpImage
                 {
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm,
                     BinDataId = binDataId,
                     AnchorPageIndex = anchorPageIndex,
                     IsInline = picAnchorType != 0,
-                });
+                };
+                body.Images.Add(img);
+                body.Blocks.Add(new HwpImageBlock { Image = img });
                 break;
             }
 
             case HwpShapeKind.TextBox:
-                body.TextBoxes.Add(new HwpTextBox
+            {
+                var tb = new HwpTextBox
                 {
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm,
                     Paragraphs = tbContent ?? new List<HwpParagraph>(),
                     AnchorPageIndex = anchorPageIndex,
                     BorderFillId = shapeBorderFillId,
-                });
+                };
+                body.TextBoxes.Add(tb);
+                body.Blocks.Add(new HwpTextBoxBlock { TextBox = tb });
                 break;
+            }
 
             default:
-                body.Shapes.Add(new HwpShape
+            {
+                var sh = new HwpShape
                 {
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm, Kind = kind,
                     BinDataId = binDataId,
@@ -850,8 +857,11 @@ public sealed class HwpReader : IDocumentReader
                     CornerRadiusPct = shapeCornerRadiusPct,
                     Points = shapePoints,
                     IsInline = ((ctrlFlags >> 4) & 0x3) != 0,
-                });
+                };
+                body.Shapes.Add(sh);
+                body.Blocks.Add(new HwpShapeBlock { Shape = sh });
                 break;
+            }
         }
 
         return i;
@@ -1524,7 +1534,12 @@ public sealed class HwpReader : IDocumentReader
                     slot.Paragraphs.Add(p);
         }
 
-        // ── Body blocks (paragraphs + tables + thematic breaks in order) ──────
+        // ── Body blocks (모든 요소 원본 순서대로) ────────────────────────────
+        // HWP 파일에서 단락/표/도형/이미지는 하나의 스트림에 섞여 있으므로
+        // body.Blocks 에 파싱 순서대로 모든 타입이 들어 있다.
+        var usedBinIds = new HashSet<int>();
+        int nextSeqBinId = 1;
+
         foreach (var block in body.Blocks)
         {
             switch (block)
@@ -1533,196 +1548,181 @@ public sealed class HwpReader : IDocumentReader
                     foreach (var para in ConvertHwpParagraphMulti(pb.Paragraph, docInfo))
                         section.Blocks.Add(para);
                     break;
+
                 case HwpTableBlock tb:
                     var table = ConvertHwpTable(tb, docInfo);
                     if (table != null) section.Blocks.Add(table);
                     break;
+
                 case HwpThematicBreakBlock:
                     section.Blocks.Add(new ThematicBreakBlock { LineColor = "#000000" });
                     break;
-            }
-        }
 
-        // ── Text boxes ─────────────────────────────────────────────────────
-        foreach (var tb in body.TextBoxes)
-        {
-            var tbo = new TextBoxObject
-            {
-                WrapMode     = ImageWrapMode.InFrontOfText,
-                OverlayXMm   = tb.XMm,
-                OverlayYMm   = tb.YMm,
-                WidthMm      = tb.WidthMm  > 1 ? tb.WidthMm  : 60,
-                HeightMm     = tb.HeightMm > 1 ? tb.HeightMm : 30,
-                AnchorPageIndex = tb.AnchorPageIndex,
-            };
-            if (tb.BorderFillId >= 1 && tb.BorderFillId - 1 < docInfo.BorderFills.Count)
-            {
-                var bf = docInfo.BorderFills[tb.BorderFillId - 1];
-                tbo.BackgroundColor = bf.BackgroundColor;
-                if (bf.TopKind > 0 && bf.TopColor != null)
+                case HwpTextBoxBlock tbb:
                 {
-                    tbo.BorderColor = bf.TopColor;
-                    tbo.BorderThicknessPt = HwpLineWidthToPt(bf.TopWidth);
-                }
-            }
-            foreach (var tp in tb.Paragraphs)
-                foreach (var para in ConvertHwpParagraphMulti(tp, docInfo))
-                    tbo.Content.Add(para);
-            section.Blocks.Add(tbo);
-        }
-
-        // ── Images ─────────────────────────────────────────────────────────
-        // 사용한 BinDataId 추적 — 동일 ID 가 여러 이미지에 매핑되는 폴백 버그 방지.
-        var usedBinIds = new HashSet<int>();
-        int nextSeqBinId = 1;
-        foreach (var img in body.Images)
-        {
-            byte[]? imgData = null;
-            int effectiveId = 0;
-
-            // Try the declared BinDataId first
-            if (img.BinDataId > 0)
-            {
-                imgData = ReadBinData(root, img.BinDataId);
-                if (imgData != null) effectiveId = img.BinDataId;
-            }
-
-            // Fallback: 다음 사용되지 않은 시퀀셜 BIN#### 사용
-            if (imgData == null)
-            {
-                while (nextSeqBinId <= 256)
-                {
-                    int candidate = nextSeqBinId++;
-                    if (usedBinIds.Contains(candidate)) continue;
-                    var tryData = ReadBinData(root, candidate);
-                    if (tryData != null && tryData.Length > 0)
+                    var tb2 = tbb.TextBox;
+                    var tbo = new TextBoxObject
                     {
-                        imgData = tryData;
-                        effectiveId = candidate;
-                        break;
+                        WrapMode        = ImageWrapMode.InFrontOfText,
+                        OverlayXMm      = tb2.XMm,
+                        OverlayYMm      = tb2.YMm,
+                        WidthMm         = tb2.WidthMm  > 1 ? tb2.WidthMm  : 60,
+                        HeightMm        = tb2.HeightMm > 1 ? tb2.HeightMm : 30,
+                        AnchorPageIndex = tb2.AnchorPageIndex,
+                    };
+                    if (tb2.BorderFillId >= 1 && tb2.BorderFillId - 1 < docInfo.BorderFills.Count)
+                    {
+                        var bf = docInfo.BorderFills[tb2.BorderFillId - 1];
+                        tbo.BackgroundColor = bf.BackgroundColor;
+                        if (bf.TopKind > 0 && bf.TopColor != null)
+                        {
+                            tbo.BorderColor = bf.TopColor;
+                            tbo.BorderThicknessPt = HwpLineWidthToPt(bf.TopWidth);
+                        }
                     }
+                    foreach (var tp in tb2.Paragraphs)
+                        foreach (var para in ConvertHwpParagraphMulti(tp, docInfo))
+                            tbo.Content.Add(para);
+                    section.Blocks.Add(tbo);
+                    break;
                 }
-            }
 
-            if (imgData == null || imgData.Length == 0) continue;
-            usedBinIds.Add(effectiveId);
-
-            var ib = new ImageBlock
-            {
-                Data      = imgData,
-                MediaType = DetectMediaType(imgData),
-                WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
-                HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
-            };
-            if (img.IsInline)
-            {
-                // 단락 앵커 이미지: 인라인 흐름에 배치
-                ib.WrapMode = ImageWrapMode.Inline;
-                ib.HAlign   = ImageHAlign.Center;
-            }
-            else
-            {
-                ib.WrapMode         = ImageWrapMode.InFrontOfText;
-                ib.OverlayXMm      = img.XMm;
-                ib.OverlayYMm      = img.YMm;
-                ib.AnchorPageIndex = img.AnchorPageIndex;
-            }
-            section.Blocks.Add(ib);
-        }
-
-        // ── Shapes ─────────────────────────────────────────────────────────
-        foreach (var sh in body.Shapes)
-        {
-            byte[]? oleData = null;
-
-            // OLE 객체 바이너리 데이터 추출 (위치 정보는 유지함).
-            if (sh.Kind == HwpShapeKind.Ole && sh.BinDataId > 0)
-                oleData = ReadBinData(root, sh.BinDataId);
-
-            var soWidthMm  = sh.WidthMm  > 1 ? sh.WidthMm  : 40;
-            var soHeightMm = sh.HeightMm > 1 ? sh.HeightMm : 20;
-
-            ImageWrapMode wrapMode;
-            if (sh.IsInline)
-                wrapMode = ImageWrapMode.Inline;
-            else if (sh.IsBehindText)
-                wrapMode = ImageWrapMode.BehindText;
-            else
-                wrapMode = ImageWrapMode.InFrontOfText;
-
-            var so = new ShapeObject
-            {
-                Kind              = MapShapeKind(sh.Kind),
-                WrapMode          = wrapMode,
-                OverlayXMm        = sh.IsInline ? 0 : sh.XMm,
-                OverlayYMm        = sh.IsInline ? 0 : sh.YMm,
-                WidthMm           = soWidthMm,
-                HeightMm          = soHeightMm,
-                AnchorPageIndex   = sh.AnchorPageIndex,
-                RotationAngleDeg  = sh.RotationAngleDeg,
-                StartArrow        = sh.StartArrow,
-                EndArrow          = sh.EndArrow,
-                StrokeColor       = "#000000",
-                StrokeThicknessPt = 1.0,
-                OleData           = oleData,
-            };
-
-            // 둥근 모서리 반지름 (RECT_COMPONENT 의 roundedCornerPercent 기반)
-            if (sh.Kind == HwpShapeKind.RoundedRect && sh.CornerRadiusPct > 0)
-                so.CornerRadiusMm = Math.Min(soWidthMm, soHeightMm) * sh.CornerRadiusPct / 100.0;
-
-            // 폴리곤 / 곡선 꼭짓점 복사 (도형 내부 좌표 mm)
-            if (sh.Points != null && sh.Points.Count >= 2)
-            {
-                foreach (var (px, py) in sh.Points)
-                    so.Points.Add(new ShapePoint { X = px, Y = py });
-            }
-
-            // SHAPE_COMPONENT 의 borderFillId → 채우기 색상 / 테두리(획) 속성 적용
-            if (sh.BorderFillId >= 1 && sh.BorderFillId - 1 < docInfo.BorderFills.Count)
-            {
-                var bf = docInfo.BorderFills[sh.BorderFillId - 1];
-
-                if (!string.IsNullOrEmpty(bf.BackgroundColor))
-                    so.FillColor = bf.BackgroundColor;
-
-                // 4면 테두리 중 None 아닌 첫 번째를 획(stroke)에 적용.
-                // 도형 테두리는 4면이 보통 동일하므로 Top → Left → Bottom → Right 우선.
-                byte sKind  = bf.TopKind;
-                byte sWidth = bf.TopWidth;
-                string? sColor = bf.TopColor;
-                if (sKind == 0) { sKind = bf.LeftKind;   sWidth = bf.LeftWidth;   sColor = bf.LeftColor; }
-                if (sKind == 0) { sKind = bf.BottomKind; sWidth = bf.BottomWidth; sColor = bf.BottomColor; }
-                if (sKind == 0) { sKind = bf.RightKind;  sWidth = bf.RightWidth;  sColor = bf.RightColor; }
-
-                if (sKind > 0)
+                case HwpImageBlock imgBlk:
                 {
-                    so.StrokeColor        = sColor ?? "#000000";
-                    so.StrokeThicknessPt  = HwpLineWidthToPt(sWidth);
-                    so.StrokeDash         = HwpLineKindToDash(sKind);
+                    var img = imgBlk.Image;
+                    byte[]? imgData = null;
+                    int effectiveId = 0;
+
+                    if (img.BinDataId > 0)
+                    {
+                        imgData = ReadBinData(root, img.BinDataId);
+                        if (imgData != null) effectiveId = img.BinDataId;
+                    }
+                    // Fallback: 다음 사용되지 않은 시퀀셜 BIN#### 사용
+                    if (imgData == null)
+                    {
+                        while (nextSeqBinId <= 256)
+                        {
+                            int candidate = nextSeqBinId++;
+                            if (usedBinIds.Contains(candidate)) continue;
+                            var tryData = ReadBinData(root, candidate);
+                            if (tryData != null && tryData.Length > 0)
+                            {
+                                imgData = tryData; effectiveId = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    if (imgData == null || imgData.Length == 0) break;
+                    usedBinIds.Add(effectiveId);
+
+                    var ib = new ImageBlock
+                    {
+                        Data      = imgData,
+                        MediaType = DetectMediaType(imgData),
+                        WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
+                        HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
+                    };
+                    if (img.IsInline)
+                    {
+                        ib.WrapMode = ImageWrapMode.Inline;
+                        ib.HAlign   = ImageHAlign.Center;
+                    }
+                    else
+                    {
+                        ib.WrapMode         = ImageWrapMode.InFrontOfText;
+                        ib.OverlayXMm       = img.XMm;
+                        ib.OverlayYMm       = img.YMm;
+                        ib.AnchorPageIndex  = img.AnchorPageIndex;
+                    }
+                    section.Blocks.Add(ib);
+                    break;
                 }
-                else
+
+                case HwpShapeBlock shBlk:
                 {
-                    // 테두리 없는 채우기 → 획 투명
-                    so.StrokeColor        = "#00000000";
-                    so.StrokeThicknessPt  = 0;
+                    var sh = shBlk.Shape;
+                    byte[]? oleData = null;
+                    if (sh.Kind == HwpShapeKind.Ole && sh.BinDataId > 0)
+                        oleData = ReadBinData(root, sh.BinDataId);
+
+                    var soWidthMm  = sh.WidthMm  > 1 ? sh.WidthMm  : 40;
+                    var soHeightMm = sh.HeightMm > 1 ? sh.HeightMm : 20;
+
+                    ImageWrapMode wrapMode;
+                    if (sh.IsInline)
+                        wrapMode = ImageWrapMode.Inline;
+                    else if (sh.IsBehindText)
+                        wrapMode = ImageWrapMode.BehindText;
+                    else
+                        wrapMode = ImageWrapMode.InFrontOfText;
+
+                    var so = new ShapeObject
+                    {
+                        Kind              = MapShapeKind(sh.Kind),
+                        WrapMode          = wrapMode,
+                        OverlayXMm        = sh.IsInline ? 0 : sh.XMm,
+                        OverlayYMm        = sh.IsInline ? 0 : sh.YMm,
+                        WidthMm           = soWidthMm,
+                        HeightMm          = soHeightMm,
+                        AnchorPageIndex   = sh.AnchorPageIndex,
+                        RotationAngleDeg  = sh.RotationAngleDeg,
+                        StartArrow        = sh.StartArrow,
+                        EndArrow          = sh.EndArrow,
+                        StrokeColor       = "#000000",
+                        StrokeThicknessPt = 1.0,
+                        OleData           = oleData,
+                    };
+
+                    if (sh.Kind == HwpShapeKind.RoundedRect && sh.CornerRadiusPct > 0)
+                        so.CornerRadiusMm = Math.Min(soWidthMm, soHeightMm) * sh.CornerRadiusPct / 100.0;
+
+                    if (sh.Points != null && sh.Points.Count >= 2)
+                        foreach (var (px, py) in sh.Points)
+                            so.Points.Add(new ShapePoint { X = px, Y = py });
+
+                    if (sh.BorderFillId >= 1 && sh.BorderFillId - 1 < docInfo.BorderFills.Count)
+                    {
+                        var bf = docInfo.BorderFills[sh.BorderFillId - 1];
+                        if (!string.IsNullOrEmpty(bf.BackgroundColor))
+                            so.FillColor = bf.BackgroundColor;
+
+                        byte sKind  = bf.TopKind;
+                        byte sWidth = bf.TopWidth;
+                        string? sColor = bf.TopColor;
+                        if (sKind == 0) { sKind = bf.LeftKind;   sWidth = bf.LeftWidth;   sColor = bf.LeftColor; }
+                        if (sKind == 0) { sKind = bf.BottomKind; sWidth = bf.BottomWidth; sColor = bf.BottomColor; }
+                        if (sKind == 0) { sKind = bf.RightKind;  sWidth = bf.RightWidth;  sColor = bf.RightColor; }
+
+                        if (sKind > 0)
+                        {
+                            so.StrokeColor        = sColor ?? "#000000";
+                            so.StrokeThicknessPt  = HwpLineWidthToPt(sWidth);
+                            so.StrokeDash         = HwpLineKindToDash(sKind);
+                        }
+                        else
+                        {
+                            so.StrokeColor        = "#00000000";
+                            so.StrokeThicknessPt  = 0;
+                        }
+                        HwpLog.Write($"[BuildDocument] Shape borderFillId={sh.BorderFillId} " +
+                            $"strokeKind={sKind} strokeColor={sColor ?? "null"} strokePt={so.StrokeThicknessPt:F2} " +
+                            $"dash={so.StrokeDash} fill={so.FillColor ?? "null"}");
+                    }
+                    else
+                    {
+                        HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} " +
+                            $"(count={docInfo.BorderFills.Count}) → no fill lookup");
+                    }
+                    HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm " +
+                        $"pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) rot={so.RotationAngleDeg:F1}deg " +
+                        $"wrapMode={so.WrapMode} isInline={sh.IsInline} fillColor={so.FillColor ?? "null"} " +
+                        $"strokeColor={so.StrokeColor} anchorPage={so.AnchorPageIndex} points={so.Points.Count}");
+
+                    section.Blocks.Add(so);
+                    break;
                 }
-
-                HwpLog.Write($"[BuildDocument] Shape borderFillId={sh.BorderFillId} " +
-                    $"strokeKind={sKind} strokeColor={sColor ?? "null"} strokePt={so.StrokeThicknessPt:F2} " +
-                    $"dash={so.StrokeDash} fill={so.FillColor ?? "null"}");
             }
-            else
-            {
-                HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} " +
-                    $"(count={docInfo.BorderFills.Count}) → no fill lookup");
-            }
-            HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm " +
-                $"pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) rot={so.RotationAngleDeg:F1}deg " +
-                $"wrapMode={so.WrapMode} isInline={sh.IsInline} fillColor={so.FillColor ?? "null"} " +
-                $"strokeColor={so.StrokeColor} anchorPage={so.AnchorPageIndex} points={so.Points.Count}");
-
-            section.Blocks.Add(so);
         }
 
         return doc;
@@ -2283,6 +2283,21 @@ public sealed class HwpReader : IDocumentReader
 
     // 인라인/단락 앵커된 LINE GSO 를 수평선 블록으로 변환할 때 사용
     private sealed class HwpThematicBreakBlock : HwpBlock { }
+
+    private sealed class HwpShapeBlock : HwpBlock
+    {
+        public HwpShape Shape { get; set; } = new();
+    }
+
+    private sealed class HwpImageBlock : HwpBlock
+    {
+        public HwpImage Image { get; set; } = new();
+    }
+
+    private sealed class HwpTextBoxBlock : HwpBlock
+    {
+        public HwpTextBox TextBox { get; set; } = new();
+    }
 
     private sealed class HwpTableBlock : HwpBlock
     {
