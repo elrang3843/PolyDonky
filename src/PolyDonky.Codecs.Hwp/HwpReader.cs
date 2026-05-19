@@ -910,7 +910,7 @@ public sealed class HwpReader : IDocumentReader
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm,
                     BinDataId = binDataId,
                     AnchorPageIndex = anchorPageIndex,
-                    IsInline = picAnchorType != 0,
+                    IsInline = picAnchorType == 2,  // 2=character-inline; 0=page/1=paragraph → overlay
                 };
                 body.Images.Add(img);
                 body.Blocks.Add(new HwpImageBlock { Image = img });
@@ -945,7 +945,7 @@ public sealed class HwpReader : IDocumentReader
                     EndArrow = shapeEndArrow,
                     CornerRadiusPct = shapeCornerRadiusPct,
                     Points = shapePoints,
-                    IsInline = ((ctrlFlags >> 4) & 0x3) != 0,
+                    IsInline = ((ctrlFlags >> 4) & 0x3) == 2,  // 2=character-inline; 0=page/1=paragraph → overlay
                 };
                 body.Shapes.Add(sh);
                 body.Blocks.Add(new HwpShapeBlock { Shape = sh });
@@ -1817,9 +1817,8 @@ public sealed class HwpReader : IDocumentReader
                         WidthMm   = img.WidthMm  > 1 ? img.WidthMm  : 80,
                         HeightMm  = img.HeightMm > 1 ? img.HeightMm : 60,
                     };
-                    // anchorType=1(단락앵커): HWP의 X/Y는 페이지 절대 좌표가 아니라
-                    // 단락 기준 상대 오프셋이므로 overlay 좌표로 쓰면 안 됨.
-                    // 인라인 흐름에 배치하고 X 오프셋으로 가로 정렬만 근사한다.
+                    // anchorType=2(문자앵커) 만 진짜 인라인. anchorType=0/1 은 모두 overlay.
+                    // anchorType=1 + wrapType=0 (글자 앞/뒤 배치)도 페이지 절대 좌표 사용.
                     if (img.IsInline)
                     {
                         ib.WrapMode = ImageWrapMode.Inline;
