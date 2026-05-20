@@ -15,8 +15,8 @@
     <Authors>Noh JinMoon</Authors>
     <Copyright>Copyright (c) 2026 HANDTECH (핸텍) — Noh JinMoon</Copyright>
     <Product>PolyDonky</Product>
-    <Version>1.0.0-test.1</Version>
-    <FileVersion>1.0.0.1</FileVersion>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <RepositoryUrl>https://github.com/elrang3843/PolyDonky</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
