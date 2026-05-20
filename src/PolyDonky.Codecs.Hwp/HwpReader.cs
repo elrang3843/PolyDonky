@@ -583,8 +583,8 @@ public sealed class HwpReader : IDocumentReader
         int shapeBorderFillId = -1;  // SHAPE_COMPONENT 의 borderFillId (채우기 색상 참조)
         // CTRL_HEADER flags 비트 레이아웃 (실측 기반):
         //   bit  0: 글자처럼 취급 (TreatAsChar) — 텍스트 흐름 내 인라인 배치
-        //   bit  4-5: 가로 위치 기준 (HorzRef): 0=단, 1=쪽, 2=종이, 3=단락
-        //   bit  8-9: 세로 위치 기준 (VertRef): 0=쪽, 1=단락, 2=줄
+        //   bit  3-4: 세로 위치 기준 (VertRel): 0=종이(paper), 1=쪽(page), 2=단락(paragraph)
+        //   bit  8-9: 가로 위치 기준 (HorzRel): 0=종이(paper), 1=쪽(page), 2=단(column), 3=단락
         //   bit 14: 글 뒤에 배치 (isBehindText) — overlay behind text
         //   bit 28: 자리차지 (HoldSpace) — 단락 흐름 내 공간 점유 (OLE 차트 등)
         //   bits 14/28 모두 0, bit 0도 0 → 글자 앞에 배치 (InFrontOfText overlay)
@@ -592,7 +592,10 @@ public sealed class HwpReader : IDocumentReader
         bool holdSpace    = (ctrlFlags & 0x10000000u) != 0; // bit 28: 자리차지
         bool treatAsChar  = (ctrlFlags & 0x1u)        != 0; // bit  0: 글자처럼 취급
         bool isInlineFlow = treatAsChar || holdSpace;
-        HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, isBehindText={isBehindText}, holdSpace={holdSpace}, treatAsChar={treatAsChar}");
+        // 위치 기준: '종이'(0) = 페이지 절대 좌표, 그 외 = 본문 영역(여백 안쪽) 기준
+        uint horzRel = (ctrlFlags >> 8) & 0x3;  // bits 8-9
+        uint vertRel = (ctrlFlags >> 3) & 0x3;  // bits 3-4
+        HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, isBehindText={isBehindText}, holdSpace={holdSpace}, treatAsChar={treatAsChar}, horzRel={horzRel}, vertRel={vertRel}");
         List<HwpParagraph>? tbContent = null;
 
         // 도형별 추가 속성 (도형 서브컴포넌트에서 채워짐)
@@ -900,6 +903,21 @@ public sealed class HwpReader : IDocumentReader
         }
         xMm = Math.Max(0, xMm);
         yMm = Math.Max(0, yMm);
+
+        // 위치 기준 보정: HorzRel/VertRel 이 '종이'(0) 가 아니면 좌표가 본문 영역
+        // (여백 안쪽) 기준이므로 페이지 여백만큼 더해 페이지 절대 좌표로 변환.
+        // overlay 객체(비-인라인)에만 적용 — 인라인 객체는 흐름에 배치되어 좌표 미사용.
+        if (!isInlineFlow && body.PageDef != null)
+        {
+            double adjX = horzRel != 0 ? body.PageDef.MarginLeftMm : 0;
+            double adjY = vertRel != 0 ? body.PageDef.MarginTopMm  : 0;
+            if (adjX != 0 || adjY != 0)
+            {
+                HwpLog.Write($"[ParseGsoControl] 위치 기준 보정: ({xMm:F1},{yMm:F1}) + 여백({adjX:F1},{adjY:F1}) → ({xMm + adjX:F1},{yMm + adjY:F1})");
+                xMm += adjX;
+                yMm += adjY;
+            }
+        }
 
         switch (kind)
         {
