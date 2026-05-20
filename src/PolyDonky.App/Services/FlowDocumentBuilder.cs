@@ -282,7 +282,7 @@ public static class FlowDocumentBuilder
             fd.IsColumnWidthFlexible = false;
         }
 
-        AppendBlocks(fd.Blocks, blocks.ToList(), outlineStyles, fnNums: fnNums, enNums: enNums, outlineNumbers: outlineNumbers, fieldCtx: fieldCtx);
+        AppendBlocks(fd.Blocks, blocks.ToList(), outlineStyles, fnNums: fnNums, enNums: enNums, outlineNumbers: outlineNumbers, fieldCtx: fieldCtx, availableWidthDip: contentWDip);
         return fd;
     }
 
@@ -292,7 +292,8 @@ public static class FlowDocumentBuilder
         IReadOnlyDictionary<string, int>? fnNums = null,
         IReadOnlyDictionary<string, int>? enNums = null,
         IReadOnlyDictionary<Paragraph, string>? outlineNumbers = null,
-        FieldRenderContext? fieldCtx = null)
+        FieldRenderContext? fieldCtx = null,
+        double availableWidthDip = 0)
     {
         // 중첩 리스트 지원: (WPF List, Kind) 스택.
         // 인덱스 0 = 최상위 리스트, 인덱스 n = n 단계 중첩 리스트.
@@ -433,10 +434,10 @@ public static class FlowDocumentBuilder
                                 cell.Blocks.Any(b => b is ShapeObject s && s.RotationAngleDeg != 0)));
                             target.Add(hasRotatedShape
                                 ? BuildFlexContainer(t, outlineStyles)
-                                : BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx));
+                                : BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx, availableWidthDip));
                         }
                         else
-                            target.Add(BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx));
+                            target.Add(BuildTable(t, outlineStyles, fnNums, enNums, fieldCtx, availableWidthDip));
                     }
                     else
                         target.Add(BuildTableAnchor(t));   // 오버레이 모드 — 앵커만 추가
@@ -998,20 +999,30 @@ public static class FlowDocumentBuilder
 
     internal static Wpf.Table BuildTable(Table table, OutlineStyleSet? outlineStyles = null,
         IReadOnlyDictionary<string,int>? fnNums = null, IReadOnlyDictionary<string,int>? enNums = null,
-        FieldRenderContext? fieldCtx = null)
+        FieldRenderContext? fieldCtx = null, double availableWidthDip = 0)
     {
         var wtable = new Wpf.Table { CellSpacing = 0 };
 
         ApplyTableLevelPropertiesToWpf(wtable, table);
 
+        // 열 너비 합이 가용 너비를 초과하면 비례 스케일 다운.
+        // availableWidthDip > 0 이면 가용 너비에서 4px 여유를 빼고 기준, 아니면 제약 없음.
+        double totalColWidthDip = table.Columns.Sum(c => MmToDip(c.WidthMm));
+        double scale = 1.0;
+        double constraintDip = (availableWidthDip > 0 ? availableWidthDip - 4 : 0);
+        if (constraintDip > 0 && totalColWidthDip > constraintDip)
+            scale = constraintDip / totalColWidthDip;
+
         foreach (var col in table.Columns)
         {
-            // WidthMm > 0 이면 명시 폭, 아니면 Star(1*) — 가용 폭을 균등 분배.
+            // WidthMm > 0 이면 명시 폭(스케일 적용), 아니면 Star(1*) — 가용 폭 균등 분배.
             // Auto 로 두면 셀 콘텐츠 기준으로 좁게 잡혀 텍스트 줄바꿈이 과도해지고
             // 셀 높이가 비정상적으로 커져 표 전체가 페이지를 넘기는 증상이 발생한다.
-            var width = col.WidthMm > 0
-                ? new GridLength(MmToDip(col.WidthMm))
-                : new GridLength(1, GridUnitType.Star);
+            GridLength width;
+            if (col.WidthMm > 0)
+                width = new GridLength(MmToDip(col.WidthMm) * scale);
+            else
+                width = new GridLength(1, GridUnitType.Star);
             wtable.Columns.Add(new Wpf.TableColumn { Width = width });
         }
 
@@ -1744,16 +1755,56 @@ public static class FlowDocumentBuilder
             return new Wpf.BlockUIContainer(wrappedSvg) { Tag = image, Margin = svgMargin };
         }
 
-        var bitmap = new WpfMedia.Imaging.BitmapImage();
-        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
-        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
-        var imgStream = new MemoryStream(image.Data, writable: false);
-        bitmap.BeginInit();
-        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = imgStream;
-        bitmap.EndInit();
-        imgStream.Dispose();
-        bitmap.Freeze();
+        WpfMedia.Imaging.BitmapImage? bitmap = null;
+        try
+        {
+            // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+            // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+            var imgStream = new MemoryStream(image.Data, writable: false);
+            bitmap = new WpfMedia.Imaging.BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = imgStream;
+            bitmap.EndInit();
+            imgStream.Dispose();
+            bitmap.Freeze();
+        }
+        catch
+        {
+            // 지원되지 않는 이미지 포맷(EMF, WMF, HWP VtChart 등) → placeholder 로 대체
+            bitmap = null;
+        }
+
+        if (bitmap == null)
+        {
+            var fallbackHA = image.HAlign switch
+            {
+                ImageHAlign.Center => HorizontalAlignment.Center,
+                ImageHAlign.Right  => HorizontalAlignment.Right,
+                _                  => HorizontalAlignment.Left,
+            };
+            var fallbackBox = new System.Windows.Controls.Border
+            {
+                Width               = image.WidthMm  > 0 ? MmToDip(image.WidthMm)  : 80,
+                Height              = image.HeightMm > 0 ? MmToDip(image.HeightMm) : 60,
+                BorderBrush         = WpfMedia.Brushes.Gray,
+                BorderThickness     = new Thickness(1),
+                Background          = WpfMedia.Brushes.WhiteSmoke,
+                HorizontalAlignment = fallbackHA,
+                Child = new System.Windows.Controls.TextBlock
+                {
+                    Text                = "[이미지]",
+                    Foreground          = WpfMedia.Brushes.Gray,
+                    FontStyle           = FontStyles.Italic,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center,
+                },
+            };
+            if (!string.IsNullOrEmpty(image.Description)) fallbackBox.ToolTip = image.Description;
+            UIElement wrappedFallback = WrapImageWithTitle(fallbackBox, image, fallbackHA);
+            var fallbackMargin = new Thickness(0, MmToDip(image.MarginTopMm), 0, MmToDip(image.MarginBottomMm));
+            return new Wpf.BlockUIContainer(wrappedFallback) { Tag = image, Margin = fallbackMargin };
+        }
 
         // Image.Tag 에 container 를 저장하지 말 것 — container.Child = image 와 함께 순환 참조가 되어
         // WPF undo 스냅샷의 XamlWriter.Save() 가 StackOverflowException 으로 폭주한다.
@@ -1892,16 +1943,25 @@ public static class FlowDocumentBuilder
     {
         if (image.Data.Length == 0) return null;
 
-        var bitmap = new WpfMedia.Imaging.BitmapImage();
-        // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
-        // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
-        var imgStream = new MemoryStream(image.Data, writable: false);
-        bitmap.BeginInit();
-        bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-        bitmap.StreamSource = imgStream;
-        bitmap.EndInit();
-        imgStream.Dispose();
-        bitmap.Freeze();
+        WpfMedia.Imaging.BitmapImage? bitmap = null;
+        try
+        {
+            // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
+            // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
+            var imgStream = new MemoryStream(image.Data, writable: false);
+            bitmap = new WpfMedia.Imaging.BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = imgStream;
+            bitmap.EndInit();
+            imgStream.Dispose();
+            bitmap.Freeze();
+        }
+        catch
+        {
+            // 지원되지 않는 이미지 포맷 → null 반환
+            return null;
+        }
 
         var control = new System.Windows.Controls.Image
         {
@@ -2228,6 +2288,36 @@ public static class FlowDocumentBuilder
         // StrokeThickness=0 일 때 Stroke 를 Transparent 로 설정해 렌더링 경계 계산 오류를 방지한다.
         WpfMedia.Brush effectiveStroke = strokeDip > 0 ? strokeBrushVal : WpfMedia.Brushes.Transparent;
 
+        // OLE 개체: 차트 데이터가 있으면 막대 그래프 미리보기, 아니면 회색 placeholder.
+        if (shape.Kind == ShapeKind.Ole)
+        {
+            if (shape.ChartSeries != null && shape.ChartSeries.Count > 0 &&
+                shape.ChartCategories != null && shape.ChartCategories.Count > 0)
+            {
+                var chartCanvas = BuildBarChart(shape, wDip, hDip);
+                canvas.Children.Add(chartCanvas);
+                return canvas;
+            }
+            var oleBox = new System.Windows.Controls.Border
+            {
+                Width           = wDip,
+                Height          = hDip,
+                BorderBrush     = WpfMedia.Brushes.DarkGray,
+                BorderThickness = new Thickness(1),
+                Background      = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xF0, 0xF0, 0xF0)),
+                Child = new System.Windows.Controls.TextBlock
+                {
+                    Text                = "[OLE]",
+                    Foreground          = WpfMedia.Brushes.Gray,
+                    FontStyle           = FontStyles.Italic,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center,
+                },
+            };
+            canvas.Children.Add(oleBox);
+            return canvas;
+        }
+
         // 단순 박스 도형(Rectangle·RoundedRect·Ellipse)은 WPF 전용 Shape 컨트롤 사용.
         // Path + RectangleGeometry + Stretch.None 조합은 일부 WPF 버전에서 채우기가 보이지 않는 경우가 있어
         // WPF Shape(System.Windows.Shapes.Rectangle / Ellipse) 으로 대체한다.
@@ -2299,6 +2389,147 @@ public static class FlowDocumentBuilder
         }
 
         return canvas;
+    }
+
+    // OLE 차트(HWP Hancom Chart) 미리보기 — 그룹 막대 그래프 렌더링.
+    // 실제 HCH 데이터 추출은 한계가 있어 카테고리·시리즈 라벨은 추출하되 값은 placeholder.
+    private static System.Windows.Controls.Canvas BuildBarChart(ShapeObject shape, double wDip, double hDip)
+    {
+        var canvas = new System.Windows.Controls.Canvas
+        {
+            Width = wDip,
+            Height = hDip,
+            Background = WpfMedia.Brushes.White,
+        };
+
+        // 외곽 테두리
+        var border = new System.Windows.Controls.Border
+        {
+            Width = wDip, Height = hDip,
+            BorderBrush = WpfMedia.Brushes.Gray,
+            BorderThickness = new Thickness(1),
+        };
+        canvas.Children.Add(border);
+
+        var cats = shape.ChartCategories ?? new List<string>();
+        var series = shape.ChartSeries ?? new List<ChartSeries>();
+        if (cats.Count == 0 || series.Count == 0) return canvas;
+
+        // 플롯 영역: 좌측 축 라벨(30dip), 하단 카테고리 라벨(20dip), 우측 범례(50dip), 상단 여백(10dip)
+        const double padTop = 10, padBottom = 22, padLeft = 32;
+        double padRight = Math.Min(60, wDip * 0.25);
+        double plotW = Math.Max(20, wDip - padLeft - padRight);
+        double plotH = Math.Max(20, hDip - padTop - padBottom);
+        double yMax = shape.ChartYMax ?? 100;
+        if (yMax <= 0) yMax = 100;
+
+        // Y축 가이드라인 (0, 25, 50, 75, 100)
+        for (int g = 0; g <= 4; g++)
+        {
+            double y = padTop + plotH * (1.0 - g / 4.0);
+            var line = new System.Windows.Shapes.Line
+            {
+                X1 = padLeft, Y1 = y, X2 = padLeft + plotW, Y2 = y,
+                Stroke = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xE0, 0xE0, 0xE0)),
+                StrokeThickness = 0.5,
+            };
+            canvas.Children.Add(line);
+
+            var ylabel = new System.Windows.Controls.TextBlock
+            {
+                Text = ((int)(yMax * g / 4)).ToString(),
+                Foreground = WpfMedia.Brushes.Gray,
+                FontSize = 8,
+            };
+            System.Windows.Controls.Canvas.SetLeft(ylabel, 4);
+            System.Windows.Controls.Canvas.SetTop(ylabel, y - 5);
+            canvas.Children.Add(ylabel);
+        }
+
+        // X·Y 축
+        var xAxis = new System.Windows.Shapes.Line
+        {
+            X1 = padLeft, Y1 = padTop + plotH, X2 = padLeft + plotW, Y2 = padTop + plotH,
+            Stroke = WpfMedia.Brushes.Black, StrokeThickness = 0.8,
+        };
+        var yAxis = new System.Windows.Shapes.Line
+        {
+            X1 = padLeft, Y1 = padTop, X2 = padLeft, Y2 = padTop + plotH,
+            Stroke = WpfMedia.Brushes.Black, StrokeThickness = 0.8,
+        };
+        canvas.Children.Add(xAxis);
+        canvas.Children.Add(yAxis);
+
+        // 그룹 막대: 각 카테고리에 series.Count 개의 막대.
+        double groupW = plotW / cats.Count;
+        double barGap = 2;
+        double barW = Math.Max(2, (groupW - barGap * 2) / series.Count - 1);
+
+        for (int c = 0; c < cats.Count; c++)
+        {
+            double gx = padLeft + c * groupW + barGap;
+            for (int s = 0; s < series.Count; s++)
+            {
+                if (c >= series[s].Values.Count) continue;
+                double v = Math.Max(0, Math.Min(yMax, series[s].Values[c]));
+                double bh = plotH * v / yMax;
+                var fill = ParseHexColor(series[s].Color) ?? WpfMedia.Color.FromRgb(0x44, 0x72, 0xC4);
+                var bar = new System.Windows.Shapes.Rectangle
+                {
+                    Width = barW, Height = bh,
+                    Fill = new WpfMedia.SolidColorBrush(fill),
+                };
+                System.Windows.Controls.Canvas.SetLeft(bar, gx + s * (barW + 1));
+                System.Windows.Controls.Canvas.SetTop(bar, padTop + plotH - bh);
+                canvas.Children.Add(bar);
+            }
+            // 카테고리 라벨
+            var cl = new System.Windows.Controls.TextBlock
+            {
+                Text = cats[c],
+                Foreground = WpfMedia.Brushes.Black,
+                FontSize = 8,
+                TextAlignment = TextAlignment.Center,
+                Width = groupW,
+            };
+            System.Windows.Controls.Canvas.SetLeft(cl, padLeft + c * groupW);
+            System.Windows.Controls.Canvas.SetTop(cl, padTop + plotH + 2);
+            canvas.Children.Add(cl);
+        }
+
+        // 범례 (우측)
+        double legendX = padLeft + plotW + 5;
+        for (int s = 0; s < series.Count && s < 8; s++)
+        {
+            double ly = padTop + s * 12;
+            var swatch = new System.Windows.Shapes.Rectangle
+            {
+                Width = 8, Height = 8,
+                Fill = new WpfMedia.SolidColorBrush(ParseHexColor(series[s].Color) ?? WpfMedia.Color.FromRgb(0x44, 0x72, 0xC4)),
+            };
+            System.Windows.Controls.Canvas.SetLeft(swatch, legendX);
+            System.Windows.Controls.Canvas.SetTop(swatch, ly + 1);
+            canvas.Children.Add(swatch);
+
+            var ltext = new System.Windows.Controls.TextBlock
+            {
+                Text = series[s].Name,
+                Foreground = WpfMedia.Brushes.Black,
+                FontSize = 8,
+            };
+            System.Windows.Controls.Canvas.SetLeft(ltext, legendX + 11);
+            System.Windows.Controls.Canvas.SetTop(ltext, ly);
+            canvas.Children.Add(ltext);
+        }
+
+        return canvas;
+    }
+
+    private static WpfMedia.Color? ParseHexColor(string? hex)
+    {
+        if (string.IsNullOrEmpty(hex)) return null;
+        try { return (WpfMedia.Color)WpfMedia.ColorConverter.ConvertFromString(hex)!; }
+        catch { return null; }
     }
 
     // 오버레이 도형 회전 적용 — 절대 위치 배치이므로 RenderTransform 으로 충분.
@@ -2948,7 +3179,8 @@ public static class FlowDocumentBuilder
         {
             Alignment.Center => TextAlignment.Center,
             Alignment.Right => TextAlignment.Right,
-            Alignment.Justify or Alignment.Distributed => TextAlignment.Justify,
+            Alignment.Distributed => TextAlignment.Center,  // HWP 균등 분배 → WPF에서는 Center 로 근사 (전체 너비 배분은 미지원)
+            Alignment.Justify => TextAlignment.Justify,
             _ => TextAlignment.Left,
         };
 

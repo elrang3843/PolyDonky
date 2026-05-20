@@ -170,6 +170,10 @@ public static class FlowDocumentPaginationAdapter
         // HtmlReader 가 생성한 AnchorPageIndex=-2 ShapeObject 에 spacer 의 페이지·Y 를 반영한다.
         ResolveFlexShapeOverlays(document, bodyAssignments, geo);
 
+        // 4b. HWP 단락 기준(VertRel=paragraph) 이미지 Y 좌표 해소.
+        // AnchorParagraphBlockIndex >= 0 인 ImageBlock 에 앵커 단락의 실제 페이지 Y 를 반영한다.
+        ResolveParaAnchoredImages(document, bodyAssignments, geo);
+
         // 4. 오버레이 블록(글상자·이미지·도형·오버레이 표) 수집 — AnchorPageIndex 기준
         var overlayAssignments = CollectOverlayBlocks(document);
 
@@ -1581,6 +1585,83 @@ public static class FlowDocumentPaginationAdapter
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// HWP 단락 기준 앵커링(VertRel=paragraph) 오버레이(이미지·도형)의 OverlayYMm 을
+    /// 앵커 단락의 실제 페이지 Y 로 확정한다.
+    /// </summary>
+    private static void ResolveParaAnchoredImages(
+        PolyDonkyument                                                              document,
+        List<(int pageIdx, int colIdx, Block coreBlock, Rect bodyLocalRect)>  bodyAssignments,
+        PageGeometry                                                            geo)
+    {
+        if (bodyAssignments.Count == 0) return;
+
+        // Core Block → 배치 결과 룩업
+        var lookup = new System.Collections.Generic.Dictionary<Block,
+            (int pageIdx, Rect bodyLocalRect)>(bodyAssignments.Count);
+        foreach (var a in bodyAssignments)
+            lookup.TryAdd(a.coreBlock, (a.pageIdx, a.bodyLocalRect));
+
+        double padTopMm = FlowDocumentBuilder.DipToMm(geo.PadTopDip);
+
+        foreach (var section in document.Sections)
+        {
+            for (int bi = 0; bi < section.Blocks.Count; bi++)
+            {
+                if (section.Blocks[bi] is not IParaAnchoredOverlay target) continue;
+                if (target.AnchorParagraphBlockIndex < 0) continue;
+
+                int anchorIdx = target.AnchorParagraphBlockIndex;
+                double relY   = target.AnchorRelativeYMm;
+                target.AnchorParagraphBlockIndex = -1; // 해소 완료(1회성)
+
+                if (anchorIdx >= section.Blocks.Count)
+                    anchorIdx = section.Blocks.Count - 1;
+
+                var anchorBlock = FindAnchorBlock(section, anchorIdx, lookup,
+                    out bool usedBackwardFallback, out var info);
+                if (anchorBlock == null) continue;
+
+                double bodyLocalYMm = info.bodyLocalRect == Rect.Empty ? 0.0 :
+                    FlowDocumentBuilder.DipToMm(
+                        usedBackwardFallback ? info.bodyLocalRect.Bottom : info.bodyLocalRect.Y);
+
+                target.AnchorPageIndex = info.pageIdx;
+                target.OverlayYMm      = padTopMm + bodyLocalYMm + relY;
+            }
+        }
+    }
+
+    /// <summary>
+    /// anchorIdx 의 블록이 bodyAssignments 에 없으면(오버레이 블록 등) 역방향으로
+    /// 가장 가까운 body 블록을 탐색해 반환한다. 찾지 못하면 null.
+    /// </summary>
+    private static Block? FindAnchorBlock(
+        Section                                              section,
+        int                                                  anchorIdx,
+        System.Collections.Generic.Dictionary<Block, (int pageIdx, Rect bodyLocalRect)> lookup,
+        out bool                                             usedBackwardFallback,
+        out (int pageIdx, Rect bodyLocalRect)                info)
+    {
+        usedBackwardFallback = false;
+        info = default;
+
+        var block = section.Blocks[anchorIdx];
+        if (lookup.TryGetValue(block, out info))
+            return block;
+
+        // 앵커 인덱스 블록이 body 배정에 없음(오버레이 등) → 역방향 탐색
+        for (int k = anchorIdx; k >= 0; k--)
+        {
+            if (lookup.TryGetValue(section.Blocks[k], out info))
+            {
+                usedBackwardFallback = true;
+                return section.Blocks[k];
+            }
+        }
+        return null;
     }
 
     // ── 오버레이 블록 수집 ────────────────────────────────────────────────────

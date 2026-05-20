@@ -206,6 +206,8 @@ public sealed class DocxReader : IDocumentReader
             {
                 if (TryExtractImage(drawing, ctx, out var imageBlock))
                     drawingBlocks.Add(imageBlock);
+                else if (TryExtractChart(drawing, ctx, out var chartBlock))
+                    drawingBlocks.Add(chartBlock);
                 else if (TryExtractShape(drawing, out var shapeBlock))
                     drawingBlocks.Add(shapeBlock);
                 else
@@ -307,6 +309,123 @@ public sealed class DocxReader : IDocumentReader
     }
 
     private static double EmuToMm(long emu) => UnitConverter.EmuToMm(emu);
+
+    // DrawingML chart namespace
+    private static readonly XNamespace XnsC = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+    private static readonly XNamespace XnsR = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    // Default series palette (matches HwpChartParser for visual consistency).
+    private static readonly string[] DefaultChartColors =
+    {
+        "#4472C4", "#ED7D31", "#FFC000", "#70AD47", "#5B9BD5", "#A5A5A5",
+    };
+
+    /// <summary>
+    /// DrawingML chart (<c:chart r:id="..."/>) 를 ShapeObject(Kind=Ole, ChartSeries=...) 로 변환.
+    /// chart*.xml 의 c:ser / c:cat / c:val 캐시 값을 직접 파싱해 실제 숫자를 추출한다
+    /// (HCH 와 달리 OOXML 차트는 캐시된 평문 값을 포함).
+    /// </summary>
+    private static bool TryExtractChart(W.Drawing drawing, ReadContext ctx, out ShapeObject shape)
+    {
+        shape = null!;
+        XElement xml;
+        try { xml = XElement.Parse(drawing.OuterXml); }
+        catch { return false; }
+
+        // <a:graphic><a:graphicData uri=".../chart"><c:chart r:id="..."/>
+        var chartRef = xml.Descendants(XnsC + "chart").FirstOrDefault();
+        if (chartRef is null) return false;
+        var relId = chartRef.Attribute(XnsR + "id")?.Value;
+        if (string.IsNullOrEmpty(relId)) return false;
+
+        if (ctx.MainPart.GetPartById(relId) is not ChartPart chartPart) return false;
+
+        XElement chartSpace;
+        try
+        {
+            using var stream = chartPart.GetStream();
+            chartSpace = XElement.Load(stream);
+        }
+        catch { return false; }
+
+        var categories = new List<string>();
+        var seriesList = new List<ChartSeries>();
+        var seriesNodes = chartSpace.Descendants(XnsC + "ser").ToList();
+        if (seriesNodes.Count == 0) return false;
+
+        foreach (var ser in seriesNodes)
+        {
+            var name = ser.Element(XnsC + "tx")?
+                .Descendants(XnsC + "v").FirstOrDefault()?.Value
+                ?? $"시리즈{seriesList.Count + 1}";
+
+            // c:cat (카테고리 라벨) — 모든 시리즈가 공유하지만 첫 시리즈에서만 채움.
+            if (categories.Count == 0)
+            {
+                var catNode = ser.Element(XnsC + "cat");
+                if (catNode is not null)
+                {
+                    foreach (var pt in catNode.Descendants(XnsC + "pt"))
+                    {
+                        var v = pt.Element(XnsC + "v")?.Value;
+                        if (v is not null) categories.Add(v);
+                    }
+                }
+            }
+
+            // c:val (숫자값)
+            var values = new List<double>();
+            var valNode = ser.Element(XnsC + "val");
+            if (valNode is not null)
+            {
+                foreach (var pt in valNode.Descendants(XnsC + "pt"))
+                {
+                    var v = pt.Element(XnsC + "v")?.Value;
+                    if (v is not null && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                        values.Add(d);
+                }
+            }
+
+            // 시리즈 색상 (c:spPr/a:solidFill/a:srgbClr val="RRGGBB")
+            string? color = null;
+            var srgb = ser.Element(XnsC + "spPr")?
+                .Descendants(XnsA + "srgbClr").FirstOrDefault()?
+                .Attribute("val")?.Value;
+            if (!string.IsNullOrEmpty(srgb)) color = "#" + srgb;
+
+            seriesList.Add(new ChartSeries { Name = name, Values = values, Color = color });
+        }
+
+        if (categories.Count == 0)
+        {
+            int maxLen = seriesList.Max(s => s.Values.Count);
+            for (int i = 0; i < maxLen; i++) categories.Add($"항목{i + 1}");
+        }
+
+        // 기본 팔레트 채우기
+        for (int i = 0; i < seriesList.Count; i++)
+            if (seriesList[i].Color is null)
+                seriesList[i].Color = DefaultChartColors[i % DefaultChartColors.Length];
+
+        // 사이즈
+        double widthMm = 80, heightMm = 60;
+        var extent = drawing.Descendants<WP.Extent>().FirstOrDefault();
+        if (extent is not null)
+        {
+            widthMm = EmuToMm(extent.Cx?.Value ?? 0);
+            heightMm = EmuToMm(extent.Cy?.Value ?? 0);
+        }
+
+        shape = new ShapeObject
+        {
+            Kind = ShapeKind.Ole,
+            WidthMm = widthMm > 0 ? widthMm : 80,
+            HeightMm = heightMm > 0 ? heightMm : 60,
+            ChartCategories = categories,
+            ChartSeries = seriesList,
+        };
+        return true;
+    }
 
     private static Table ReadTable(W.Table wtable, ReadContext ctx)
     {

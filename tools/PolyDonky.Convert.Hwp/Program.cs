@@ -1,5 +1,5 @@
 using System.Text;
-using PolyDonky.Codecs.Docx;
+using PolyDonky.Codecs.Hwp;
 using PolyDonky.Codecs.Hwpx;
 using PolyDonky.Convert.Common;
 using PolyDonky.Core;
@@ -14,9 +14,14 @@ using PolyDonky.Iwpf;
 //   *.iwpf → *.hwp : IwpfReader → HwpxWriter (HWPX 기반, HWP 호환)
 //
 // 사용법:
-//   PolyDonky.Convert.Hwp <input> <output>
+//   PolyDonky.Convert.Hwp <input> <output> [--debug]
 //   PolyDonky.Convert.Hwp --version | -v
 //   PolyDonky.Convert.Hwp --help    | -h | /?
+//
+// 옵션:
+//   --debug | -d | DEBUG  상세 진단 로그를 파일에 기록
+//                         (Windows: d:\Temp\PolyDonky-HwpReader.log,
+//                          Linux/macOS: /tmp/PolyDonky-HwpReader.log)
 //
 // 종료 코드:
 //   0 성공  2 인자 오류  3 지원하지 않는 변환 쌍
@@ -25,21 +30,30 @@ using PolyDonky.Iwpf;
 
 try { Console.OutputEncoding = Encoding.UTF8; } catch { }
 
-if (args.Length == 1 && (args[0] is "--version" or "-v"))
+// ── 공통 옵션 파싱 ──────────────────────────────────────────────────
+var parsed = ConverterArgs.Parse(args);
+if (parsed.DebugLog)
+{
+    HwpReader.EnableDebugLog = true;
+    Console.Error.WriteLine("[DEBUG] HWP 진단 로그 활성화");
+}
+var positional = parsed.Positional;
+
+if (positional.Length == 1 && (positional[0] is "--version" or "-v"))
 {
     Console.WriteLine("PolyDonky.Convert.Hwp 1.0");
     return ConverterExitCodes.Ok;
 }
 
-if (args.Length == 1 && (args[0] is "--help" or "-h" or "/?"))
+if (positional.Length == 1 && (positional[0] is "--help" or "-h" or "/?"))
 {
     PrintHelp();
     return ConverterExitCodes.Ok;
 }
 
-if (args.Length != 2)
+if (positional.Length != 2)
 {
-    Console.Error.WriteLine("Usage: PolyDonky.Convert.Hwp <input> <output>");
+    Console.Error.WriteLine("Usage: PolyDonky.Convert.Hwp <input> <output> [--debug]");
     Console.Error.WriteLine("  Supported: .hwp <-> .iwpf");
     return ConverterExitCodes.BadArgs;
 }
@@ -47,8 +61,8 @@ if (args.Length != 2)
 string inPath, outPath;
 try
 {
-    inPath  = Path.GetFullPath(args[0]);
-    outPath = Path.GetFullPath(args[1]);
+    inPath  = Path.GetFullPath(positional[0]);
+    outPath = Path.GetFullPath(positional[1]);
 }
 catch (Exception ex)
 {
@@ -87,12 +101,6 @@ if (new FileInfo(inPath).Length == 0)
     return ConverterExitCodes.IoError;
 }
 
-// 현재 단계: IWPF → HWP만 지원 (읽기는 나중)
-if (inExt == "hwp" && outExt == "iwpf")
-{
-    Console.Error.WriteLine("HWP → IWPF 변환은 아직 미구현되었습니다.");
-    return ConverterExitCodes.UnsupportedOp;
-}
 
 var outDir = Path.GetDirectoryName(outPath);
 if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
@@ -111,8 +119,28 @@ try
 {
     if (isImport)
     {
-        Console.Error.WriteLine("HWP → IWPF 변환은 아직 미구현되었습니다.");
-        return ConverterExitCodes.UnsupportedOp;
+        // HWP → IWPF
+        // 파일 시그니처로 실제 포맷 구분:
+        //   OLE2: D0 CF 11 E0 A1 B1 1A E1  (HWP 5.x)
+        //   ZIP:  50 4B 03 04               (HWPX 기반, .hwp 확장자이지만 내부는 ZIP)
+        bool isZipBased;
+        using (var probe = File.OpenRead(inPath))
+        {
+            Span<byte> magic = stackalloc byte[4];
+            probe.ReadExactly(magic);
+            isZipBased = magic[0] == 0x50 && magic[1] == 0x4B; // PK
+        }
+
+        ConverterProgress.Write(0, "HWP 읽는 중");
+        PolyDonkyument doc;
+        using (var fs = File.OpenRead(inPath))
+            doc = isZipBased
+                ? new HwpxReader().Read(fs)
+                : new HwpReader().Read(fs);
+
+        ConverterProgress.Write(70, "IWPF 저장 중");
+        using (var ofs = File.Create(tempOut))
+            new IwpfWriter().Write(doc, ofs);
     }
     else // isExport
     {
@@ -137,11 +165,13 @@ try
 catch (FileNotFoundException ex)
 {
     Console.Error.WriteLine($"파일을 찾을 수 없습니다: {ex.FileName ?? inPath}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (IOException ex)
 {
     Console.Error.WriteLine($"I/O 실패: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (Exception ex)
@@ -162,13 +192,17 @@ static void PrintHelp()
     Console.WriteLine("PolyDonky.Convert.Hwp — HWP ↔ IWPF 변환기");
     Console.WriteLine();
     Console.WriteLine("사용법:");
-    Console.WriteLine("  PolyDonky.Convert.Hwp <input> <output>");
+    Console.WriteLine("  PolyDonky.Convert.Hwp <input> <output> [--debug]");
     Console.WriteLine();
-    Console.WriteLine("변환 쌍 (현재 단계):");
-    Console.WriteLine("  *.iwpf → *.hwp  : export (텍스트)");
+    Console.WriteLine("변환 쌍:");
+    Console.WriteLine("  *.hwp  → *.iwpf : import (HWP 5.x 읽기)");
+    Console.WriteLine("  *.iwpf → *.hwp  : export (HWPX 호환 출력)");
     Console.WriteLine();
-    Console.WriteLine("향후:");
-    Console.WriteLine("  *.hwp  → *.iwpf : import (파서 구현 예정)");
+    Console.WriteLine("옵션:");
+    Console.WriteLine("  --debug | -d | DEBUG");
+    Console.WriteLine("    상세 진단 로그를 파일에 기록");
+    Console.WriteLine("    Windows: d:\\Temp\\PolyDonky-HwpReader.log");
+    Console.WriteLine("    Linux/macOS: /tmp/PolyDonky-HwpReader.log");
     Console.WriteLine();
     Console.WriteLine("종료 코드:");
     Console.WriteLine("  0  성공");

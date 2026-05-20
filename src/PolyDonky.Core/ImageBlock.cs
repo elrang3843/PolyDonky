@@ -40,7 +40,7 @@ public enum ImageWrapMode
 /// 바이너리는 <see cref="Data"/> 에 직접 보관되지만, IWPF 패키징 시
 /// <see cref="ResourcePath"/> 가 채워지면 ZIP 의 resources/images/ 로 분리되고 Data 는 비워진다.
 /// </summary>
-public sealed class ImageBlock : Block, IOverlayAnchored
+public sealed class ImageBlock : Block, IParaAnchoredOverlay
 {
     /// <summary>예: "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff".</summary>
     public string MediaType { get; set; } = "application/octet-stream";
@@ -90,6 +90,16 @@ public sealed class ImageBlock : Block, IOverlayAnchored
 
     /// <summary>오버레이 모드(InFrontOfText/BehindText) Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
+
+    /// <summary>
+    /// HWP 단락 기준 앵커링(VertRel=paragraph) 시 앵커 단락의 Section.Blocks 인덱스.
+    /// -1 이면 단락 앵커링 없음(이미 해소됐거나 해당 없음).
+    /// FlowDocumentPaginationAdapter.Paginate() 가 OverlayYMm 으로 확정하면 다시 -1 로 재설정된다.
+    /// </summary>
+    public int AnchorParagraphBlockIndex { get; set; } = -1;
+
+    /// <summary>HWP 단락 기준 앵커링 시 앵커 단락 상단으로부터의 Y 오프셋 (mm).</summary>
+    public double AnchorRelativeYMm { get; set; }
 
     // ── 그림 제목(캡션) ──────────────────────────────────────────────────────
 

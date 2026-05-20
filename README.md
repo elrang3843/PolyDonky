@@ -5,7 +5,7 @@
 <h1 align="center">PolyDonky</h1>
 
 <p align="center">
-  <b>HWP · HWPX · DOC · DOCX · HTML/HTM · MD · TXT</b> 문서를 한 곳에서 읽고 편집하고<br/>
+  <b>HWP · HWPX · DOC · DOCX · RTF · HTML/HTM · XML/XHTML · MD · TXT</b> 문서를 한 곳에서 읽고 편집하고<br/>
   자체 무손실 포맷 <b>IWPF</b> 로 보관하는 데스크톱 워드프로세서.
 </p>
 
@@ -17,7 +17,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"/></a>
   <a href="#시스템-요구사항"><img src="https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6.svg" alt="Platform: Windows 10+"/></a>
-  <a href="#프로젝트-상태"><img src="https://img.shields.io/badge/Status-Pre--alpha-orange.svg" alt="Status: Pre-alpha"/></a>
+  <a href="#프로젝트-상태"><img src="https://img.shields.io/badge/Status-Alpha-yellow.svg" alt="Status: Alpha"/></a>
   <a href="#소스에서-빌드하기"><img src="https://img.shields.io/badge/Lang-C%23%20%2F%20WPF-512BD4.svg" alt="Language: C# / WPF"/></a>
   <a href="#소스에서-빌드하기"><img src="https://img.shields.io/badge/.NET-10.0-512BD4.svg" alt=".NET 10"/></a>
 </p>
@@ -30,9 +30,10 @@
 
 ## 목차
 - [이름의 유래 (Name origin)](#이름의-유래-name-origin)
-- [PolyDonky이 해결하는 문제](#polydoc이-해결하는-문제)
+- [PolyDonky가 해결하는 문제](#polydonky가-해결하는-문제)
 - [주요 특징](#주요-특징)
 - [지원 포맷](#지원-포맷)
+- [CLI 변환 도구](#cli-변환-도구)
 - [프로젝트 상태](#프로젝트-상태)
 - [시스템 요구사항](#시스템-요구사항)
 - [설치](#설치)
@@ -55,7 +56,7 @@
 
 다각형(polygon) 으로 거칠게 빚어 외형은 엉성해도, 당나귀처럼 어떤 짐(문서 포맷)이든
 가리지 않고 묵묵히 먹어치우고 운반한다 — 라는 뜻으로 지은 이름입니다. 멀티 포맷
-ingest(HWP / HWPX / DOC / DOCX / HTML / MD / TXT) 라는 프로젝트 정체성을 그대로 담았습니다.
+ingest(HWP / HWPX / DOC / DOCX / RTF / HTML / XML / MD / TXT) 라는 프로젝트 정체성을 그대로 담았습니다.
 
 > _A donkey roughly sculpted from polygons — clumsy on the outside, but with a
 > voracious appetite for any document format. The name reflects the project's
@@ -63,13 +64,13 @@ ingest(HWP / HWPX / DOC / DOCX / HTML / MD / TXT) 라는 프로젝트 정체성�
 
 ---
 
-## PolyDonky이 해결하는 문제
+## PolyDonky가 해결하는 문제
 
 업무 문서는 흔히 **HWP / DOCX / DOC / HWPX** 가 뒤섞여 유통됩니다. 한 포맷에서
 다른 포맷으로 변환할 때마다 표·머리말·번호·한글 조판 같은 미세 정보가 깨지고,
 원본을 다시 받아야 하는 일이 반복됩니다.
 
-PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 + 원본 내장**으로
+PolyDonky는 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 + 원본 내장**으로
 구성된 자체 포맷 **IWPF**로 정규화해 보관합니다. 그 결과:
 
 - **편집·검색**은 IWPF의 공통 모델로 빠르게,
@@ -82,10 +83,11 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 
 ## 주요 특징
 
-- **하나의 에디터에서 다중 포맷 읽기/쓰기** — HWP, HWPX, DOC, DOCX, HTML/HTM, MD, TXT
+- **하나의 에디터에서 다중 포맷 읽기/쓰기** — HWP, HWPX, DOC, DOCX, RTF, HTML/HTM, XML/XHTML, MD, TXT
 - **IWPF — 자체 통합 포맷** — ZIP 기반 패키지에 공통 모델 + 충실도 캡슐 + 원본 + provenance map 동봉
 - **원본 무손실 보장** — 가져온 원본 파일을 패키지에 그대로 보관해 byte-level 원복 가능
 - **편리한 편집 기능** — 표(엑셀풍 시트), 다양한 글상자(말풍선·구름풍선·가시풍선·번개상자), 그래프, 도형, 수식, 이모지
+- **한글 조판 특화** — 줄격자·장평·자간·문단 줄바꿈 세부 동작·한글 리스트 번호 생성 규칙 지원
 - **다양한 테마** — 학생부터 장년까지 폭넓은 사용자층을 고려한 컬러 테마 선택
 - **다국어 UI** — 한국어(기본), 영어
 - **외부 변환은 분리된 CLI 모듈** — 메인 앱은 IWPF/MD/TXT 만 직접 처리하고, 그 외 포맷은 별도 컨버터로 호출
@@ -97,24 +99,47 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 | 포맷  | 읽기 | 쓰기 | 비고                                         |
 |-------|:---:|:---:|----------------------------------------------|
 | IWPF  | ✅  | ✅  | 자체 정본(canonical) 포맷                     |
-| MD    | ✅  | ✅  | 기본 내장                                     |
+| MD    | ✅  | ✅  | 기본 내장 (Markdig)                           |
 | TXT   | ✅  | ✅  | 기본 내장                                     |
-| DOCX  | ✅  | ✅  | 1단계 1급 시민. **메인 앱 직접 처리** (DocumentFormat.OpenXml) |
-| HWPX  | ✅  | ✅  | 1단계 1급 시민. **자체 구현 (KS X 6101)** — 한컴 오피스 호환성 fine-tune 진행 중 |
-| HTML / HTM | ⏳ | ⏳ | 외부 컨버터 모듈 (Phase D)                |
-| DOC   | ⏳  | ⚠️  | 2단계: ingest 전용. 출력은 HWPX/DOCX 권장     |
-| HWP   | ⏳  | ⚠️  | 2단계: ingest 전용. 출력은 HWPX/DOCX 권장     |
+| DOCX  | ✅  | ✅  | 1급 시민. **메인 앱 직접 처리** (DocumentFormat.OpenXml) |
+| HWPX  | ✅  | ✅  | 1급 시민. **자체 구현 (KS X 6101)**           |
+| HTML / HTM | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Html` (AngleSharp) |
+| XML / XHTML | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Xml`       |
+| RTF   | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Doc` (자체 구현) |
+| HWP   | ✅  | ⚠️  | 외부 CLI — `PolyDonky.Convert.Hwp` (import 전용; 출력은 HWPX/DOCX 권장) |
+| DOC (OLE2) | ⏳ | ⚠️ | v1.0.0 이후 자체 파서 추가 예정             |
 
 > 다른 포맷으로 저장할 때는 **항상 한 번 더 확인 다이얼로그**가 뜹니다.
 > 외부 포맷에서는 일부 정보가 손실될 수 있고, 정본 보존을 위해 IWPF 저장을 권장합니다.
 
 ---
 
+## CLI 변환 도구
+
+PolyDonky는 외부 포맷 변환을 **독립 CLI 실행 파일**로 분리합니다. 메인 앱이 런타임에 spawn 하며,
+직접 명령줄에서도 사용할 수 있습니다. 각 도구의 상세 사용법은 아래 문서를 참고하세요.
+
+| 도구 | 변환 방향 | 상세 문서 |
+|------|----------|----------|
+| `PolyDonky.Convert.Html.exe` | HTML/HTM ↔ IWPF | [docs/cli-html.md](docs/cli-html.md) |
+| `PolyDonky.Convert.Xml.exe`  | XML/XHTML ↔ IWPF | [docs/cli-xml.md](docs/cli-xml.md) |
+| `PolyDonky.Convert.Docx.exe` | DOCX ↔ IWPF | [docs/cli-docx.md](docs/cli-docx.md) |
+| `PolyDonky.Convert.Hwpx.exe` | HWPX ↔ IWPF | [docs/cli-hwpx.md](docs/cli-hwpx.md) |
+| `PolyDonky.Convert.Doc.exe`  | RTF ↔ IWPF | [docs/cli-doc.md](docs/cli-doc.md) |
+| `PolyDonky.Convert.Hwp.exe`  | HWP → IWPF | [docs/cli-hwp.md](docs/cli-hwp.md) |
+
+모든 CLI 도구는 공통 규약을 따릅니다.
+- **stdout**: `PROGRESS:<0-100>:<메시지>` 형식으로 진행상황 보고
+- **`--debug` / `-d` / `DEBUG`**: 예외 스택 트레이스 등 상세 진단 정보를 stderr 에 출력
+- **종료 코드**: `0`=성공, `2`=인자 오류, `3`=지원 안 함, `4`=I/O 오류, `5`=변환 실패, `6`=지원 외 버전
+
+---
+
 ## 프로젝트 상태
 
-> 🚧 **Pre-alpha — 설계/초기 구현 단계입니다.**
-> 사양·사용자 문서(`README.md`, `USER_GUIDE.md`, `IWPF.md`, `CLAUDE.md`, `HISTORY.md`)와 함께
-> 메인 앱 (`PolyDonky.App`, WPF) 및 코덱 라이브러리 (DOCX·HWPX·MD·TXT) 의 구현이 진행 중입니다.
+> 🚧 **Alpha — 핵심 포맷 구현 완료, 안정화 진행 중입니다.**
+> IWPF, DOCX, HWPX, HTML, XML, RTF, HWP 변환이 동작하며 WPF 편집기가 실행됩니다.
+> 변경추적·수식·목차 등 3단계 기능은 구현 중입니다.
 > 정식 릴리스 빌드는 아직 제공되지 않습니다.
 > 진행 상황은 [Issues](../../issues) / [Releases](../../releases) / [`HISTORY.md`](HISTORY.md) 에서 확인하세요.
 
@@ -126,9 +151,9 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 
 ### 개발 단계
 
-1. **1단계 (현재 목표)** — DOCX, HWPX 1급 지원 / IWPF 저장·로드 / 기본 편집
-2. **2단계** — DOC, HWP **ingest 전용** 추가, 정규화 후 출력은 HWPX/DOCX
-3. **3단계** — 변경추적, 주석, 수식, 도형/텍스트박스, 필드/목차, 고급 표, 특수 조판
+1. **1단계 ✅** — DOCX, HWPX 1급 지원 / IWPF 저장·로드 / 기본 편집 / HTML·XML·RTF·HWP 외부 CLI
+2. **2단계 (진행 중)** — 안정화, 고급 도형/텍스트박스, 표 편집 강화, DOC OLE2 ingest
+3. **3단계** — 변경추적, 주석, 수식, 필드/목차, 고급 표, 특수 조판
 
 ---
 
@@ -138,11 +163,12 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 |-----------|---------------------------------------|
 | OS        | Windows 10 (1809) 이상, Windows 11    |
 | 아키텍처   | x64                                    |
-| 런타임     | .NET (런타임 포함 인스톨러 제공 예정)   |
+| 런타임     | .NET 10 (런타임 포함 인스톨러 제공 예정) |
 | 디스크     | 약 200 MB 이상 권장                    |
 | 메모리     | 4 GB 이상 권장                         |
 
 > macOS / Linux 는 현재 지원하지 않습니다.
+> 라이브러리·코덱·테스트는 Linux/macOS 에서도 빌드·테스트 가능합니다.
 
 ---
 
@@ -164,7 +190,7 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 
 ### 현재 시점에서는
 
-실행 가능한 빌드가 아직 없습니다. 소스에서 직접 빌드해 사용해야 합니다 → [소스에서 빌드하기](#소스에서-빌드하기) 참고.
+소스에서 직접 빌드해 사용해야 합니다 → [소스에서 빌드하기](#소스에서-빌드하기) 참고.
 
 ---
 
@@ -206,6 +232,7 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 - 내보내기 — 선택 영역을 외부 문서·개체로 저장
 - 문서정보 — 작성/편집 정보, 암호, 워터마크
 - 찾기 / 바꾸기
+- 실행 취소 / 다시 실행 (JSON 스냅샷 기반, 100단계)
 </details>
 
 <details>
@@ -215,7 +242,7 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 - **표(시트)** — 엑셀 같은 시트형 표
 - **그래프** — 꺾은선·파이·막대·분포 등
 - 특수문자 / 수식 / 이모지
-- **도형** — 직선, 폴리곤·스플라인 선/면, 사각형, 삼각형, 원, 타원, 호, 화살표 등
+- **도형** — 직선, 폴리선/스플라인 선·면, 사각형, 삼각형, 원, 타원, 호, 화살표 등
 - 그림 — PNG, BMP, JPEG, TIFF
 </details>
 
@@ -247,14 +274,12 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 
 ## 소스에서 빌드하기
 
-> ⚠️ 빌드 스크립트와 솔루션 구조는 1단계 진행 중 확정됩니다. 아래는 예정된 절차입니다.
-
 ### 사전 요구
 
-- **Windows 10/11**
-- **Visual Studio 2022** (워크로드: *.NET 데스크톱 개발*, 필요 시 *Windows App SDK*)
-- **.NET SDK** (버전은 솔루션 확정 시 명시)
+- **Windows 10/11** (WPF 앱 빌드·실행 시)
+- **.NET SDK 10.0.107** 이상 — [`global.json`](global.json) 에 SDK 버전 핀 설정
 - **Git**
+- Visual Studio 2022 또는 Rider (선택사항; `dotnet` CLI 만으로도 빌드 가능)
 
 ### 클론 & 빌드
 
@@ -262,35 +287,82 @@ PolyDonky은 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 git clone https://github.com/elrang3843/PolyDonky.git
 cd PolyDonky
 
-# (예정) 솔루션 빌드
-# dotnet build PolyDonky.sln -c Release
+# 전체 복원 / 빌드
+dotnet restore PolyDonky.sln
+dotnet build   PolyDonky.sln -c Debug
 
-# (예정) 실행
-# dotnet run --project src/PolyDonky.App
+# 테스트 실행 (App.Tests 제외하면 Linux/macOS 에서도 통과)
+dotnet test PolyDonky.sln -c Debug
+
+# WPF 앱 실행 (Windows 전용)
+dotnet run --project src/PolyDonky.App
+
+# Linux/CI 에서 전체 솔루션 빌드 (WPF 포함 시 플래그 필요)
+dotnet build PolyDonky.sln -c Debug -p:EnableWindowsTargeting=true
 ```
 
-빌드가 가능한 시점부터 본 문서가 갱신됩니다.
+### CLI 변환 도구 실행
+
+```bash
+# HTML → IWPF
+dotnet run --project tools/PolyDonky.Convert.Html -- 문서.html 문서.iwpf
+
+# DOCX → IWPF
+dotnet run --project tools/PolyDonky.Convert.Docx -- 보고서.docx 보고서.iwpf
+
+# HWP → IWPF (진단 로그 포함)
+dotnet run --project tools/PolyDonky.Convert.Hwp -- 문서.hwp 문서.iwpf --debug
+```
+
+### 단일 테스트
+
+```bash
+dotnet test tests/PolyDonky.Iwpf.Tests --filter "FullyQualifiedName~IwpfWriterTests.RoundTrip"
+```
+
+### 통합 스모크 테스트
+
+```bash
+dotnet run --project tools/PolyDonky.SmokeTest
+```
 
 ---
 
 ## 아키텍처 개요
 
-PolyDonky은 **2계층 설계** 위에 동작합니다.
+PolyDonky는 **2계층 설계** 위에 동작합니다.
 
 1. **의미 계층 (공통 문서 모델)** — 검색·편집·분석을 담당하는 superset 모델
 2. **충실도 계층 (Fidelity Capsule + 원본 내장 + Provenance Map)** — 원본 재현·역변환 보장
 
 ```
-PolyDonky.exe (WPF / WinUI 3)
-   ├─ Editor / Renderer  ── 공통 의미 모델 위에서 동작
-   ├─ IWPF Reader/Writer ── ZIP 패키지 입출력
-   └─ External Converters (CLI)
-        ├─ HWP   <-> IWPF
-        ├─ HWPX  <-> IWPF
-        ├─ DOC   ->  IWPF      (ingest 전용)
-        ├─ DOCX  <-> IWPF
-        └─ HTML  <-> IWPF
+PolyDonky.exe (WPF / .NET 10)
+   ├─ Editor / Renderer       ── 공통 의미 모델 위에서 동작 (FlowDocumentBuilder/Parser)
+   ├─ Pagination              ── PerPageEditorHost / FlowDocumentPaginationAdapter
+   ├─ IWPF Reader/Writer      ── ZIP 패키지 입출력 (PolyDonky.Iwpf)
+   ├─ 내장 코덱               ── MD (Markdig), TXT, DOCX (OpenXml), HWPX (자체 구현)
+   └─ External Converters (CLI) ── ExternalConverter.cs 가 spawn
+        ├─ PolyDonky.Convert.Html  — HTML/HTM ↔ IWPF (AngleSharp)
+        ├─ PolyDonky.Convert.Xml   — XML/XHTML ↔ IWPF
+        ├─ PolyDonky.Convert.Docx  — DOCX ↔ IWPF
+        ├─ PolyDonky.Convert.Hwpx  — HWPX ↔ IWPF
+        ├─ PolyDonky.Convert.Doc   — RTF ↔ IWPF (자체 구현)
+        └─ PolyDonky.Convert.Hwp   — HWP → IWPF (자체 파서)
 ```
+
+### 주요 의존성
+
+| 라이브러리 | 버전 | 용도 | 라이선스 |
+|-----------|------|------|---------|
+| DocumentFormat.OpenXml | 3.5.1 | DOCX 읽기/쓰기 | MIT |
+| Markdig | 0.42.0 | Markdown 파싱 | BSD-2-Clause |
+| AngleSharp | 1.4.0 | HTML5 파싱/CSS 캐스케이드 | MIT |
+| AngleSharp.Css | 1.0.0-beta.213 | CSS 선택자·캐스케이드 | MIT |
+| OpenMcdf | 3.1.4 | CFB/OLE2 컨테이너 (HWP) | MIT |
+| SixLabors.ImageSharp | 3.1.3 | 이미지 변환·처리 | Apache-2.0 |
+| WpfMath | 0.11.0 | LaTeX 수식 렌더링 | MIT |
+| Microsoft.Web.WebView2 | 1.0.3179.45 | 내장 브라우저 뷰어 | BSD-3-Clause |
+| CommunityToolkit.Mvvm | 8.4.0 | MVVM 패턴 | MIT |
 
 IWPF 패키지 구조, 보존 캡슐 설계, provenance / dirty tracking, opaque island
 정책 등 자세한 내용은 [`IWPF.md`](IWPF.md) 와 개발 가이드인
@@ -300,13 +372,14 @@ IWPF 패키지 구조, 보존 캡슐 설계, provenance / dirty tracking, opaque
 
 ## 로드맵
 
-- [ ] **M1** — 솔루션 골격, IWPF reader/writer 프로토타입, 기본 텍스트 편집
-- [ ] **M2** — DOCX import/export, HWPX import/export
-- [ ] **M3** — 표, 이미지, 머리말/꼬리말, 각주/미주
-- [ ] **M4** — 변경추적, 주석, 수식, 도형/텍스트박스
-- [ ] **M5** — DOC / HWP ingest, opaque island 정책 적용
-- [ ] **M6** — 테마 다중화, i18n(한/영) 완성, 인쇄/미리보기
-- [ ] **M7** — MSIX 인스톨러, 첫 정식 릴리스 **`v1.0.0`** (메인테이너 명시 지시 시 컷)
+- [x] **M1** — 솔루션 골격, IWPF reader/writer, 기본 텍스트 편집
+- [x] **M2** — DOCX import/export, HWPX import/export
+- [x] **M3** — 표, 이미지, 머리말/꼬리말, 각주/미주
+- [x] **M4** — 도형/텍스트박스, 글상자 다단, HWP/HTML/RTF/XML 외부 CLI
+- [ ] **M5** — 변경추적, 주석, 수식 (OMML/LaTeX), DOC OLE2 ingest
+- [ ] **M6** — 목차/필드 완성, 고급 표(시트형), 특수 조판
+- [ ] **M7** — 테마 다중화, i18n(한/영) 완성, 인쇄/미리보기
+- [ ] **M8** — MSIX 인스톨러, 첫 정식 릴리스 **`v1.0.0`** (메인테이너 명시 지시 시 컷)
 
 진행 상황은 [Projects](../../projects) / [Milestones](../../milestones) 에서 추적합니다.
 
@@ -324,14 +397,14 @@ IWPF 패키지 구조, 보존 캡슐 설계, provenance / dirty tracking, opaque
 
 ## 기여하기
 
-PolyDonky은 초기 단계라 이슈 제보와 설계 토론 모두 큰 도움이 됩니다.
+PolyDonky는 초기 단계라 이슈 제보와 설계 토론 모두 큰 도움이 됩니다.
 
 1. **Issue 먼저 열기** — 큰 변경(아키텍처·포맷·UX)은 PR 전에 Issue로 합의를 잡습니다.
 2. **브랜치 분기** — `feature/<주제>`, `fix/<주제>` 형식 권장.
 3. **커밋 메시지** — 어떤 변화인지 한 줄 요약 + 필요 시 본문에 *왜* 를 적습니다.
 4. **PR** — 변경 의도, 영향 범위, 테스트 방법을 본문에 명시합니다.
 
-> 코드 스타일·테스트·CI 가이드는 솔루션 확정 후 `CONTRIBUTING.md` 로 분리될 예정입니다.
+> 코드 스타일·테스트·CI 가이드는 `CONTRIBUTING.md` 로 분리될 예정입니다.
 
 ---
 
@@ -383,7 +456,7 @@ Copyright (c) 2026 HANDTECH (핸텍) — Noh JinMoon (노진문)
 Licensed under the Apache License, Version 2.0
 ```
 
-써드파티 의존성의 라이선스 고지는 추후 [`NOTICE`](NOTICE) 와
+써드파티 의존성의 라이선스 고지는 [`NOTICE`](NOTICE) 와
 앱 내 [도움말 → 라이선스] 메뉴에서 제공됩니다.
 
 ---
@@ -400,6 +473,7 @@ Licensed under the Apache License, Version 2.0
 | [`CLAUDE.md`](CLAUDE.md)           | Claude Code    | AI 어시스턴트가 참고할 개발 가이드라인          |
 | [`NOTICE`](NOTICE)                 | 모두           | 저작권 고지·써드파티 attribution                |
 | [`LICENSE`](LICENSE)               | 모두           | Apache License 2.0 본문                       |
+| [CLI 도구 문서](docs/)             | 개발자·연동자   | 각 변환 CLI 사용 설명서                        |
 
 ---
 

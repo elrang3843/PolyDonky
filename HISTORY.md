@@ -46,6 +46,52 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### Added
 
+- **CLI `--debug` 옵션**: 모든 CLI 변환기(`Convert.Hwp/Hwpx/Docx/Doc/Html/Xml`)에 `--debug | -d | DEBUG` 옵션 추가. HWP 변환기에서는 `d:\Temp\PolyDonky-HwpReader.log`(Windows) 또는 `/tmp/PolyDonky-HwpReader.log`(Linux/macOS)에 상세 파싱 로그를 기록하고, 나머지 변환기에서는 예외 스택 트레이스를 stderr에 출력. Release 빌드에서도 동작하며, Debug 빌드에서는 항상 활성. 공통 파서 `ConverterArgs` 추가(`tools/PolyDonky.Convert.Common/ConverterArgs.cs`). (`tools/PolyDonky.Convert.*/Program.cs`, `src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **DOCX OOXML 차트 추출 & 막대 그래프 렌더링**: DOCX의 DrawingML 차트(`<c:chart r:id="...">`)가 `[보존된 도형]` OpaqueBlock으로만 보존되던 한계를 개선 — `DocxReader.TryExtractChart`가 `ChartPart`에서 `chart*.xml`을 로드해 `c:ser`/`c:cat`/`c:val` 캐시의 실제 숫자값·라벨·시리즈 색상(`c:spPr/a:srgbClr`)을 추출하고 `ShapeObject(Kind=Ole, ChartSeries=...)`로 변환. HWP와 동일한 `FlowDocumentBuilder.BuildBarChart` 파이프라인을 재사용해 막대 그래프로 렌더링. OOXML은 캐시 값이 평문이라 HCH와 달리 **실제 데이터 값이 정확히 보존**됨. (`src/PolyDonky.Codecs.Docx/DocxReader.cs`)
+- **HWP OLE 차트 미리보기 막대 그래프 렌더링**: HWP의 OLE 차트(Hancom Chart, HCH 포맷)에는 미리보기 이미지가 내장되지 않아 `[OLE]` placeholder만 표시되던 한계를 개선 — `ShapeObject`에 `ChartCategories`/`ChartSeries`/`ChartYMax` 필드 추가, `HwpChartParser`에서 OLE 바이너리의 EUC-KR 인코딩된 "행N"/"열N" 라벨을 휴리스틱 스캔으로 추출, `FlowDocumentBuilder.BuildBarChart`에서 그리드라인·축·그룹 막대·범례를 갖춘 막대 그래프로 렌더링. 실제 데이터 값은 HCH 포맷 사양 비공개로 추출이 어려워 placeholder 값을 사용 (라벨은 정확). (`src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.Codecs.Hwp/HwpChartParser.cs`, `src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+
+### Fixed
+
+- **HWP GSO 앵커 단락 공백 누적 수정**: 도형·OLE·이미지 등 GSO(그리기 개체) 앵커 단락이 빈 `Paragraph`로 section.Blocks에 쌓여 컨텐츠가 2페이지로 밀리던 버그 수정. `HwpParagraph.HasGsoAnchor` 플래그를 추가해 L1 CTRL_HEADER gso를 만날 때 마킹, `ConvertHwpParagraphMulti`에서 텍스트 없는 앵커 단락을 스킵. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+- **HWP 단락앵커 객체(이미지·OLE 차트) 위치 수정**: 단락앵커(anchorType=1) 객체의 HWP `XMm`/`YMm` 은 페이지 절대 좌표가 아니라 **단락 기준 상대 오프셋**이라는 사실을 반영. 이전 fix 가 이를 overlay 절대 좌표로 잘못 변환해 클립아트가 페이지 좌측 상단(`pos=(71.6, 4.9)`)에서 표 위로 올라오던 버그 수정. 단락앵커 이미지·OLE 도형은 인라인 흐름으로 두고 X 오프셋만 가로 정렬 근사(좌/중앙/우)에 사용. 페이지앵커(anchorType=0) 객체는 종전대로 overlay 절대 좌표 그대로. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+- **HWP 클립아트 이미지 렌더링 수정**: BIN0001.OLE(OLE2 차트)가 sequential scan을 통해 이미지로 잘못 선택되던 버그 수정 — OLE 도형의 `binDataId`를 `usedBinIds`에 즉시 등록해 이미지 scan이 BIN0002.bmp(실제 이미지)를 올바르게 선택하도록 수정. `DetectMediaType`에 OLE2(`D0 CF 11 E0`) 케이스 추가, fallback을 `image/png`→`application/octet-stream`으로 수정. OLE2·octet-stream 데이터는 ImageBlock 생성을 건너뜀. 단락앵커(anchorType=1) 이미지를 절대 페이지 좌표가 있으면 overlay로 배치. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 다각형(POLYGON_COMPONENT·CURVE_COMPONENT) 꼭짓점 좌표 정규화 수정**: 좌표값이 HWPUNIT이 아닌 도형 내부 독자 스케일(~26,600 units/mm)로 저장돼 마름모 등 다각형이 400,000mm 크기로 오파싱되던 버그 수정 — raw INT32 min/max를 도형 bounding-box(wMm×hMm)로 선형 정규화. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP OLE 차트·그림 인라인 렌더링 수정**: `BinData` 스트림 이름에 확장자가 붙는 경우(`.OLE`, `.bmp` 등)를 prefix 검색으로 처리, `OLE_COMPONENT`의 `binDataId` offset 12 추가, 단락 앵커 객체(`anchorType != 0`)를 `IsInline = true`로 구분해 `WrapMode = Inline`으로 단락 흐름에 배치(기존: 페이지 오버레이 좌표 `(0,0)`으로 잘못 표시됨). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 도형 X/Y 좌표 swap 수정**: KS X 5700 §4.7.2 GShapeObject 구조에서 bytes 8-11 = yPos, bytes 12-15 = xPos인데 x/y가 뒤바뀐 채로 읽어 모든 도형·글상자가 페이지 오른쪽 상단에 몰리던 버그 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 글상자 채우기 색상 미적용 수정**: `HwpTextBox`에 `BorderFillId`가 없어 글상자 배경색(예: 노란색)이 누락되던 버그 수정 — `BorderFillId`를 `HwpTextBox`에 추가하고 `BuildDocument`에서 `BackgroundColor`·`BorderColor`에 반영. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 도형 채우기 색상 오류 수정**: `ParseBorderFill`에서 HWP COLORREF alpha 바이트(`0xFF` = 투명)를 확인하지 않아 투명색이 파란색(`#0000FF`)으로 잘못 변환되던 버그 수정 — `(color >> 24) == 0xFF` 검사 추가. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 도형 borderFillId 읽기 오류 수정**: `SHAPE_COMPONENT` offset 50의 값을 `borderFillId`로 읽었으나 해당 위치는 항상 1인 version/count 필드임 — 252-byte 페이로드 실측 분석으로 실제 `borderFillId`가 offset 201(uint8)에 있음을 확인하고 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP BORDER_FILL 채우기 색상 ABGR 해석 수정**: 진단 로그로 확인된 HWP5 색상 포맷이 Windows COLORREF(BBGGRR)가 아닌 **ABGR**(low byte = alpha)임을 반영. 기존 `(color >> 24) == 0xFF` 투명도 검사는 R 바이트를 alpha로 잘못 검사해 `#FFFF00` 노란색(R=FF, G=FF, B=00, A=00)을 투명으로 판정하고 `hatchColor`로 대체하는 버그를 유발. `FormatAbgr` 함수 추가 — alpha(low byte)==0xFF인 경우만 투명으로 처리, 나머지는 올바른 #RRGGBB 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 그리기 개체 외곽선·채우기 SHAPE_COMPONENT 인라인 블록에서 읽기**: 글상자·도형의 외곽선 색/두께·채우기 색은 DocInfo BorderFill 테이블이 아니라 SHAPE_COMPONENT 레코드 내부의 인라인 블록에 저장됨을 실측 분석으로 확인. 기존 코드는 offset 201의 값을 borderFillId로 읽었으나 그 위치는 사실 lineWidth 필드의 두 번째 바이트라 글상자에만 우연히 1이 나왔던 것. 변환 행렬 뒤(`52 + 48 + matrixCount*96`, matrixCount=offset 50 UINT16)의 블록에서 lineColor·lineWidth(HWPUNIT)·fillType·faceColor 를 직접 파싱. 글상자가 가짜 BorderFill[1] 대신 실제 1.0mm 외곽선·#F5DCA8 채우기 색을 갖게 됨. lineWidth 0 은 '테두리 없음'이 아니라 헤어라인으로 처리. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP GSO 그리기 개체 배치 방식·위치 기준 정확 해석**: CTRL_HEADER `ctrlFlags` 비트를 실측 분석해 배치 방식을 올바르게 판정 — bit 28(자리차지)/bit 0(글자처럼 취급)이면 인라인 흐름, bit 14면 글 뒤에 배치, 셋 다 0이면 글자 앞에 배치(InFrontOfText overlay). 기존 코드는 bits 4-5를 'anchorType'으로 잘못 해석해 "글자 앞에 배치" 그림을 인라인으로 처리, 그림 높이(59mm)만큼 본문이 다음 페이지로 밀려나던 버그 수정. 또한 위치 기준(bits 8-9=HorzRel, bits 3-4=VertRel)이 '종이'(절대 좌표)가 아닌 '단/단락'(본문 영역 기준)이면 페이지 여백만큼 더해 페이지 절대 좌표로 변환. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP VertRel=단락 오버레이(이미지·도형) Y 위치 정확도 개선**: `ctrlFlags` bits 3-4가 `VertRel=2(단락 기준)`인 개체의 Y 좌표는 앵커 단락 상단 기준 상대값임. 기존에는 잘못 페이지 여백을 더해 Y≈25mm 로 표시됐으나, `ImageBlock`·`ShapeObject`에 `AnchorParagraphBlockIndex`·`AnchorRelativeYMm` 필드를 추가하고 `FlowDocumentPaginationAdapter.ResolveParaAnchoredImages`에서 레이아웃 후 앵커 단락의 실제 페이지 Y 를 반영해 올바른 위치로 확정. (`src/PolyDonky.Core/ImageBlock.cs`, `src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.Codecs.Hwp/HwpReader.cs`, `src/PolyDonky.App/Pagination/FlowDocumentPaginationAdapter.cs`)
+- **HWP 자리차지(HoldSpace) 개체를 인라인 대신 오버레이로 처리**: `ctrlFlags` bit 28(자리차지)이 설정된 개체(OLE 차트 등)를 '글자처럼 취급'(인라인 흐름)으로 잘못 처리해, 개체 높이(예: 71mm)만큼 본문이 밀려 뒤 콘텐츠·그림이 다음 페이지로 넘어가던 버그 수정 — 인라인은 bit 0(글자처럼 취급)일 때만 적용하고, 자리차지 개체는 좌표 기반 overlay 로 배치. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 단락 PARA_CHAR_SHAPE 다중 엔트리 보존**: 한 단락 내 캐릭터별로 다른 폰트·크기·색상·이탤릭 속성이 있는 경우, 기존 코드는 첫 번째 CharShapeId만 사용해 전체를 단일 Run으로 처리했으나, 이제 `(charPos, charShapeId)` 쌍 시퀀스를 `HwpParagraph.CharRuns`에 모두 수집해 텍스트를 구간별로 잘라 별도 Run을 생성. 글상자·표 셀·머리말/꼬리말·본문 모든 단락에 적용. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+### Internal
+
+- **단락앵커 오버레이 공통 인터페이스 `IParaAnchoredOverlay` 추출**: `AnchorParagraphBlockIndex`·`AnchorRelativeYMm` 속성이 `ImageBlock`·`ShapeObject`에 중복 선언되어 있던 것을 공통 인터페이스로 통합. `FlowDocumentPaginationAdapter.ResolveParaAnchoredImages`의 이중 타입-스위치가 인터페이스 직접 접근으로 단순화되고, `HwpReader.BuildDocument`의 보류 목록도 `List<IParaAnchoredOverlay>`로 정리됨. 보조 함수 `FindAnchorBlock` 분리. (`src/PolyDonky.Core/IParaAnchoredOverlay.cs`, `src/PolyDonky.Core/ImageBlock.cs`, `src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.App/Pagination/FlowDocumentPaginationAdapter.cs`, `src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 도형 회전각 오류 수정**: offset 28의 값을 1/100도 단위 회전각으로 읽었으나 해당 위치는 크기 필드의 일부임 — 변환 행렬(offset 52의 cos(θ), offset 60의 sin(θ))로부터 `atan2`로 정확한 각도를 추출하도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 도형 속성 정확도 개선**: `SHAPE_COMPONENT` 너비/높이 오프셋을 KS X 5700 기준(offset 20/24)으로 수정(이전 코드는 4바이트 밀린 24/28을 읽었음), 회전각(offset 28, 1/100도) 추출 추가, `borderFillId` sanity 범위 상향(≤1024). `RECT_COMPONENT`에서 둥근 모서리 비율(`roundedCornerPercent`) 읽기 추가(`RoundedRect` 종류 자동 선택). `LINE_COMPONENT`에서 시작/끝 화살표 유형 파싱 추가. `POLYGON_COMPONENT`·`CURVE_COMPONENT`에서 꼭짓점 좌표 배열 추출 추가. `BuildDocument`에서 `borderFill` Top/Left/Bottom/Right 테두리 중 첫 번째 Non-None을 도형 획(stroke) 색상·두께·선 종류에 올바르게 반영(이전에는 획 제거 조건만 처리하고 실제 색상·두께는 항상 기본값으로 남음). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+### Added
+
+- **HWP 용지 설정·글상자·도형·이미지 ingest**: `HwpReader`에서 `TAG_PAGE_DEF(0x03C)` 파싱으로 용지 크기·방향·여백을 `PageSettings`에 반영, `TAG_CTRL_HEADER(0x03A)` + `TAG_LIST_HEADER(0x03B)` 레벨 기반 파싱으로 글상자(`TextBoxObject`) 추출, `TAG_SHAPE_COMPONENT(0x03F)` + 서브태그(`0x041–0x049`)로 도형 종류·위치·크기 파싱, `TAG_PICTURE_COMPONENT(0x048)` + `BinData/BIN####` 스트림 읽기로 이미지(`ImageBlock`) 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **Phase F — RTF import/export 및 HWP CLI 스텁**: `tools/PolyDonky.Convert.Doc`(RTF 자체 구현) 및 `tools/PolyDonky.Convert.Hwp` 프로젝트 추가. `ExternalConverter.GetConverter`에 `"rtf"`/`"hwp"` 연결, `KnownFormats.OpenFilter`/`SaveFilter` 에 RTF/HWP 항목 추가. (`tools/PolyDonky.Convert.Doc/`, `tools/PolyDonky.Convert.Hwp/`, `ExternalConverter.cs`, `KnownFormats.cs`)
 
 - **RTF import 구현 (`DocReader`)**: `.rtf → .iwpf` 방향 변환기 추가. 그룹 스택 기반 RTF 파서로 폰트/색상 테이블, 텍스트·서식(굵기·기울임·밑줄·취소선·폰트 크기·색상·정렬·줄간격) 파싱 지원. `\fonttbl`, `\colortbl`, `\*` 헤더 그룹 자동 스킵. `\'XX` ANSI 및 `\uN` 유니코드 디코딩 포함. (`tools/PolyDonky.Convert.Doc/DocReader.cs`, `Program.cs`)
@@ -68,6 +114,46 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - **미주(EndnoteId) 참조 마커를 로마 숫자 소문자로 변경**: 각주(1, 2, 3…)와 미주(i, ii, iii…)가 같은 숫자로 표시돼 구분이 어렵던 문제 해결. 본문 참조 Run과 미주 전용 페이지의 번호 레이블 모두 소문자 로마 숫자(`i`, `ii`, `iii`, `iv`…)로 렌더링. 번호 미할당 시 폴백 기호는 기존 `‡` 유지. (`FlowDocumentBuilder.cs`, `PerPageDocumentSplitter.cs`)
 
 ### Fixed
+
+- **HWP 페이지 나누기·페이지 앵커링·PARA_HEADER 구조 수정 (4 in 1)**: 다음 네 가지 버그를 한 번에 수정. (a) **페이지 나누기 검출**: PARA_HEADER 의 페이지 나누기 플래그가 잘못된 오프셋(offset 0 bit 0 = nChars LSB) 에서 읽혀 52/71 단락이 페이지 나누기로 잘못 표시되던 문제. 올바른 위치는 `columnType` 바이트(offset 11) bit 2 (`0x04`). Welcome to Hwp.hwp 에서 3개의 정확한 페이지 나누기 (`강력해진 맞춤법 검사`, `차례 새로 고침`, `개체 이동 안내선 표시`) 검출. (b) **paraShapeId 오류**: 기존 코드가 offset 4-7(`nCtrlMask`) 을 uint32 로 읽어 paraShapeId 로 사용했으나, 실제로는 offset 8-9 uint16. 결과적으로 모든 단락이 잘못된 PARA_SHAPE 를 참조하여 정렬·들여쓰기·여백이 모두 깨졌던 문제. (c) **부유 객체 페이지 앵커링**: 모든 글상자/도형/이미지가 `AnchorPageIndex=0` 에 고정되어 후반부 페이지의 도형들이 표지 위에 겹쳐 그려지던 문제. `HwpTextBox`/`HwpImage`/`HwpShape` 에 `AnchorPageIndex` 추가, `ParseSectionRecords` 가 페이지 나누기를 만날 때마다 `currentPageIndex` 증가하여 `ParseGsoControl` 에 전달. Welcome to Hwp.hwp 의 두 타원이 이제 page 3(`개체 이동 안내선` 페이지) 에 올바르게 앵커됨. (d) **GSO 너비·높이 순서 오류**: CTRL_HEADER payload offset 16-19 와 20-23 의 W/H 가 뒤바뀌어 읽혀 표지 배경 사각형이 297×210mm(landscape) 로 인식되던 문제 — 실제로는 width@16-19, height@20-23 순서. 이제 210×297mm portrait A4 배경으로 올바르게 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP OLE 객체 위치 정보 보존**: OLE 객체들이 `OpaqueBlock`으로 변환되면서 위치·크기 정보가 손실되던 문제 수정. 이제 OLE 객체도 다른 도형과 같이 `ShapeObject`로 변환되며, `ShapeKind.Ole` 열거형 값으로 구분하고 `OleData` 프로퍼티에 바이너리 데이터를 보존한다. 결과: OLE 객체가 overlay 모드(`InFrontOfText`)로 올바른 X/Y 위치 및 너비·높이로 배치되고, HWP 원본의 절대 좌표가 유지된다. (`src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 중첩 표(nested table) 지원**: HWP 파일의 표 셀 안에 중첩된 표를 올바르게 파싱·변환하도록 수정. `HwpTableCell`에 `Blocks` 프로퍼티 추가하여 단락과 중첩 표을 모두 보관. `ParseTable`에서 셀 내 `TAG_CTRL_HEADER` 컨트롤을 감지해 nested 테이블로 재귀 파싱. 변환 단계에서 `HwpTableBlock` 객체를 `Core.Table`로 변환해 `TableCell.Blocks`에 추가. 결과: 셀 안의 표들이 이제 `TableCell.Blocks` 컬렉션에 보관되어 편집·렌더링 가능. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 표 셀 마지막 단락 누락 + 텍스트 문자 필터 확장**: (a) 중첩 표 리팩터 이후 `ParseTable` 의 `TAG_LIST_HEADER` 케이스가 셀의 마지막 단락을 `Paragraphs` 리스트에만 추가하고 새 `Blocks` 리스트에는 누락하던 버그. 셀 변환 코드가 `Blocks` 기준으로 동작하므로 각 셀의 마지막 단락(=대부분의 셀에서 유일한 단락) 이 사라지던 문제. 두 리스트를 항상 동기화. (b) `ExtractHwpText` 가 한글 음절·ASCII printable 만 허용해 한국어 문서에서 자주 쓰이는 Unicode (Latin-1 supplement, General punctuation 불릿·대시·따옴표, Currency 통화, Letter-like ™©®, Number forms 로마 숫자, Arrows, Math ops, Box drawing, Geometric shapes ■●, Misc symbols ★☆, CJK 기호·구두점 、。「」, Hangul jamo ㄱㄴㅏㅣ, Halfwidth/fullwidth) 가 필터링되던 문제. 결과: 표준-공문-양식-한글-원본파일-1.hwp 의 하단 4×2 서명 표가 이제 모든 셀 텍스트(발신/직통/담당/연락처/이메일/FAX/주소) + 'ㅣ' 구분자까지 정확히 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP soft line break (U+000A) 단락 분리 지원**: PARA_TEXT 안에 U+000A 가 들어있을 때 하나의 PARA_HEADER 안에 여러 시각적 줄이 들어가는 케이스. 이전에는 0x000A 가 텍스트 필터에서 제거되어 두 줄이 한 줄로 합쳐졌다. 이제 ExtractHwpText 가 0x000A 를 `\n` 으로 보존하고, 신규 `ConvertHwpParagraphMulti` 가 `\n` 기준으로 단락을 분할(첫 줄에만 PageBreakBefore 적용, 나머지는 같은 ParaShape/CharShape 상속) 한다. 본문·머리말/꼬리말·글상자·표 셀 모두 multi 버전 호출. 결과: "위와 같이...부탁드립니다." 와 "감사합니다." 가 원본대로 두 단락으로 표시. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP soft line break 분할 시 누적 단락 여백 제거**: `ConvertHwpParagraphMulti` 가 soft line break 에서 단락을 분할할 때, 중간 줄(마지막 줄 이전의 모든 줄)들이 원본 단락의 SpaceBeforePt/SpaceAfterPt 를 그대로 상속받아 여백이 누적되는 버그. 예를 들어 SpaceAfterPt=6pt 인 단락이 3 줄로 분할되면, 각 줄마다 6pt 의 여백이 적용되어 총 18pt 의 과다 간격이 생겼다. 이제 중간 줄들은 IsIntermediateLine 플래그를 설정하고, ConvertHwpParagraph 에서 이 플래그가 true 일 때 SpaceBeforePt/SpaceAfterPt 를 모두 0 으로 설정. 결과: 협조공문 등에서 서명 표의 행(예: "주소")이 다음 페이지로 잘못 넘어가던 현상 해결. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 비-페이지 앵커 수평선(LINE) → ThematicBreakBlock 변환**: 단락·문자에 앵커된 GSO LINE 도형이 overlay ShapeObject 로 렌더링되어 완전히 잘못된 위치(페이지 상단)에 나타나던 문제. 이러한 선은 "제목:" 아래나 "첨부" 구분선 같은 본문 흐름 내 수평 구분선이다. CTRL_HEADER flags(bits 4-5) 의 anchorType 을 읽어 비-page 앵커를 감지하거나, 선 너비+X 좌표가 페이지를 초과하는 경우(xMm + wMm > 220mm) 폴백으로 감지한다. 감지된 선은 `HwpThematicBreakBlock` 을 경유해 Core `ThematicBreakBlock` 으로 변환되어 원본 위치의 본문 흐름 안에 수평선으로 표시된다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 균등 분배(distribute) 정렬 → Alignment.Distributed 올바른 매핑**: PARA_SHAPE 의 정렬 값 4(균등 분배)·5(나눔)를 `Alignment.Justify` 로 잘못 매핑하던 문제. "공 문" 같은 넓은 자간 타이틀이 일반 양쪽 맞춤으로 렌더링되어 원본과 달라졌다. 이제 값 4·5 를 `Alignment.Distributed` 로 정확히 변환한다. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **표 열 너비 가용 너비 초과 시 자동 스케일 다운**: `BuildFromBlocks`에서 계산한 `contentWDip`(페이지 콘텐츠 너비)을 `AppendBlocks` → `BuildTable` 체인으로 전달. 열 너비 합이 가용 너비를 초과하면 `scale = constraintDip / totalColWidthDip`으로 모든 열을 비례 축소. 이전에는 각 열이 픽셀 단위로 설정되면서 페이지 경계를 넘어가던 문제 해결. (`src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+
+- **HWP 표 너비 계산**: HWP 파일의 표는 저장된 전체 너비 정보가 없으므로, 모든 열 너비의 합으로 `Table.WidthMm`을 계산. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 표 병합 셀 렌더링 수정**: `ConvertHwpTable`에서 병합 셀(colspan>1)이 차지하는 점유 위치에 WPF 빈 셀을 추가하지 않도록 수정. 이전에는 HWP 파일이 병합 셀의 모든 좌표에 별도 LIST_HEADER 레코드를 기록하는 방식이라, 변환 후 각 위치에 빈 셀이 중복 생성되어 테이블이 깨져 표시되었다. 이제 시작 셀(colspan×rowspan)이 점유하는 위치를 `occupied` 집합으로 추적하고, 해당 위치는 셀 생성을 건너뛴다. 결과: Owner/Group/Other 열 병합이 포함된 퍼미션 표가 4열(병합) × 10열(개별) 구조로 올바르게 렌더링됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 표 열 너비 정확도 개선**: `ConvertHwpTable`에서 `TableColumn.WidthMm = 0`(균등 분배)으로 설정하던 것을 수정. colspan=1 셀의 너비를 우선적으로 각 열 너비로 사용하고, 미결정 열은 colspan>1 병합 셀의 너비를 균등 분할하여 보완. 결과: 각 열이 원본 HWP 파일의 실제 너비로 렌더링됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 표 셀 속성(너비·높이·배경색·테두리·내부 여백) import 정확도 대폭 개선**: KS X 5700 §4.2.10 스펙을 기반으로 LIST_HEADER 오프셋 해석 전면 수정. 이전 코드는 셀 패딩 영역(offset 24-27)을 배경색 ABGR로 오인해 핑크(#FE01FE) 등 잘못된 배경색을 셀에 적용하였다. 이제 LIST_HEADER 의 실제 오프셋 구조(24-25: cellPaddingTop, 26-27: cellPaddingBottom, 28-29: cellPaddingLeft, 30-31: cellPaddingRight, 32-33: borderFillId, 모두 uint16 HWPUNIT)를 정확히 파싱. DocInfo BORDER_FILL 레코드에서 선 종류(type)·너비(width)·색상(BBGGRR)과 배경 채움 종류(fillKind=1)·배경색(BBGGRR offset 36)을 올바르게 추출(`ParseBorderFill`). `HwpLineWidthToPt`(너비 인덱스 → pt 변환 테이블)·`HwpLineKindToStyle`(선 종류 → `BorderLineStyle`) 헬퍼 추가. `ConvertHwpTable`에서 `borderFillId`로 `docInfo.BorderFills`를 조회해 `TableCell.BackgroundColor`, `BorderTop/Left/Bottom/Right`(`CellBorderSide`)를 반영. 결과: Linux 기본명령어.hwp 표 셀 배경이 원본 회색(#F3F3F3)으로, 테두리 색이 검정(#000000)으로 올바르게 추출됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP PARA_HEADER paraShapeId 오독 수정 (글상자·표·머리말/꼬리말)**: 메인 본문(`TAG_PARA_HEADER` level=0)은 `offset 8 uint16`으로 `paraShapeId`를 올바르게 읽지만, 글상자·표 셀·머리말/꼬리말 내부 단락들은 여전히 `offset 4 uint32`(`nCtrlMask` 필드)를 `paraShapeId`로 잘못 읽어 정렬·들여쓰기·여백이 완전히 틀렸던 버그. 4곳 모두 `BitConverter.ToUInt16(payload, 8)` + payload 길이 조건 `>= 10` 으로 수정. 결과: "공문" 제목(표 셀 안)의 가운데/균등분배 정렬, 서명 표 단락 여백 등이 올바른 PARA_SHAPE 참조로 개선됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **ThematicBreakBlock 선 색상 검은색(#000000) 설정**: HWP 에서 변환된 수평선(section divider, "제목" / "첨부" 아래 선)이 회색으로 렌더링되던 문제 수정. `ThematicBreakBlock.LineColor` 를 명시적으로 `#000000` 으로 설정하여 검은색으로 표시. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`, `src/PolyDonky.Core/ThematicBreakBlock.cs`)
+
+- **Alignment.Distributed WPF 렌더링**: WPF TextAlignment 의 명시적 분배 정렬 미지원으로 인해 `Alignment.Distributed` 를 `TextAlignment.Justify` 로 렌더링하던 문제. `TextAlignment.Center` 로 변경하여 제목 등 분배 정렬 문단이 가운데 정렬로 표시되도록 개선. 완벽한 character spacing 효과(예: "공   문") 는 WPF 의 제한으로 미지원이나, 가운데 정렬로 시각적으로 보다 가깝게 근사. (`src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+
+- **HWP GSO 도형·글상자 위치 보정**: 모든 GSO 객체(도형·글상자·이미지)가 (0,0) 위치에 겹쳐 그려지던 문제 수정. SHAPE_COMPONENT 의 xPos/yPos 는 그룹 내 상대 좌표이므로 절대 위치로 사용할 수 없었음. CTRL_HEADER 의 페이로드(offset 8=xOffset, 12=yOffset, 16=height, 20=width)에서 절대 위치/크기를 읽어 적용. Test1.hwp 의 5 개 도형이 각각 다른 위치에 배치되고, Welcome to Hwp.hwp 의 표지 글상자도 올바른 위치(136.6, 25.1)에 표시됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP GSO TextBox 텍스트 추출 버그 + SHAPE_COMPONENT 오프셋 수정**: `HwpReader.ParseGsoControl` 에서 LIST_HEADER 의 자식 PARA_HEADER 가 LIST_HEADER 와 같은 레벨에 있다는 사실을 잘못 처리(레벨+1로 가정)하여 글상자 내부 텍스트가 모두 누락되던 문제 수정. 또한 RECT_COMPONENT 등 후속 shape component 가 kind=TextBox 를 kind=Rectangle 로 덮어쓰는 버그도 수정. 추가로 SHAPE_COMPONENT 페이로드의 위치/크기 오프셋이 KS X 5700 스펙과 달라 비현실적인 값(예: width=2,157,154mm)이 나오던 문제를 정정 — 올바른 오프셋: xPos@8, yPos@12, objW@24, objH@28. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP GSO (General Shape Object) 컨트롤 ID 상수 오류 수정**: `HwpReader`에서 도형·글상자·이미지 인식을 위한 GSO 컨트롤 ID 상수가 완전히 잘못되었던 문제. 상수가 `0x006F7367` (검증 실패)으로 정의되어 있었지만, 실제 파일의 GSO 컨트롤 ID는 `0x67736F20` ('gso ' big-endian). 이제 다른 제어 ID와 일치하게 `CTRL_ID_GSO = ('g' << 24) | ('s' << 16) | ('o' << 8) | ' '`로 정의. 결과: Linux 기본명령어.hwp 에서 0 → 6 개 이미지 추출, Test1.hwp 에서 0 → 5 개 도형 추출 등 대폭 개선. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWPX import 머리말/꼬리말이 본문으로 파싱되던 버그 수정**: `HwpxReader`가 `doc.Root.Descendants()`를 평탄 순회할 때 `<hp:header>`/`<hp:footer>` 안의 `<hp:p>` 요소들을 본문 단락으로 파싱하던 문제. 이제 `insideHeaderFooter` 집합을 미리 구축해 머리말/꼬리말 자손을 본문 순회에서 제외하고, 머리말/꼬리말 내용을 `section.Page.Header`/`Footer` Left/Center/Right 슬롯으로 올바르게 파싱. `ReadParagraph`와 `ReadRun` 단계에서도 `header`/`footer`/`secPr`/`colPr` 메타 ctrl 안의 텍스트를 제외. (`src/PolyDonky.Codecs.Hwpx/HwpxReader.cs`)
 
 - **각주 표시 위치 수정 — 꼬리말 영역 침범 방지 + 본문 RTB 높이 축소**: 이전 구현은 각주 패널을 RTB 아래에 임의로 추가해 꼬리말 영역을 침범했다. 수정: `PerPageDocumentSplitter` 에서 페이지별 각주를 수집한 뒤, 오프스크린 RichTextBox 로 각주 FlowDocument 를 Measure() 해 정확한 높이(`FootnoteAreaHeightDip`)를 산출. 본문 RTB 의 `BodyHeightDip` 을 각주 크기만큼 줄여 각주가 본문 영역(상·하 여백 내부) 아래쪽에만 위치하고 꼬리말 위에 표시된다. (`PerPageDocumentSplitter.cs`, `PerPageDocumentSlice.cs`, `PerPageEditorHost.cs`)
 
@@ -101,6 +187,30 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - **HTML 변환 시 절대 위치 표 드래그앤드롭 지원 안 됨**: HTML의 `position:absolute` CSS를 가진 표를 import할 때, 절대 좌표(`left`, `top`)를 파싱하지 않아 오버레이 모드에서도 올바른 위치에 배치되지 않음. 이제 `position:absolute`를 감지하면 `WrapMode=InFrontOfText`로 설정하고 `left`/`top` CSS 값을 `OverlayXMm`/`OverlayYMm`에 저장하여 드래그앤드롭으로 정상 편집 가능. (`HtmlReader.cs`)
 
 - **RTF 파일 저장 시 확장자가 `.doc`으로 기록되던 버그 수정**: `ExternalConverter.GetConverter`에서 `"doc"` 확장자가 `PolyDonky.Convert.Doc`에 매핑되어 있어 `.rtf` 파일을 저장할 때 실제 변환기가 호출되지 않던 문제. `"doc"` → `"rtf"` 매핑으로 수정. 주석·`DocWriter` XML 문서 주석도 RTF 기준으로 정정. (`ExternalConverter.cs`, `DocWriter.cs`)
+
+- **HWPX export 글상자(TextBoxObject) 누락 수정**: `HwpxWriter.AppendBlock`에서 `TextBoxObject`에 대한 케이스가 없어 빈 단락으로 폴백되던 문제. `BuildTextBoxHostingParagraph` / `BuildTextBox`를 추가하여 HWPX `hp:rect` + `hp:drawText` / `hp:subList` 구조로 올바르게 직렬화. (`src/PolyDonky.Codecs.Hwpx/HwpxWriter.cs`)
+
+- **HWPX export 플로팅 이미지 위치 오류 수정**: `BuildPicture`가 항상 `offset x="0" y="0"` + `treatAsChar="1"` 인라인 배치를 사용하여 플로팅 이미지가 원래 위치에 표시되지 않던 문제. `ImageWrapMode`가 `Inline`/`AsText`가 아닌 경우 `OverlayXMm`/`OverlayYMm`를 `hp:offset`에 반영하고, `hp:pos`를 `treatAsChar="0"` + `vertRelTo/horzRelTo="PAPER"` 앵커 배치로 변경. (`src/PolyDonky.Codecs.Hwpx/HwpxWriter.cs`)
+
+- **HWPX export 머리말/꼬리말 구조 수정 (한글에서 표시 안 되던 문제)**: `hm:masterPage` 방식 대신 실제 한글이 사용하는 `hp:ctrl`→`hp:header`/`hp:footer` 구조로 전면 교체. 머리말은 `secPr`·`colPr`와 같은 `hp:run`에 추가하고, 꼬리말은 별도 `hp:run`에 담아 첫 번째 문단에 삽입 (참조 파일 `한글_테스트1.hwpx` 구조와 일치). `masterPageCnt="0"`, `applyPageType="BOTH"`, `textWidth/Height="0"` 적용. (`src/PolyDonky.Codecs.Hwpx/HwpxWriter.cs`)
+
+- **HWPX export 머리말/꼬리말 Left/Center/Right 가로 배치**: IWPF의 Left/Center/Right 3-슬롯 구조를 별도 문단으로 쌓던 문제 수정. 2개 이상 슬롯에 내용이 있으면 `1행 3열 테두리 없는 표`(borderFill NONE)로 묶어 가로 배치 — 단일 슬롯이면 기존대로 단락 출력. 표 너비는 실제 페이지 텍스트 너비(pageW - marginLeft - marginRight)를 기반으로 계산. (`src/PolyDonky.Codecs.Hwpx/HwpxWriter.cs`)
+
+- **`.hwp` 확장자를 가진 ZIP 기반 HWPX 파일 열기 오류 수정**: `PolyDonky.Convert.Hwp`에서 `.hwp` 파일을 항상 OLE2 파서로 읽어 내부가 ZIP 기반 HWPX인 파일에서 `Invalid header signature` 오류가 발생하던 문제. 이제 파일 앞 4바이트 시그니처를 확인해 `PK` (ZIP)이면 `HwpxReader`로, 그 외(OLE2)이면 `HwpReader`로 분기. (`tools/PolyDonky.Convert.Hwp/Program.cs`)
+
+- **HWP import 본문이 전혀 추출되지 않던 버그 수정**: `HwpReader`의 BodyText 태그 ID 상수가 KS X 5700 실제 값보다 0x0E 낮게 정의되어(`TAG_PARA_HEADER=0x034` 등) 어떤 레코드도 매칭되지 않던 문제. 실제 바디텍스트 태그는 `0x042`(PARA_HEADER)부터 시작하므로 전체 17개 상수를 교정. 함께 HWP 특수 제어 코드(0x0001–0x001F, 개체 삽입 마커 등)를 필터링하는 `ExtractHwpText` 헬퍼 추가, 레벨 0 단락만 본문으로 수집(레벨 1+는 머리말/꼬리말/표 셀 안)하도록 수정, 비-GSO CTRL_HEADER 하위 레코드를 건너뛰는 `SkipToLevel` 헬퍼 추가. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWPX import 글상자 내용이 본문에 중복 등장하고 사각형 도형으로 표시되던 버그 수정**: `HwpxReader`에서 `<hp:drawText>`의 `subList` 자손이 `insideTextBox` 제외 집합에 추가되지 않아 본문 단락으로 파싱되었고, `ReadTextBox`가 `drawText` 가 아닌 부모 `shapeElem`의 직속 `subList`를 내용으로 읽어 빈 글상자를 만들던 문제. 이제 `ReadTextBox(shapeElem, drawText, ctx)` 3-인수 시그니처로 변경해 `drawText.subList`에서 내용을 올바르게 읽고, `ReadParagraph`·`ReadRun`의 제외 집합도 `"textBox"` 대신 `"drawText"` 태그로 수정. (`src/PolyDonky.Codecs.Hwpx/HwpxReader.cs`)
+
+- **HWP PARA_TEXT 페이로드 텍스트 추출 실패 (메타데이터와 혼재된 구조 처리)**: 태그 상수 교정 이후에도 `ExtractHwpText`가 PARA_TEXT 페이로드에 포함된 메타데이터(제어 구조, 임베디드 카운트)와 실제 UTF-16 LE 텍스트를 구분하지 못해, 중국어 오독 문자(`捤獥汤捯...`)로 표시되던 문제. HWP PARA_TEXT 레이아웃이 복잡(다중 섹션·카운트·메타데이터 혼합)해 정확한 구조 파싱 대신, **슬라이딩 윈도우 스캔** 알고리즘 도입: 2바이트 오프셋마다 UTF-16 LE 디코딩을 시도하고, 한글(U+AC00–U+D7AF) 또는 일반 ASCII(0x0020+) 문자의 연속 스팬을 찾아 **가장 긴 유효 텍스트**를 추출. 이로써 Welcome_to_Hwp.hwp, 한글_테스트1.hwp 등 여러 HWP 파일에서 본문 텍스트가 올바르게 인식됨. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
+- **HWP 머리글/꼬리말·표·글자/문단 속성 ingest 지원**:
+  - **머리글/꼬리말**: CTRL_HEADER 의 컨트롤 ID 가 `"head"`/`"foot"` 인 경우, 자식 PARA_HEADER + PARA_TEXT 를 추출해 `section.Page.Header.Center`/`Footer.Center` 슬롯에 배치.
+  - **표(Table)**: CTRL_HEADER `"tbl "` → TAG_TABLE 에서 행/열 수, LIST_HEADER 시퀀스에서 셀별 (row, col, colSpan, rowSpan) 추출, 셀 안의 PARA_HEADER+PARA_TEXT 를 셀 내용으로 변환. 본문 단락과 표가 등장 순서대로 보존되도록 `HwpBlock` (paragraph + table) 컬렉션 도입.
+  - **글자 속성**: `HWPTAG_CHAR_SHAPE`(0x015) DocInfo 레코드를 파싱해 폰트(한글 face_name_id), 크기(`baseSize/100`pt), 굵게·기울임·밑줄·취소선·위/아래첨자(properties 비트필드), 글자색(uint32 RGB), 장평·자간을 추출. PARA_CHAR_SHAPE(0x044) 의 첫 번째 charShapeId 를 단락 전체에 적용.
+  - **문단 속성**: `HWPTAG_PARA_SHAPE`(0x019) 파싱으로 정렬(`alignment` bits 2-4: left/right/center/justify), 들여쓰기(left/right/firstLine), 줄간격 계수, 단락 위/아래 여백을 추출. PARA_HEADER payload[4-7] 의 paraShapeId 로 단락에 적용.
+  - **FACE_NAME 파싱 수정**: `HWPTAG_FACE_NAME`(0x013) 의 3바이트 헤더(properties + nameLen) 를 건너뛰고 UTF-16 LE 폰트 이름을 추출하도록 수정 (이전엔 전체 페이로드를 통째로 디코딩해 폰트명 앞에 쓰레기 문자가 붙던 문제).
+  - 글상자/도형/이미지 의 GSO 컨트롤은 기존 구현 유지. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **LibreOfficeBridge 및 LibreOfficeLocator 제거**: LibreOffice 미사용 결정에 따라 `LibreOfficeBridge.cs`, `LibreOfficeLocator.cs` 파일 삭제. `LanguageService`의 `LibreOfficePath` 프로퍼티·자동탐지·저장 로직 제거. `ExternalConverter`의 `LIBREOFFICE_PATH` 환경변수 전달 제거. `MainViewModel`의 LibreOffice 특수 오류처리 블록을 일반 `UnsupportedFormatVersionException` 처리로 통합. `SettingsWindow` LibreOffice 섹션(UI·핸들러) 제거. 관련 리소스 키 14개 삭제. (`LibreOfficeBridge.cs`, `LibreOfficeLocator.cs`, `LanguageService.cs`, `ExternalConverter.cs`, `MainViewModel.cs`, `SettingsWindow.xaml`, `SettingsWindow.xaml.cs`, `Resources.resx`, `Resources.en-US.resx`)
 - **ContainerRole.Group 열거값 추가**: SVG 분해 그룹 및 수동 블록 묶기에 사용하는 `Group` 역할 힌트. 렌더 시 얇은 파란 테두리(1px)로 시각 구분. (`ContainerBlock.cs`, `FlowDocumentBuilder.cs`)

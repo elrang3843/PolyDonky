@@ -57,6 +57,7 @@ Console.CancelKeyPress += (_, e) =>
 // ── 인자 파싱 ────────────────────────────────────────────────────────
 var positional = new List<string>(2);
 bool fragmentOut = false;
+bool debugLog    = false;
 string? titleOut = null;
 
 for (int i = 0; i < args.Length; i++)
@@ -72,6 +73,10 @@ for (int i = 0; i < args.Length; i++)
             return ConverterExitCodes.Ok;
         case "--fragment":
             fragmentOut = true;
+            break;
+        case "--debug" or "-d" or "DEBUG":
+            debugLog = true;
+            Console.Error.WriteLine("[DEBUG] 진단 로그 활성화");
             break;
         case "--title":
             if (i + 1 >= args.Length)
@@ -280,33 +285,39 @@ try
 catch (FileNotFoundException ex)
 {
     Console.Error.WriteLine($"파일을 찾을 수 없습니다: {ex.FileName ?? inPath}");
+    if (debugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (DirectoryNotFoundException ex)
 {
     Console.Error.WriteLine($"디렉터리를 찾을 수 없습니다: {ex.Message}");
+    if (debugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (UnauthorizedAccessException ex)
 {
     Console.Error.WriteLine($"권한 거부: {ex.Message}");
+    if (debugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (DecoderFallbackException ex)
 {
     Console.Error.WriteLine(
         $"문자열 디코딩 실패 (감지된 인코딩 {encLabel} 으로는 일부 바이트를 변환할 수 없음): {inPath}\n  세부: {ex.Message}");
+    if (debugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.ConvertError;
 }
 catch (System.IO.InvalidDataException ex)
 {
     Console.Error.WriteLine(
         $"파일 형식이 유효하지 않습니다: {inPath}\n  세부: {ex.Message}");
+    if (debugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.ConvertError;
 }
 catch (IOException ex)
 {
     Console.Error.WriteLine($"I/O 실패: {ex.Message}");
+    if (debugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (Exception ex)

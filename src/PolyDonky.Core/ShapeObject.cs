@@ -17,6 +17,7 @@ public enum ShapeKind
     Star,
     Polygon,
     ClosedSpline,
+    Ole,  // OLE object (binary data embedded)
 }
 
 /// <summary>선 종류 (실선·파선·점선·일점쇄선).</summary>
@@ -81,7 +82,7 @@ public sealed class ShapePoint
 ///   <item>Star : <see cref="SideCount"/> (뾰족 수) + <see cref="InnerRadiusRatio"/> 로 결정.</item>
 /// </list>
 /// </summary>
-public sealed class ShapeObject : Block, IOverlayAnchored
+public sealed class ShapeObject : Block, IParaAnchoredOverlay
 {
     // Line = 0 (enum default) 인 도형이 WhenWritingDefault 정책으로 JSON 에서 누락되어
     // 역직렬화 시 Rectangle(C# 기본값) 로 복원되던 버그 → 항상 직렬화하도록 명시.
@@ -112,6 +113,16 @@ public sealed class ShapeObject : Block, IOverlayAnchored
 
     /// <summary>오버레이 모드 Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
+
+    /// <summary>
+    /// HWP 단락 기준 앵커링(VertRel=paragraph) 시 앵커 단락의 Section.Blocks 인덱스.
+    /// -1 이면 단락 앵커링 없음. FlowDocumentPaginationAdapter.Paginate() 가 OverlayYMm 으로
+    /// 확정하면 다시 -1 로 재설정된다.
+    /// </summary>
+    public int AnchorParagraphBlockIndex { get; set; } = -1;
+
+    /// <summary>HWP 단락 기준 앵커링 시 앵커 단락 상단으로부터의 Y 오프셋 (mm).</summary>
+    public double AnchorRelativeYMm { get; set; }
 
     /// <summary>꼭짓점·제어점 목록 (mm, 바운딩 박스 좌상단 기준). Line/Polyline/Spline/Triangle 에 사용.</summary>
     public IList<ShapePoint> Points { get; set; } = new List<ShapePoint>();
@@ -213,4 +224,27 @@ public sealed class ShapeObject : Block, IOverlayAnchored
 
     /// <summary>아래 여백 (mm).</summary>
     public double MarginBottomMm { get; set; }
+
+    /// <summary>OLE 객체 바이너리 데이터 (Kind = Ole 인 경우만 사용). 무손실 보존용.</summary>
+    public byte[]? OleData { get; set; }
+
+    // ── Chart 데이터 (HWP 차트 OLE에서 추출). Kind = Ole 이고 ChartSeries 가 있으면 막대 그래프로 렌더링. ──
+
+    /// <summary>차트 X축 카테고리 라벨 (행 라벨).</summary>
+    public List<string>? ChartCategories { get; set; }
+
+    /// <summary>차트 데이터 시리즈 (각 시리즈는 카테고리 수만큼의 값을 가짐).</summary>
+    public List<ChartSeries>? ChartSeries { get; set; }
+
+    /// <summary>차트 Y축 최대값 (자동 스케일이면 null).</summary>
+    public double? ChartYMax { get; set; }
+}
+
+/// <summary>차트 데이터 시리즈 (열).</summary>
+public sealed class ChartSeries
+{
+    public string Name { get; set; } = "";
+    public List<double> Values { get; set; } = new();
+    /// <summary>시리즈 색상 (#RRGGBB). null이면 기본 팔레트 사용.</summary>
+    public string? Color { get; set; }
 }
