@@ -69,6 +69,8 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP BORDER_FILL 채우기 색상 ABGR 해석 수정**: 진단 로그로 확인된 HWP5 색상 포맷이 Windows COLORREF(BBGGRR)가 아닌 **ABGR**(low byte = alpha)임을 반영. 기존 `(color >> 24) == 0xFF` 투명도 검사는 R 바이트를 alpha로 잘못 검사해 `#FFFF00` 노란색(R=FF, G=FF, B=00, A=00)을 투명으로 판정하고 `hatchColor`로 대체하는 버그를 유발. `FormatAbgr` 함수 추가 — alpha(low byte)==0xFF인 경우만 투명으로 처리, 나머지는 올바른 #RRGGBB 추출. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
+- **HWP GSO 그리기 개체 배치 방식·위치 기준 정확 해석**: CTRL_HEADER `ctrlFlags` 비트를 실측 분석해 배치 방식을 올바르게 판정 — bit 28(자리차지)/bit 0(글자처럼 취급)이면 인라인 흐름, bit 14면 글 뒤에 배치, 셋 다 0이면 글자 앞에 배치(InFrontOfText overlay). 기존 코드는 bits 4-5를 'anchorType'으로 잘못 해석해 "글자 앞에 배치" 그림을 인라인으로 처리, 그림 높이(59mm)만큼 본문이 다음 페이지로 밀려나던 버그 수정. 또한 위치 기준(bits 8-9=HorzRel, bits 3-4=VertRel)이 '종이'(절대 좌표)가 아닌 '단/단락'(본문 영역 기준)이면 페이지 여백만큼 더해 페이지 절대 좌표로 변환. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP 단락 PARA_CHAR_SHAPE 다중 엔트리 보존**: 한 단락 내 캐릭터별로 다른 폰트·크기·색상·이탤릭 속성이 있는 경우, 기존 코드는 첫 번째 CharShapeId만 사용해 전체를 단일 Run으로 처리했으나, 이제 `(charPos, charShapeId)` 쌍 시퀀스를 `HwpParagraph.CharRuns`에 모두 수집해 텍스트를 구간별로 잘라 별도 Run을 생성. 글상자·표 셀·머리말/꼬리말·본문 모든 단락에 적용. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 도형 회전각 오류 수정**: offset 28의 값을 1/100도 단위 회전각으로 읽었으나 해당 위치는 크기 필드의 일부임 — 변환 행렬(offset 52의 cos(θ), offset 60의 sin(θ))로부터 `atan2`로 정확한 각도를 추출하도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
