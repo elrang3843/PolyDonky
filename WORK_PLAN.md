@@ -129,7 +129,7 @@ PolyDonky/
   - 용지 정보 없을 때 기본값: A4 세로, 기본 여백
 - ✅ C7 XML/XHTML5 codec — Html codec 위 polyglot serializer 완전 구현
   - XHTML5 자체 닫기 태그, XmlReader → HtmlReader 위임, 편집용지 동일 처리
-- ✅ G3 DOCX/HWPX/HTML/XML 검증 — 테스트 전 통과, HWPX 한컴 오피스 시각 검증 대기
+- ✅ G3 DOCX/HWPX/HTML/XML 검증 — 테스트 전 통과, HWPX 한컴 오피스 시각 검증 완료 (2026-05-20)
 
 ### Phase D — 외부 CLI 컨버터 분리
 - ✅ D1 tools/PolyDonky.Convert.Html — HTML ↔ IWPF CLI
@@ -181,10 +181,10 @@ PolyDonky/
 - 이해 못 한 개체를 read-only 보존, HWPX export 원형 직렬화
 
 ### Phase G — 고급 기능
-- ◑ G-Themes 다중 테마 — ThemeService 구현 완료, 테마 파일 추가 필요
+- ✅ G-Themes 다중 테마 — Light/Dark/Soft/Student/Youth/Senior 6종 완료 (2026-05-20)
 
 ### Phase H — 인스톨러 / `1.0.0` 릴리즈
-- ☐ H1 MSIX 인스톨러 패키징
+- ✅ H1 MSIX 인스톨러 패키징 — `Package.appxmanifest` + `MSIX.pubxml` + CI 워크플로 자동화 (2026-05-20)
 - ☐ G5 사용자 명시 지시 후 `1.0.0` 컷 — `[Unreleased]` → `[1.0.0]` 승격, `v1.0.0` 태그
 
 ---
@@ -213,7 +213,7 @@ PolyDonky/
 | G0 | 시작 전 | 기술 스택 승인 | ✅ 완료 |
 | G1 | Phase A 종료 | PR 리뷰 후 머지 | ✅ 완료 |
 | G2 | Phase B 시작 | Windows build/run 검증 | ✅ 완료 |
-| G3 | Phase C 종료 | HWPX·DOCX·HTML·XML 시각 검증 | ◑ HWPX writer 한컴 검증 대기 |
+| G3 | Phase C 종료 | HWPX·DOCX·HTML·XML 시각 검증 | ✅ 완료 (2026-05-20) |
 | G4 | Phase F 진입 시 | HWP/DOC 변환 노선 확정 | ✅ **LibreOffice 미사용, 자체 CLI 파서로 결정** |
 | G5 | Phase H 진입 시 | "릴리즈하자" 명시 — `1.0.0` 컷 | ☐ 미진입 |
 
@@ -230,13 +230,13 @@ PolyDonky/
 
 ### 미완료 / 다음 작업 후보
 
-1. **G3 완료** — 사용자가 PolyDonky 가 만든 `.hwpx` 를 한컴 오피스에서 열어 시각 확인. 문제가 있으면 `C6` (HWPX writer 한컴 호환 향상 — header.xml 동적 charPr/paraPr 생성) 진행.
+1. ~~**G3 완료**~~ ✅ 완료 (2026-05-20) — HWPX·DOCX·HTML·XML·App.Tests 모두 사용자 검증 통과.
 
 2. ~~**E19 목차 자동 생성**~~ ✅ 완료.
 
 3. **F2 HWP ingest** — v1.0.0 이후. 자체 CLI 파서(`tools/PolyDonky.Convert.Hwp`) 구현.
 
-4. **H1 MSIX 인스톨러** — 1.0.0 릴리즈 전 패키징.
+4. ~~**H1 MSIX 인스톨러**~~ ✅ 완료 (2026-05-20) — `Package.appxmanifest` + 게시 프로파일 + CI 워크플로.
 
 ### 알려진 한계·주의사항
 
@@ -248,6 +248,7 @@ PolyDonky/
 
 ### 사용자 작업이 필요한 항목
 
-- [ ] **G3 HWPX writer 검증**: Windows 에서 PolyDonky 로 문서 작성 → `.hwpx` 저장 → 한컴 오피스에서 열어 본문·서식·표·이미지가 정상 표시되는지 확인.
-- [ ] **G3 HTML/XML import 검증**: 외부 HTML 문서(웹 기사, 메모장 HTML 등)를 드래그&드롭 또는 열기 → 화면 표시 + IWPF 저장 + 재열기 라운드트립 확인.
-- [ ] **App.Tests 검증**: Windows 에서 `dotnet test tests/PolyDonky.App.Tests` — WPF 전용 단위 테스트 그린 확인.
+- [x] **G3 HWPX writer 검증**: 완료 (2026-05-20)
+- [x] **G3 HTML/XML import 검증**: 완료 (2026-05-20)
+- [x] **App.Tests 검증**: 완료 (2026-05-20)
+- [ ] **H1 MSIX 인스톨러 검증**: Windows 에서 MSIX 설치 → 앱 실행 확인.

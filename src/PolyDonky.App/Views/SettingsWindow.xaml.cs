@@ -13,9 +13,12 @@ public partial class SettingsWindow : Window
         // 현재 테마 반영
         switch (ThemeService.Current)
         {
-            case ThemeService.Theme.Dark: ThemeDark.IsChecked  = true; break;
-            case ThemeService.Theme.Soft: ThemeSoft.IsChecked  = true; break;
-            default:                      ThemeLight.IsChecked = true; break;
+            case ThemeService.Theme.Dark:    ThemeDark.IsChecked    = true; break;
+            case ThemeService.Theme.Soft:    ThemeSoft.IsChecked    = true; break;
+            case ThemeService.Theme.Student: ThemeStudent.IsChecked = true; break;
+            case ThemeService.Theme.Youth:   ThemeYouth.IsChecked   = true; break;
+            case ThemeService.Theme.Senior:  ThemeSenior.IsChecked  = true; break;
+            default:                         ThemeLight.IsChecked   = true; break;
         }
 
         // 현재 언어 반영
@@ -30,10 +33,13 @@ public partial class SettingsWindow : Window
 
     private void OnThemeChecked(object sender, RoutedEventArgs e)
     {
-        if (ThemeDark is null || ThemeSoft is null) return;
+        if (ThemeDark is null || ThemeSoft is null || ThemeStudent is null || ThemeYouth is null || ThemeSenior is null) return;
 
-        var theme = ThemeDark.IsChecked == true ? ThemeService.Theme.Dark
-                  : ThemeSoft.IsChecked == true ? ThemeService.Theme.Soft
+        var theme = ThemeDark.IsChecked    == true ? ThemeService.Theme.Dark
+                  : ThemeSoft.IsChecked    == true ? ThemeService.Theme.Soft
+                  : ThemeStudent.IsChecked == true ? ThemeService.Theme.Student
+                  : ThemeYouth.IsChecked   == true ? ThemeService.Theme.Youth
+                  : ThemeSenior.IsChecked  == true ? ThemeService.Theme.Senior
                   : ThemeService.Theme.Light;
         ThemeService.Apply(theme);
         LanguageService.SaveTheme(theme);

@@ -124,4 +124,32 @@
     <EmbeddedResource Update="Properties\Resources.en-US.resx" />
   </ItemGroup>
 
+  <!-- MSIX 패키징용 로고 에셋 (WindowsPackageType=MSIX 일 때만 복사).
+       Package.appxmanifest 에서 참조하는 경로와 일치해야 한다.
+       실제 배포 전에 권장 크기의 PNG 로 교체: Square44x44Logo(44×44),
+       Square150x150Logo(150×150), Wide310x150Logo(310×150),
+       StoreLogo(50×50), SplashScreen(620×300). -->
+  <ItemGroup Condition="'$(WindowsPackageType)'=='MSIX'">
+    <Content Include="..\..\assets\PolyDonky_1024.png">
+      <Link>Assets\Square150x150Logo.png</Link>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\PolyDonky_1024.png">
+      <Link>Assets\Square44x44Logo.png</Link>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\PolyDonky_1024.png">
+      <Link>Assets\Wide310x150Logo.png</Link>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\PolyDonky_1024.png">
+      <Link>Assets\StoreLogo.png</Link>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\PolyDonky_1024.png">
+      <Link>Assets\SplashScreen.png</Link>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

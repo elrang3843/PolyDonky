@@ -50,6 +50,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **DOCX OOXML 차트 추출 & 막대 그래프 렌더링**: DOCX의 DrawingML 차트(`<c:chart r:id="...">`)가 `[보존된 도형]` OpaqueBlock으로만 보존되던 한계를 개선 — `DocxReader.TryExtractChart`가 `ChartPart`에서 `chart*.xml`을 로드해 `c:ser`/`c:cat`/`c:val` 캐시의 실제 숫자값·라벨·시리즈 색상(`c:spPr/a:srgbClr`)을 추출하고 `ShapeObject(Kind=Ole, ChartSeries=...)`로 변환. HWP와 동일한 `FlowDocumentBuilder.BuildBarChart` 파이프라인을 재사용해 막대 그래프로 렌더링. OOXML은 캐시 값이 평문이라 HCH와 달리 **실제 데이터 값이 정확히 보존**됨. (`src/PolyDonky.Codecs.Docx/DocxReader.cs`)
 - **HWP OLE 차트 미리보기 막대 그래프 렌더링**: HWP의 OLE 차트(Hancom Chart, HCH 포맷)에는 미리보기 이미지가 내장되지 않아 `[OLE]` placeholder만 표시되던 한계를 개선 — `ShapeObject`에 `ChartCategories`/`ChartSeries`/`ChartYMax` 필드 추가, `HwpChartParser`에서 OLE 바이너리의 EUC-KR 인코딩된 "행N"/"열N" 라벨을 휴리스틱 스캔으로 추출, `FlowDocumentBuilder.BuildBarChart`에서 그리드라인·축·그룹 막대·범례를 갖춘 막대 그래프로 렌더링. 실제 데이터 값은 HCH 포맷 사양 비공개로 추출이 어려워 placeholder 값을 사용 (라벨은 정확). (`src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.Codecs.Hwp/HwpChartParser.cs`, `src/PolyDonky.App/Services/FlowDocumentBuilder.cs`)
+- **학생·청년·장년 테마 추가**: `Themes/Student.xaml`(보라 계열), `Themes/Youth.xaml`(청록 계열), `Themes/Senior.xaml`(고대비 갈색 계열) 3종 추가. `ThemeService.Theme` 열거형에 `Student`/`Youth`/`Senior` 값 추가, `SettingsWindow`에 라디오 버튼 3개 추가, 한국어·영어 리소스 문자열 갱신. (`src/PolyDonky.App/Themes/`, `src/PolyDonky.App/Services/ThemeService.cs`, `src/PolyDonky.App/Views/SettingsWindow.xaml`)
+- **MSIX 패키징 구성**: `Package.appxmanifest` (Windows 10 1809+, x64 셀프-컨테이너), 게시 프로파일 `Properties/PublishProfiles/MSIX.pubxml`, MSIX용 로고 에셋 `<Content>` 항목 추가. `dotnet publish -p:PublishProfile=MSIX` 한 줄로 MSIX 생성 가능. (`src/PolyDonky.App/Package.appxmanifest`, `src/PolyDonky.App/PolyDonky.App.csproj`)
+- **CI 워크플로 현행화**: `dotnet-desktop.yml` — SDK `10.0.x` 고정, WAP 프로젝트 방식 제거 후 단일 프로젝트 MSIX 방식(`dotnet publish -p:PublishProfile=MSIX`)으로 전환, 서명 옵션 추가(secret 설정 시 자동 활성). `dotnet.yml` — SDK `8.0.x` → `10.0.x` 업데이트, `EnableWindowsTargeting` 플래그 추가. (`.github/workflows/`)
 
 ### Fixed
 
