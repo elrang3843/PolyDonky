@@ -1,8 +1,9 @@
-name: WPF Desktop Build & MSIX
+name: WPF Desktop Build & Release
 
 on:
   push:
     branches: [ "main" ]
+    tags:     [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -46,37 +47,55 @@ jobs:
           dotnet test tests\PolyDonky.App.Tests\PolyDonky.App.Tests.csproj
           -c ${{ matrix.configuration }} --no-build --verbosity normal
 
-      # MSIX 패키지 생성 — Release 빌드에서만 수행
-      - name: Publish MSIX (Release only)
-        if: matrix.configuration == 'Release'
+  release:
+    # v* 태그 푸시 시에만 실행
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    env:
+      App_Project: src\PolyDonky.App\PolyDonky.App.csproj
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore $env:App_Project
+
+      - name: Publish portable (self-contained, win-x64)
         run: >
           dotnet publish $env:App_Project
-          -p:PublishProfile=MSIX
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish\PolyDonky
           --no-restore
-          -v normal
 
-      # 서명 (옵션 — GitHub secret 이 설정된 경우에만 활성)
-      - name: Sign MSIX
-        if: matrix.configuration == 'Release' && env.BASE64_ENCODED_PFX != ''
-        env:
-          BASE64_ENCODED_PFX: ${{ secrets.Base64_Encoded_Pfx }}
-          PFX_KEY: ${{ secrets.Pfx_Key }}
+      - name: Create ZIP
         run: |
-          $pfxBytes = [System.Convert]::FromBase64String($env:BASE64_ENCODED_PFX)
-          $pfxPath  = Join-Path $env:TEMP "SigningCert.pfx"
-          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+          $tag    = "${{ github.ref_name }}"
+          $name   = "PolyDonky-$tag-win-x64"
+          Compress-Archive -Path publish\PolyDonky\* -DestinationPath "$name.zip"
+          echo "ZIP_NAME=$name" >> $env:GITHUB_ENV
 
-          $msixPath = Get-ChildItem -Recurse -Filter "*.msix" | Select-Object -First 1 -ExpandProperty FullName
-          if ($msixPath) {
-            & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" sign `
-              /fd SHA256 /p7ce DetachedSignedData /p "$env:PFX_KEY" /f "$pfxPath" "$msixPath"
-          }
-          Remove-Item $pfxPath -Force
-
-      - name: Upload MSIX artifact
-        if: matrix.configuration == 'Release'
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release and upload ZIP
+        uses: softprops/action-gh-release@v2
         with:
-          name: PolyDonky-MSIX-x64
-          path: "**/*.msix"
-          if-no-files-found: warn
+          name: "PolyDonky ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: "${{ env.ZIP_NAME }}.zip"
