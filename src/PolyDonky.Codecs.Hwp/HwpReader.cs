@@ -1764,17 +1764,16 @@ public sealed class HwpReader : IDocumentReader
                     int anchorStartIdx = section.Blocks.Count;
                     foreach (var para in ConvertHwpParagraphMulti(pb.Paragraph, docInfo))
                         section.Blocks.Add(para);
-                    // 앵커 단락 발견 → 대기 중인 이미지에 인덱스 기록
-                    if (pb.Paragraph.HasGsoAnchor && pendingParaAnchoredImages.Count > 0
-                        && section.Blocks.Count > anchorStartIdx)
+                    // 앵커 단락 발견 → 대기 중인 이미지에 인덱스 기록.
+                    // 앵커 단락은 보통 텍스트 없는 GSO 전용 단락이라 ConvertHwpParagraphMulti
+                    // 가 스킵한다 → anchorStartIdx 는 그 다음 실제 블록을 가리키게 된다.
+                    // 스킵된 단락은 레이아웃 높이 0 이므로 다음 블록이 앵커 단락 위치에서
+                    // 시작하며, 그 블록의 Y 가 곧 앵커 단락의 Y 와 같다.
+                    if (pb.Paragraph.HasGsoAnchor && pendingParaAnchoredImages.Count > 0)
                     {
                         foreach (var pi in pendingParaAnchoredImages)
                             pi.AnchorParagraphBlockIndex = anchorStartIdx;
                         pendingParaAnchoredImages.Clear();
-                    }
-                    else if (pb.Paragraph.HasGsoAnchor)
-                    {
-                        pendingParaAnchoredImages.Clear(); // 앵커 단락이지만 대기 이미지 없음
                     }
                     break;
                 }

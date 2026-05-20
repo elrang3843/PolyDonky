@@ -1614,15 +1614,17 @@ public static class FlowDocumentPaginationAdapter
                 if (img.AnchorParagraphBlockIndex < 0) continue;
 
                 int anchorIdx = img.AnchorParagraphBlockIndex;
-                // Sentinel -2 = anchor paragraph index not yet determined (anchor para was empty/suppressed)
-                if (anchorIdx < 0 || anchorIdx >= section.Blocks.Count)
-                {
-                    img.AnchorParagraphBlockIndex = -1;
+                img.AnchorParagraphBlockIndex = -1; // 해소 완료(또는 실패) — 1회성
+
+                // -2 sentinel(앵커 단락 미확정) 또는 빈 섹션이면 해소 불가.
+                if (anchorIdx < 0 || section.Blocks.Count == 0)
                     continue;
-                }
+                // 앵커 단락이 문서 마지막 블록이라 그 뒤에 블록이 없으면(인덱스 범위 밖)
+                // 마지막 블록을 앵커로 사용.
+                if (anchorIdx >= section.Blocks.Count)
+                    anchorIdx = section.Blocks.Count - 1;
 
                 var anchorBlock = section.Blocks[anchorIdx];
-                img.AnchorParagraphBlockIndex = -1; // 해소 완료
 
                 if (!lookup.TryGetValue(anchorBlock, out var info))
                 {
