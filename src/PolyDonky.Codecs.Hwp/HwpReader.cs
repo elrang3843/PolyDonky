@@ -6,37 +6,52 @@ using PolyDonky.Core;
 namespace PolyDonky.Codecs.Hwp;
 
 /// <summary>
-/// HwpReader 전용 파일 로거. Debug 빌드에서만 동작한다.
-/// d:\Temp\PolyDonky-HwpReader.log 에 기록한다.
-/// Debug.WriteLine 은 외부 CLI 프로세스에서 VS 출력 창에 표시되지 않으므로
-/// 파일 로그로 대체해 진단한다.
+/// HwpReader 전용 파일 로거.
+/// <list type="bullet">
+///   <item>Debug 빌드: 항상 활성 (자동 활성화).</item>
+///   <item>Release 빌드: <see cref="Enabled"/> 를 <c>true</c> 로 설정하거나
+///     CLI 에 <c>--debug</c> 옵션을 전달해 활성화할 수 있다.</item>
+/// </list>
+/// 로그 파일: Windows → <c>d:\Temp\PolyDonky-HwpReader.log</c>,
+/// 그 외 → <c>/tmp/PolyDonky-HwpReader.log</c>
 /// </summary>
 internal static class HwpLog
 {
-#if DEBUG
     private static readonly string LogPath = Path.Combine(
         Environment.OSVersion.Platform == PlatformID.Win32NT ? @"d:\Temp" : "/tmp",
         "PolyDonky-HwpReader.log");
 
-    static HwpLog()
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.AppendAllText(LogPath, $"\n=== HwpReader session {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n");
-        }
-        catch { }
-    }
+    /// <summary>
+    /// 로그 활성화 여부. Debug 빌드에서는 항상 true.
+    /// Release 빌드에서 CLI --debug 옵션으로 런타임 활성화 가능.
+    /// </summary>
+#if DEBUG
+    public static bool Enabled { get; set; } = true;
+#else
+    public static bool Enabled { get; set; } = false;
 #endif
 
-    [System.Diagnostics.Conditional("DEBUG")]
+    private static bool _headerWritten;
+
     public static void Write(string message)
     {
-#if DEBUG
+        if (!Enabled) return;
+
+        // 첫 Write 시 세션 헤더 기록 (static ctor 대신 lazy init — Enabled 확인 후).
+        if (!_headerWritten)
+        {
+            _headerWritten = true;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+                File.AppendAllText(LogPath, $"\n=== HwpReader session {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n");
+            }
+            catch { }
+        }
+
         var line = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
         System.Diagnostics.Debug.WriteLine(line);
         try { File.AppendAllText(LogPath, line + "\n"); } catch { }
-#endif
     }
 }
 
@@ -68,6 +83,17 @@ internal static class HwpLog
 public sealed class HwpReader : IDocumentReader
 {
     public string FormatId => "hwp";
+
+    /// <summary>
+    /// 상세 진단 로그 활성화 여부.
+    /// Debug 빌드에서는 항상 true. Release 빌드에서는 기본 false이며
+    /// CLI --debug 옵션 등으로 런타임 활성화할 수 있다.
+    /// </summary>
+    public static bool EnableDebugLog
+    {
+        get => HwpLog.Enabled;
+        set => HwpLog.Enabled = value;
+    }
 
     // HWPUNIT: 1/7200 inch = 25.4/7200 mm ≈ 0.003528 mm/unit
     private const double HwpUnitToMm = 25.4 / 7200.0;

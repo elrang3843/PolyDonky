@@ -9,7 +9,7 @@ using PolyDonky.Iwpf;
 // HWPX 는 이 CLI 가 처리한다.
 //
 // 사용법:
-//   PolyDonky.Convert.Hwpx <input> <output>
+//   PolyDonky.Convert.Hwpx <input> <output> [--debug]
 //   PolyDonky.Convert.Hwpx --version | -v
 //   PolyDonky.Convert.Hwpx --help    | -h | /?
 //
@@ -42,21 +42,27 @@ Console.CancelKeyPress += (_, e) =>
     e.Cancel = false;  // 정상적으로 프로세스 종료 진행.
 };
 
-if (args.Length == 1 && (args[0] is "--version" or "-v"))
+// ── 공통 옵션 파싱 ──────────────────────────────────────────────────
+var parsed     = ConverterArgs.Parse(args);
+var positional = parsed.Positional;
+if (parsed.DebugLog)
+    Console.Error.WriteLine("[DEBUG] 진단 로그 활성화");
+
+if (positional.Length == 1 && (positional[0] is "--version" or "-v"))
 {
     Console.WriteLine("PolyDonky.Convert.Hwpx 1.0");
     return ConverterExitCodes.Ok;
 }
 
-if (args.Length == 1 && (args[0] is "--help" or "-h" or "/?"))
+if (positional.Length == 1 && (positional[0] is "--help" or "-h" or "/?"))
 {
     PrintHelp();
     return ConverterExitCodes.Ok;
 }
 
-if (args.Length != 2)
+if (positional.Length != 2)
 {
-    Console.Error.WriteLine("Usage: PolyDonky.Convert.Hwpx <input> <output>");
+    Console.Error.WriteLine("Usage: PolyDonky.Convert.Hwpx <input> <output> [--debug]");
     Console.Error.WriteLine("  Supported: .hwpx <-> .iwpf");
     Console.Error.WriteLine("  '--help' 로 자세한 도움말과 종료 코드 안내를 볼 수 있습니다.");
     return ConverterExitCodes.BadArgs;
@@ -65,8 +71,8 @@ if (args.Length != 2)
 string inPath, outPath;
 try
 {
-    inPath  = Path.GetFullPath(args[0]);
-    outPath = Path.GetFullPath(args[1]);
+    inPath  = Path.GetFullPath(positional[0]);
+    outPath = Path.GetFullPath(positional[1]);
 }
 catch (Exception ex)
 {
@@ -202,24 +208,27 @@ try
 catch (FileNotFoundException ex)
 {
     Console.Error.WriteLine($"파일을 찾을 수 없습니다: {ex.FileName ?? inPath}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (DirectoryNotFoundException ex)
 {
     Console.Error.WriteLine($"디렉터리를 찾을 수 없습니다: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (UnauthorizedAccessException ex)
 {
     Console.Error.WriteLine($"권한 거부: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (System.IO.InvalidDataException ex)
 {
-    // ZIP 내부가 손상됐거나 HWPX 가 아닌 경우.
     Console.Error.WriteLine(
         $"HWPX 컨테이너가 유효하지 않습니다 (ZIP/OPC 파싱 실패): {inPath}\n" +
         $"  세부: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.ConvertError;
 }
 catch (System.Xml.XmlException ex)
@@ -227,11 +236,13 @@ catch (System.Xml.XmlException ex)
     Console.Error.WriteLine(
         $"HWPX 내부 XML 형식이 유효하지 않습니다: {inPath}\n" +
         $"  줄 {ex.LineNumber}, 위치 {ex.LinePosition}: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.ConvertError;
 }
 catch (IOException ex)
 {
     Console.Error.WriteLine($"I/O 실패: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (Exception ex)
@@ -252,9 +263,12 @@ static void PrintHelp()
     Console.WriteLine("PolyDonky.Convert.Hwpx — HWPX ↔ IWPF 변환기");
     Console.WriteLine();
     Console.WriteLine("사용법:");
-    Console.WriteLine("  PolyDonky.Convert.Hwpx <input> <output>");
+    Console.WriteLine("  PolyDonky.Convert.Hwpx <input> <output> [--debug]");
     Console.WriteLine("  PolyDonky.Convert.Hwpx --version | -v");
     Console.WriteLine("  PolyDonky.Convert.Hwpx --help    | -h | /?");
+    Console.WriteLine();
+    Console.WriteLine("옵션:");
+    Console.WriteLine("  --debug | -d | DEBUG  예외 스택 트레이스 등 상세 진단 출력");
     Console.WriteLine();
     Console.WriteLine("변환 쌍:");
     Console.WriteLine("  *.hwpx → *.iwpf : import (HWP 2014 / HWPX 1.2 이상)");

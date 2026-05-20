@@ -10,7 +10,7 @@ using PolyDonky.Iwpf;
 // DOCX 는 이 CLI 가 처리한다.
 //
 // 사용법:
-//   PolyDonky.Convert.Docx <input> <output>
+//   PolyDonky.Convert.Docx <input> <output> [--debug]
 //   PolyDonky.Convert.Docx --version | -v
 //   PolyDonky.Convert.Docx --help    | -h | /?
 //
@@ -44,21 +44,27 @@ Console.CancelKeyPress += (_, e) =>
     e.Cancel = false;
 };
 
-if (args.Length == 1 && (args[0] is "--version" or "-v"))
+// ── 공통 옵션 파싱 ──────────────────────────────────────────────────
+var parsed     = ConverterArgs.Parse(args);
+var positional = parsed.Positional;
+if (parsed.DebugLog)
+    Console.Error.WriteLine("[DEBUG] 진단 로그 활성화");
+
+if (positional.Length == 1 && (positional[0] is "--version" or "-v"))
 {
     Console.WriteLine("PolyDonky.Convert.Docx 1.0");
     return ConverterExitCodes.Ok;
 }
 
-if (args.Length == 1 && (args[0] is "--help" or "-h" or "/?"))
+if (positional.Length == 1 && (positional[0] is "--help" or "-h" or "/?"))
 {
     PrintHelp();
     return ConverterExitCodes.Ok;
 }
 
-if (args.Length != 2)
+if (positional.Length != 2)
 {
-    Console.Error.WriteLine("Usage: PolyDonky.Convert.Docx <input> <output>");
+    Console.Error.WriteLine("Usage: PolyDonky.Convert.Docx <input> <output> [--debug]");
     Console.Error.WriteLine("  Supported: .docx <-> .iwpf");
     Console.Error.WriteLine("  '--help' 로 자세한 도움말과 종료 코드 안내를 볼 수 있습니다.");
     return ConverterExitCodes.BadArgs;
@@ -67,8 +73,8 @@ if (args.Length != 2)
 string inPath, outPath;
 try
 {
-    inPath  = Path.GetFullPath(args[0]);
-    outPath = Path.GetFullPath(args[1]);
+    inPath  = Path.GetFullPath(positional[0]);
+    outPath = Path.GetFullPath(positional[1]);
 }
 catch (Exception ex)
 {
@@ -177,16 +183,19 @@ try
 catch (FileNotFoundException ex)
 {
     Console.Error.WriteLine($"파일을 찾을 수 없습니다: {ex.FileName ?? inPath}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (DirectoryNotFoundException ex)
 {
     Console.Error.WriteLine($"디렉터리를 찾을 수 없습니다: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (UnauthorizedAccessException ex)
 {
     Console.Error.WriteLine($"권한 거부: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (OpenXmlPackageException ex)
@@ -215,6 +224,7 @@ catch (IOException ex)
 {
     // 디스크 가득·다른 프로세스의 잠금·네트워크 끊김 등.
     Console.Error.WriteLine($"I/O 실패: {ex.Message}");
+    if (parsed.DebugLog) Console.Error.WriteLine(ex.StackTrace);
     return ConverterExitCodes.IoError;
 }
 catch (Exception ex)
@@ -241,9 +251,12 @@ static void PrintHelp()
     Console.WriteLine("PolyDonky.Convert.Docx — DOCX ↔ IWPF 변환기");
     Console.WriteLine();
     Console.WriteLine("사용법:");
-    Console.WriteLine("  PolyDonky.Convert.Docx <input> <output>");
+    Console.WriteLine("  PolyDonky.Convert.Docx <input> <output> [--debug]");
     Console.WriteLine("  PolyDonky.Convert.Docx --version | -v");
     Console.WriteLine("  PolyDonky.Convert.Docx --help    | -h | /?");
+    Console.WriteLine();
+    Console.WriteLine("옵션:");
+    Console.WriteLine("  --debug | -d | DEBUG  상세 진단 로그 및 예외 스택 트레이스 출력");
     Console.WriteLine();
     Console.WriteLine("변환 쌍:");
     Console.WriteLine("  *.docx → *.iwpf : import (Word 2013 / AppVersion 15.0 이상)");
