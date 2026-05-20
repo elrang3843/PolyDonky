@@ -85,11 +85,12 @@ jobs:
           --no-restore
 
       - name: Create ZIP
+        shell: pwsh
         run: |
-          $tag    = "${{ github.ref_name }}"
-          $name   = "PolyDonky-$tag-win-x64"
+          $tag  = "${{ github.ref_name }}"
+          $name = "PolyDonky-$tag-win-x64"
           Compress-Archive -Path publish\PolyDonky\* -DestinationPath "$name.zip"
-          echo "ZIP_NAME=$name" >> $env:GITHUB_ENV
+          "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Create GitHub Release and upload ZIP
         uses: softprops/action-gh-release@v2
