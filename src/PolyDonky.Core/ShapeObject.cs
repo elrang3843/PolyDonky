@@ -114,6 +114,16 @@ public sealed class ShapeObject : Block, IOverlayAnchored
     /// <summary>오버레이 모드 Y 위치 (mm, **해당 페이지 좌상단 기준**).</summary>
     public double OverlayYMm { get; set; }
 
+    /// <summary>
+    /// HWP 단락 기준 앵커링(VertRel=paragraph) 시 앵커 단락의 Section.Blocks 인덱스.
+    /// -1 이면 단락 앵커링 없음. FlowDocumentPaginationAdapter.Paginate() 가 OverlayYMm 으로
+    /// 확정하면 다시 -1 로 재설정된다.
+    /// </summary>
+    public int AnchorParagraphBlockIndex { get; set; } = -1;
+
+    /// <summary>HWP 단락 기준 앵커링 시 앵커 단락 상단으로부터의 Y 오프셋 (mm).</summary>
+    public double AnchorRelativeYMm { get; set; }
+
     /// <summary>꼭짓점·제어점 목록 (mm, 바운딩 박스 좌상단 기준). Line/Polyline/Spline/Triangle 에 사용.</summary>
     public IList<ShapePoint> Points { get; set; } = new List<ShapePoint>();
 

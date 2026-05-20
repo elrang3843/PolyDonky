@@ -1588,8 +1588,8 @@ public static class FlowDocumentPaginationAdapter
     }
 
     /// <summary>
-    /// HWP 단락 기준 앵커링(VertRel=paragraph, <see cref="ImageBlock.AnchorParagraphBlockIndex"/> >= 0)
-    /// 이미지의 <see cref="ImageBlock.OverlayYMm"/> 을 앵커 단락의 실제 페이지 Y 로 확정한다.
+    /// HWP 단락 기준 앵커링(VertRel=paragraph) 오버레이(이미지·도형)의 OverlayYMm 을
+    /// 앵커 단락의 실제 페이지 Y 로 확정한다.
     /// </summary>
     private static void ResolveParaAnchoredImages(
         PolyDonkyument                                                              document,
@@ -1610,21 +1610,31 @@ public static class FlowDocumentPaginationAdapter
         {
             for (int bi = 0; bi < section.Blocks.Count; bi++)
             {
-                if (section.Blocks[bi] is not ImageBlock img) continue;
-                if (img.AnchorParagraphBlockIndex < 0) continue;
+                // 이미지·도형 공통: AnchorParagraphBlockIndex / AnchorRelativeYMm 추출.
+                (int idx, double relY) anchor = section.Blocks[bi] switch
+                {
+                    ImageBlock  i => (i.AnchorParagraphBlockIndex, i.AnchorRelativeYMm),
+                    ShapeObject s => (s.AnchorParagraphBlockIndex, s.AnchorRelativeYMm),
+                    _             => (-1, 0.0),
+                };
+                if (anchor.idx < 0) continue;
 
-                int anchorIdx = img.AnchorParagraphBlockIndex;
-                img.AnchorParagraphBlockIndex = -1; // 해소 완료(또는 실패) — 1회성
+                int anchorIdx = anchor.idx;
+                // 해소 완료(또는 실패) 표시 — 1회성.
+                if (section.Blocks[bi] is ImageBlock  imgClr) imgClr.AnchorParagraphBlockIndex = -1;
+                if (section.Blocks[bi] is ShapeObject shpClr) shpClr.AnchorParagraphBlockIndex = -1;
 
-                // -2 sentinel(앵커 단락 미확정) 또는 빈 섹션이면 해소 불가.
-                if (anchorIdx < 0 || section.Blocks.Count == 0)
-                    continue;
+                if (section.Blocks.Count == 0) continue;
                 // 앵커 단락이 문서 마지막 블록이라 그 뒤에 블록이 없으면(인덱스 범위 밖)
                 // 마지막 블록을 앵커로 사용.
                 if (anchorIdx >= section.Blocks.Count)
                     anchorIdx = section.Blocks.Count - 1;
 
                 var anchorBlock = section.Blocks[anchorIdx];
+                // 앵커 인덱스 블록이 곧 앵커 단락 위치(스킵된 단락 직후 블록의 상단 = 앵커 Y)면
+                // bodyLocalRect.Y(상단)를 쓴다. 역방향 fallback 으로 찾은 블록은 앵커 단락
+                // *앞* 의 블록이므로 그 하단(.Bottom)이 앵커 단락 위치에 가깝다.
+                bool usedBackwardFallback = false;
 
                 if (!lookup.TryGetValue(anchorBlock, out var info))
                 {
@@ -1642,13 +1652,27 @@ public static class FlowDocumentPaginationAdapter
                     }
                     if (anchorBlock == null || !lookup.TryGetValue(anchorBlock, out info))
                         continue; // 섹션 내 body 블록 전혀 없음 → 포기
+                    usedBackwardFallback = true;
                 }
 
-                img.AnchorPageIndex = info.pageIdx;
-                double bodyLocalYMm = info.bodyLocalRect != Rect.Empty
-                    ? FlowDocumentBuilder.DipToMm(info.bodyLocalRect.Y)
-                    : 0.0;
-                img.OverlayYMm = padTopMm + bodyLocalYMm + img.AnchorRelativeYMm;
+                double bodyLocalYMm = 0.0;
+                if (info.bodyLocalRect != Rect.Empty)
+                {
+                    bodyLocalYMm = FlowDocumentBuilder.DipToMm(
+                        usedBackwardFallback ? info.bodyLocalRect.Bottom : info.bodyLocalRect.Y);
+                }
+                double overlayYMm = padTopMm + bodyLocalYMm + anchor.relY;
+
+                if (section.Blocks[bi] is ImageBlock img)
+                {
+                    img.AnchorPageIndex = info.pageIdx;
+                    img.OverlayYMm      = overlayYMm;
+                }
+                else if (section.Blocks[bi] is ShapeObject shp)
+                {
+                    shp.AnchorPageIndex = info.pageIdx;
+                    shp.OverlayYMm      = overlayYMm;
+                }
             }
         }
     }

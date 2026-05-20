@@ -587,12 +587,15 @@ public sealed class HwpReader : IDocumentReader
         //   bit  3-4: 세로 위치 기준 (VertRel): 0=종이(paper), 1=쪽(page), 2=단락(paragraph)
         //   bit  8-9: 가로 위치 기준 (HorzRel): 0=종이(paper), 1=쪽(page), 2=단(column), 3=단락
         //   bit 14: 글 뒤에 배치 (isBehindText) — overlay behind text
-        //   bit 28: 자리차지 (HoldSpace) — 단락 흐름 내 공간 점유 (OLE 차트 등)
+        //   bit 28: 자리차지 (HoldSpace) — 본문 흐름에 공간을 점유하되 좌표로 배치 (OLE 차트 등)
         //   bits 14/28 모두 0, bit 0도 0 → 글자 앞에 배치 (InFrontOfText overlay)
         bool isBehindText = (ctrlFlags & 0x4000u)    != 0;  // bit 14
         bool holdSpace    = (ctrlFlags & 0x10000000u) != 0; // bit 28: 자리차지
         bool treatAsChar  = (ctrlFlags & 0x1u)        != 0; // bit  0: 글자처럼 취급
-        bool isInlineFlow = treatAsChar || holdSpace;
+        // '자리차지'(holdSpace)는 '글자처럼 취급'과 다르다 — 인라인 흐름에 글자로 끼우면
+        // 개체 높이만큼 본문이 밀려 뒤 콘텐츠가 다음 페이지로 넘어간다. holdSpace 개체는
+        // overlay(좌표 배치)로 두고, 인라인은 오직 treatAsChar 일 때만.
+        bool isInlineFlow = treatAsChar;
         // 위치 기준: '종이'(0) = 페이지 절대 좌표, 그 외 = 본문 영역(여백 안쪽) 기준
         uint horzRel = (ctrlFlags >> 8) & 0x3;  // bits 8-9
         uint vertRel = (ctrlFlags >> 3) & 0x3;  // bits 3-4
@@ -990,6 +993,7 @@ public sealed class HwpReader : IDocumentReader
                     CornerRadiusPct = shapeCornerRadiusPct,
                     Points = shapePoints,
                     IsInline = isInlineFlow,
+                    VertRel = vertRel,
                     LineColor   = shapeLineColor,
                     LineWidthMm = shapeLineWidthMm,
                     FillColor   = shapeFillColor,
@@ -1751,9 +1755,9 @@ public sealed class HwpReader : IDocumentReader
         var usedBinIds = new HashSet<int>();
         int nextSeqBinId = 1;
 
-        // VertRel=2(단락 기준) 이미지: 앵커 단락을 만날 때까지 대기하는 보류 목록.
+        // VertRel=2(단락 기준) 오버레이(이미지·도형): 앵커 단락을 만날 때까지 대기하는 보류 목록.
         // 앵커 단락이 section.Blocks 에 추가된 시점의 인덱스를 기록해 레이아웃 후 Y 해소에 사용.
-        var pendingParaAnchoredImages = new List<ImageBlock>();
+        var pendingParaAnchored = new List<Block>();
 
         foreach (var block in body.Blocks)
         {
@@ -1764,16 +1768,19 @@ public sealed class HwpReader : IDocumentReader
                     int anchorStartIdx = section.Blocks.Count;
                     foreach (var para in ConvertHwpParagraphMulti(pb.Paragraph, docInfo))
                         section.Blocks.Add(para);
-                    // 앵커 단락 발견 → 대기 중인 이미지에 인덱스 기록.
+                    // 앵커 단락 발견 → 대기 중인 오버레이에 인덱스 기록.
                     // 앵커 단락은 보통 텍스트 없는 GSO 전용 단락이라 ConvertHwpParagraphMulti
                     // 가 스킵한다 → anchorStartIdx 는 그 다음 실제 블록을 가리키게 된다.
                     // 스킵된 단락은 레이아웃 높이 0 이므로 다음 블록이 앵커 단락 위치에서
                     // 시작하며, 그 블록의 Y 가 곧 앵커 단락의 Y 와 같다.
-                    if (pb.Paragraph.HasGsoAnchor && pendingParaAnchoredImages.Count > 0)
+                    if (pb.Paragraph.HasGsoAnchor && pendingParaAnchored.Count > 0)
                     {
-                        foreach (var pi in pendingParaAnchoredImages)
-                            pi.AnchorParagraphBlockIndex = anchorStartIdx;
-                        pendingParaAnchoredImages.Clear();
+                        foreach (var pi in pendingParaAnchored)
+                        {
+                            if (pi is ImageBlock pimg) pimg.AnchorParagraphBlockIndex = anchorStartIdx;
+                            else if (pi is ShapeObject psh) psh.AnchorParagraphBlockIndex = anchorStartIdx;
+                        }
+                        pendingParaAnchored.Clear();
                     }
                     break;
                 }
@@ -1891,7 +1898,7 @@ public sealed class HwpReader : IDocumentReader
                         ib.AnchorPageIndex        = img.AnchorPageIndex;
                         ib.AnchorRelativeYMm      = img.YMm; // 앵커 단락 상단 기준 오프셋
                         ib.AnchorParagraphBlockIndex = -2;   // 보류 sentinel (다음 앵커 단락이 확정)
-                        pendingParaAnchoredImages.Add(ib);
+                        pendingParaAnchored.Add(ib);
                         HwpLog.Write($"[BuildDocument] Image (VertRel=para) deferred: relY={img.YMm:F1}mm, xMm={img.XMm:F1}mm");
                     }
                     else
@@ -1951,6 +1958,16 @@ public sealed class HwpReader : IDocumentReader
                         so.HAlign = cx < bodyW * 0.33 ? ImageHAlign.Left
                                   : cx > bodyW * 0.67 ? ImageHAlign.Right
                                   : ImageHAlign.Center;
+                    }
+                    // VertRel=2(단락 기준) 오버레이 도형(자리차지 OLE 차트 등): 앵커 단락
+                    // 위치를 알아야 최종 Y 를 확정 → 레이아웃 후 ResolveParaAnchoredImages 가 채움.
+                    else if (sh.VertRel == 2)
+                    {
+                        so.OverlayYMm                = 0;
+                        so.AnchorRelativeYMm         = sh.YMm;
+                        so.AnchorParagraphBlockIndex = -2;
+                        pendingParaAnchored.Add(so);
+                        HwpLog.Write($"[BuildDocument] Shape (VertRel=para) deferred: kind={sh.Kind}, relY={sh.YMm:F1}mm, xMm={sh.XMm:F1}mm");
                     }
 
                     // OLE → Chart 미리보기: Hancom Chart(HCH) 포맷에는 embedded preview image가 없으므로,
@@ -2695,6 +2712,7 @@ public sealed class HwpReader : IDocumentReader
         public int          BorderFillId { get; set; } = -1;  // SHAPE_COMPONENT 의 borderFillId (1-based)
         public bool         IsBehindText { get; set; }
         public bool         IsInline  { get; set; }  // anchorType != 0
+        public uint         VertRel   { get; set; }  // bits 3-4 of ctrlFlags: 0=paper,1=page,2=paragraph
         public double       RotationAngleDeg { get; set; }
         public ShapeArrow   StartArrow { get; set; }
         public ShapeArrow   EndArrow   { get; set; }
