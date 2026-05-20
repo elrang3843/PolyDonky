@@ -930,7 +930,9 @@ public sealed class HwpReader : IDocumentReader
         if (!isInlineFlow && body.PageDef != null)
         {
             double adjX = horzRel != 0 ? body.PageDef.MarginLeftMm : 0;
-            double adjY = vertRel != 0 ? body.PageDef.MarginTopMm  : 0;
+            // VertRel=2(단락 기준): Y 는 앵커 단락 상대값이므로 여백 보정 불필요.
+            // 실제 페이지 좌표 변환은 FlowDocumentPaginationAdapter 가 레이아웃 후 수행.
+            double adjY = vertRel == 1 ? body.PageDef.MarginTopMm  : 0;
             if (adjX != 0 || adjY != 0)
             {
                 HwpLog.Write($"[ParseGsoControl] 위치 기준 보정: ({xMm:F1},{yMm:F1}) + 여백({adjX:F1},{adjY:F1}) → ({xMm + adjX:F1},{yMm + adjY:F1})");
@@ -949,6 +951,7 @@ public sealed class HwpReader : IDocumentReader
                     BinDataId = binDataId,
                     AnchorPageIndex = anchorPageIndex,
                     IsInline = isInlineFlow,
+                    VertRel = vertRel,
                 };
                 body.Images.Add(img);
                 body.Blocks.Add(new HwpImageBlock { Image = img });
@@ -1748,14 +1751,33 @@ public sealed class HwpReader : IDocumentReader
         var usedBinIds = new HashSet<int>();
         int nextSeqBinId = 1;
 
+        // VertRel=2(단락 기준) 이미지: 앵커 단락을 만날 때까지 대기하는 보류 목록.
+        // 앵커 단락이 section.Blocks 에 추가된 시점의 인덱스를 기록해 레이아웃 후 Y 해소에 사용.
+        var pendingParaAnchoredImages = new List<ImageBlock>();
+
         foreach (var block in body.Blocks)
         {
             switch (block)
             {
                 case HwpParagraphBlock pb:
+                {
+                    int anchorStartIdx = section.Blocks.Count;
                     foreach (var para in ConvertHwpParagraphMulti(pb.Paragraph, docInfo))
                         section.Blocks.Add(para);
+                    // 앵커 단락 발견 → 대기 중인 이미지에 인덱스 기록
+                    if (pb.Paragraph.HasGsoAnchor && pendingParaAnchoredImages.Count > 0
+                        && section.Blocks.Count > anchorStartIdx)
+                    {
+                        foreach (var pi in pendingParaAnchoredImages)
+                            pi.AnchorParagraphBlockIndex = anchorStartIdx;
+                        pendingParaAnchoredImages.Clear();
+                    }
+                    else if (pb.Paragraph.HasGsoAnchor)
+                    {
+                        pendingParaAnchoredImages.Clear(); // 앵커 단락이지만 대기 이미지 없음
+                    }
                     break;
+                }
 
                 case HwpTableBlock tb:
                     var table = ConvertHwpTable(tb, docInfo);
@@ -1859,6 +1881,19 @@ public sealed class HwpReader : IDocumentReader
                         ib.HAlign = cx < bodyW * 0.33 ? ImageHAlign.Left
                                   : cx > bodyW * 0.67 ? ImageHAlign.Right
                                   : ImageHAlign.Center;
+                    }
+                    else if (img.VertRel == 2)
+                    {
+                        // 단락 기준 Y: 앵커 단락 위치를 알아야 최종 페이지 좌표를 확정할 수 있다.
+                        // FlowDocumentPaginationAdapter.Paginate() 가 레이아웃 후 OverlayYMm 을 채워준다.
+                        ib.WrapMode               = ImageWrapMode.InFrontOfText;
+                        ib.OverlayXMm             = img.XMm;
+                        ib.OverlayYMm             = 0;   // 레이아웃 후 해소됨
+                        ib.AnchorPageIndex        = img.AnchorPageIndex;
+                        ib.AnchorRelativeYMm      = img.YMm; // 앵커 단락 상단 기준 오프셋
+                        ib.AnchorParagraphBlockIndex = -2;   // 보류 sentinel (다음 앵커 단락이 확정)
+                        pendingParaAnchoredImages.Add(ib);
+                        HwpLog.Write($"[BuildDocument] Image (VertRel=para) deferred: relY={img.YMm:F1}mm, xMm={img.XMm:F1}mm");
                     }
                     else
                     {
@@ -2646,6 +2681,7 @@ public sealed class HwpReader : IDocumentReader
         public int    BinDataId { get; set; }
         public int    AnchorPageIndex { get; set; }
         public bool   IsInline  { get; set; }  // anchorType=1/2 → 인라인 흐름
+        public uint   VertRel   { get; set; }   // bits 3-4 of ctrlFlags: 0=paper,1=page,2=paragraph
     }
 
     private sealed class HwpShape

@@ -170,6 +170,10 @@ public static class FlowDocumentPaginationAdapter
         // HtmlReader 가 생성한 AnchorPageIndex=-2 ShapeObject 에 spacer 의 페이지·Y 를 반영한다.
         ResolveFlexShapeOverlays(document, bodyAssignments, geo);
 
+        // 4b. HWP 단락 기준(VertRel=paragraph) 이미지 Y 좌표 해소.
+        // AnchorParagraphBlockIndex >= 0 인 ImageBlock 에 앵커 단락의 실제 페이지 Y 를 반영한다.
+        ResolveParaAnchoredImages(document, bodyAssignments, geo);
+
         // 4. 오버레이 블록(글상자·이미지·도형·오버레이 표) 수집 — AnchorPageIndex 기준
         var overlayAssignments = CollectOverlayBlocks(document);
 
@@ -1579,6 +1583,58 @@ public static class FlowDocumentPaginationAdapter
                     imgBlock.OverlayXMm     += marginLeftMm;
                     imgBlock.OverlayYMm     += marginTopMm + currentSpacerYMm;
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// HWP 단락 기준 앵커링(VertRel=paragraph, <see cref="ImageBlock.AnchorParagraphBlockIndex"/> >= 0)
+    /// 이미지의 <see cref="ImageBlock.OverlayYMm"/> 을 앵커 단락의 실제 페이지 Y 로 확정한다.
+    /// </summary>
+    private static void ResolveParaAnchoredImages(
+        PolyDonkyument                                                              document,
+        List<(int pageIdx, int colIdx, Block coreBlock, Rect bodyLocalRect)>  bodyAssignments,
+        PageGeometry                                                            geo)
+    {
+        if (bodyAssignments.Count == 0) return;
+
+        // Core Block → 배치 결과 룩업
+        var lookup = new System.Collections.Generic.Dictionary<Block,
+            (int pageIdx, Rect bodyLocalRect)>(bodyAssignments.Count);
+        foreach (var a in bodyAssignments)
+            lookup.TryAdd(a.coreBlock, (a.pageIdx, a.bodyLocalRect));
+
+        double padTopMm = FlowDocumentBuilder.DipToMm(geo.PadTopDip);
+
+        foreach (var section in document.Sections)
+        {
+            for (int bi = 0; bi < section.Blocks.Count; bi++)
+            {
+                if (section.Blocks[bi] is not ImageBlock img) continue;
+                if (img.AnchorParagraphBlockIndex < 0) continue;
+
+                int anchorIdx = img.AnchorParagraphBlockIndex;
+                // Sentinel -2 = anchor paragraph index not yet determined (anchor para was empty/suppressed)
+                if (anchorIdx < 0 || anchorIdx >= section.Blocks.Count)
+                {
+                    img.AnchorParagraphBlockIndex = -1;
+                    continue;
+                }
+
+                var anchorBlock = section.Blocks[anchorIdx];
+                img.AnchorParagraphBlockIndex = -1; // 해소 완료
+
+                if (!lookup.TryGetValue(anchorBlock, out var info))
+                {
+                    // 앵커 단락이 레이아웃 매핑에 없음 — OverlayYMm 그대로 유지(0)
+                    continue;
+                }
+
+                img.AnchorPageIndex = info.pageIdx;
+                double bodyLocalYMm = info.bodyLocalRect != Rect.Empty
+                    ? FlowDocumentBuilder.DipToMm(info.bodyLocalRect.Y)
+                    : 0.0;
+                img.OverlayYMm = padTopMm + bodyLocalYMm + img.AnchorRelativeYMm;
             }
         }
     }
