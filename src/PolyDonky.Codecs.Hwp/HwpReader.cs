@@ -65,6 +65,7 @@ public sealed class HwpReader : IDocumentReader
 
     // HWPUNIT: 1/7200 inch = 25.4/7200 mm ≈ 0.003528 mm/unit
     private const double HwpUnitToMm = 25.4 / 7200.0;
+    private const double MmToPt      = 72.0 / 25.4;
 
     // ── DocInfo Tag ID (HWPTAG_BEGIN = 0x010) ──────────────────────────────
     private const uint TAG_DOCUMENT_PROPERTIES = 0x010;
@@ -604,6 +605,10 @@ public sealed class HwpReader : IDocumentReader
         ShapeArrow shapeEndArrow   = ShapeArrow.None;
         double shapeCornerRadiusPct = 0;
         List<(double X, double Y)>? shapePoints = null;
+        // SHAPE_COMPONENT 인라인 외곽선/채우기 (그리기 개체 고유 속성)
+        string? shapeLineColor   = null;
+        double  shapeLineWidthMm = -1;
+        string? shapeFillColor   = null;
 
         // 진단: GSO 컨트롤 자식 레코드 추적
         int gsoStartIdx = startIdx;
@@ -643,12 +648,27 @@ public sealed class HwpReader : IDocumentReader
                             }
                         }
 
-                        // borderFillId: SHAPE_COMPONENT offset 201 (uint8, 0=없음, 1+=BorderFill 1-based 인덱스)
-                        // 실측: 252-byte 페이로드 분석으로 확인된 오프셋
-                        if (shapeBorderFillId < 0 && p.Length > 201)
+                        // 인라인 외곽선/채우기 블록: 변환 행렬 뒤에 위치.
+                        // 헤더 52바이트 + 변환 행렬(48) + (스케일+회전 행렬쌍) 96 × matrixCount.
+                        // matrixCount 는 offset 50 의 UINT16.
+                        //   block+0  : lineColor  (COLORREF, 4바이트)
+                        //   block+4  : lineWidth  (UINT32, HWPUNIT)
+                        //   block+8  : lineAttr   (UINT32)
+                        //   block+13 : fillType   (UINT32, 1=단색 채우기, 0=없음)
+                        //   block+17 : faceColor  (COLORREF, 4바이트)
+                        if (p.Length >= 52)
                         {
-                            int bfId = p[201];
-                            if (bfId >= 1 && bfId <= 1024) shapeBorderFillId = bfId;
+                            int matrixCount = BitConverter.ToUInt16(p, 50);
+                            int block = 52 + 48 + matrixCount * 96;
+                            if (matrixCount is >= 1 and <= 16 && block + 21 <= p.Length)
+                            {
+                                shapeLineColor   = FormatRgb(BitConverter.ToUInt32(p, block));
+                                shapeLineWidthMm = BitConverter.ToUInt32(p, block + 4) * HwpUnitToMm;
+                                uint fillType    = BitConverter.ToUInt32(p, block + 13);
+                                if (fillType == 1)
+                                    shapeFillColor = FormatRgb(BitConverter.ToUInt32(p, block + 17));
+                                HwpLog.Write($"[SHAPE_COMPONENT] line/fill block@{block}: lineColor={shapeLineColor}, lineWidth={shapeLineWidthMm:F3}mm, fillType={fillType}, fillColor={shapeFillColor ?? "none"}");
+                            }
                         }
                         hasShape = true;
                     }
@@ -943,6 +963,9 @@ public sealed class HwpReader : IDocumentReader
                     Paragraphs = tbContent ?? new List<HwpParagraph>(),
                     AnchorPageIndex = anchorPageIndex,
                     BorderFillId = shapeBorderFillId,
+                    LineColor   = shapeLineColor,
+                    LineWidthMm = shapeLineWidthMm,
+                    FillColor   = shapeFillColor,
                 };
                 body.TextBoxes.Add(tb);
                 body.Blocks.Add(new HwpTextBoxBlock { TextBox = tb });
@@ -964,6 +987,9 @@ public sealed class HwpReader : IDocumentReader
                     CornerRadiusPct = shapeCornerRadiusPct,
                     Points = shapePoints,
                     IsInline = isInlineFlow,
+                    LineColor   = shapeLineColor,
+                    LineWidthMm = shapeLineWidthMm,
+                    FillColor   = shapeFillColor,
                 };
                 body.Shapes.Add(sh);
                 body.Blocks.Add(new HwpShapeBlock { Shape = sh });
@@ -1752,29 +1778,15 @@ public sealed class HwpReader : IDocumentReader
                         HeightMm        = tb2.HeightMm > 1 ? tb2.HeightMm : 30,
                         AnchorPageIndex = tb2.AnchorPageIndex,
                     };
-                    HwpLog.Write($"[BuildDocument] TextBox borderFillId={tb2.BorderFillId} (BorderFills.count={docInfo.BorderFills.Count})");
-                    for (int bi = 0; bi < docInfo.BorderFills.Count; bi++)
+                    // 채우기·외곽선은 SHAPE_COMPONENT 인라인 블록(그리기 개체 고유 속성)을 사용.
+                    if (!string.IsNullOrEmpty(tb2.FillColor))
+                        tbo.BackgroundColor = tb2.FillColor;
+                    if (!string.IsNullOrEmpty(tb2.LineColor) && tb2.LineWidthMm > 0)
                     {
-                        var bbf = docInfo.BorderFills[bi];
-                        HwpLog.Write($"  BorderFill[{bi+1}]: bg={bbf.BackgroundColor ?? "null"} top={bbf.TopColor ?? "null"}/k{bbf.TopKind}/w{bbf.TopWidth}");
+                        tbo.BorderColor = tb2.LineColor;
+                        tbo.BorderThicknessPt = tb2.LineWidthMm * MmToPt;
                     }
-                    if (tb2.BorderFillId >= 1 && tb2.BorderFillId - 1 < docInfo.BorderFills.Count)
-                    {
-                        var bf = docInfo.BorderFills[tb2.BorderFillId - 1];
-                        tbo.BackgroundColor = bf.BackgroundColor;
-
-                        // 4면 중 외곽선 종류가 있는 첫 번째 면을 사용.
-                        byte bk = bf.TopKind;     byte bw = bf.TopWidth;     string? bc = bf.TopColor;
-                        if (bk == 0) { bk = bf.LeftKind;   bw = bf.LeftWidth;   bc = bf.LeftColor; }
-                        if (bk == 0) { bk = bf.BottomKind; bw = bf.BottomWidth; bc = bf.BottomColor; }
-                        if (bk == 0) { bk = bf.RightKind;  bw = bf.RightWidth;  bc = bf.RightColor; }
-                        if (bk > 0 && bc != null)
-                        {
-                            tbo.BorderColor = bc;
-                            tbo.BorderThicknessPt = HwpLineWidthToPt(bw);
-                        }
-                        HwpLog.Write($"[BuildDocument] TextBox → bg={tbo.BackgroundColor ?? "null"}, border={tbo.BorderColor ?? "null"}/{tbo.BorderThicknessPt:F2}pt");
-                    }
+                    HwpLog.Write($"[BuildDocument] TextBox → bg={tbo.BackgroundColor ?? "null"}, border={tbo.BorderColor ?? "null"}/{tbo.BorderThicknessPt:F2}pt (lineWidth={tb2.LineWidthMm:F3}mm)");
                     foreach (var tp in tb2.Paragraphs)
                         foreach (var para in ConvertHwpParagraphMulti(tp, docInfo))
                             tbo.Content.Add(para);
@@ -1922,39 +1934,16 @@ public sealed class HwpReader : IDocumentReader
                         foreach (var (px, py) in sh.Points)
                             so.Points.Add(new ShapePoint { X = px, Y = py });
 
-                    if (sh.BorderFillId >= 1 && sh.BorderFillId - 1 < docInfo.BorderFills.Count)
-                    {
-                        var bf = docInfo.BorderFills[sh.BorderFillId - 1];
-                        if (!string.IsNullOrEmpty(bf.BackgroundColor))
-                            so.FillColor = bf.BackgroundColor;
-
-                        byte sKind  = bf.TopKind;
-                        byte sWidth = bf.TopWidth;
-                        string? sColor = bf.TopColor;
-                        if (sKind == 0) { sKind = bf.LeftKind;   sWidth = bf.LeftWidth;   sColor = bf.LeftColor; }
-                        if (sKind == 0) { sKind = bf.BottomKind; sWidth = bf.BottomWidth; sColor = bf.BottomColor; }
-                        if (sKind == 0) { sKind = bf.RightKind;  sWidth = bf.RightWidth;  sColor = bf.RightColor; }
-
-                        if (sKind > 0)
-                        {
-                            so.StrokeColor        = sColor ?? "#000000";
-                            so.StrokeThicknessPt  = HwpLineWidthToPt(sWidth);
-                            so.StrokeDash         = HwpLineKindToDash(sKind);
-                        }
-                        else
-                        {
-                            so.StrokeColor        = "#00000000";
-                            so.StrokeThicknessPt  = 0;
-                        }
-                        HwpLog.Write($"[BuildDocument] Shape borderFillId={sh.BorderFillId} " +
-                            $"strokeKind={sKind} strokeColor={sColor ?? "null"} strokePt={so.StrokeThicknessPt:F2} " +
-                            $"dash={so.StrokeDash} fill={so.FillColor ?? "null"}");
-                    }
-                    else
-                    {
-                        HwpLog.Write($"[BuildDocument] Shape kind={sh.Kind} borderFillId={sh.BorderFillId} " +
-                            $"(count={docInfo.BorderFills.Count}) → no fill lookup");
-                    }
+                    // 채우기·외곽선: SHAPE_COMPONENT 인라인 블록 (그리기 개체 고유 속성)
+                    if (!string.IsNullOrEmpty(sh.FillColor))
+                        so.FillColor = sh.FillColor;
+                    if (!string.IsNullOrEmpty(sh.LineColor))
+                        so.StrokeColor = sh.LineColor;
+                    if (sh.LineWidthMm > 0)
+                        so.StrokeThicknessPt = sh.LineWidthMm * MmToPt;
+                    // lineWidth==0 은 '테두리 없음'이 아니라 헤어라인 → ShapeObject 기본 두께 유지.
+                    HwpLog.Write($"[BuildDocument] Shape line/fill: lineColor={sh.LineColor ?? "null"} " +
+                        $"lineWidth={sh.LineWidthMm:F3}mm strokePt={so.StrokeThicknessPt:F2} fill={so.FillColor ?? "null"}");
                     HwpLog.Write($"[BuildDocument] Shape → kind={so.Kind} size={so.WidthMm:F1}x{so.HeightMm:F1}mm " +
                         $"pos=({so.OverlayXMm:F1},{so.OverlayYMm:F1}) rot={so.RotationAngleDeg:F1}deg " +
                         $"wrapMode={so.WrapMode} isInline={sh.IsInline} fillColor={so.FillColor ?? "null"} " +
@@ -2643,6 +2632,9 @@ public sealed class HwpReader : IDocumentReader
         public List<HwpParagraph> Paragraphs { get; set; } = new();
         public int    AnchorPageIndex { get; set; }
         public int    BorderFillId { get; set; } = -1;
+        public string? LineColor    { get; set; }   // SHAPE_COMPONENT 인라인 외곽선 색
+        public double  LineWidthMm  { get; set; } = -1;  // 외곽선 두께 (mm), -1=미설정
+        public string? FillColor    { get; set; }   // SHAPE_COMPONENT 인라인 채우기 색
     }
 
     private sealed class HwpImage
@@ -2673,6 +2665,9 @@ public sealed class HwpReader : IDocumentReader
         public ShapeArrow   EndArrow   { get; set; }
         public double       CornerRadiusPct { get; set; }     // RECT_COMPONENT roundedCornerPercent (0-100)
         public List<(double X, double Y)>? Points { get; set; }  // POLYGON/CURVE 꼭짓점 (도형 내부 좌표 mm)
+        public string?      LineColor   { get; set; }   // SHAPE_COMPONENT 인라인 외곽선 색
+        public double       LineWidthMm { get; set; } = -1;  // 외곽선 두께 (mm), -1=미설정
+        public string?      FillColor   { get; set; }   // SHAPE_COMPONENT 인라인 채우기 색
     }
 
     private record struct HwpRecord(uint TagId, uint Level, byte[] Payload);
