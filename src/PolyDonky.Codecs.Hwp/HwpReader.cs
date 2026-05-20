@@ -1755,9 +1755,9 @@ public sealed class HwpReader : IDocumentReader
         var usedBinIds = new HashSet<int>();
         int nextSeqBinId = 1;
 
-        // VertRel=2(단락 기준) 오버레이(이미지·도형): 앵커 단락을 만날 때까지 대기하는 보류 목록.
-        // 앵커 단락이 section.Blocks 에 추가된 시점의 인덱스를 기록해 레이아웃 후 Y 해소에 사용.
-        var pendingParaAnchored = new List<Block>();
+        // VertRel=2(단락 기준) 오버레이: 앵커 단락 발견 전까지 AnchorParagraphBlockIndex=-2 상태.
+        // 앵커 단락 발견 시 실제 인덱스로 교체한다.
+        var pendingParaAnchored = new List<IParaAnchoredOverlay>();
 
         foreach (var block in body.Blocks)
         {
@@ -1776,10 +1776,7 @@ public sealed class HwpReader : IDocumentReader
                     if (pb.Paragraph.HasGsoAnchor && pendingParaAnchored.Count > 0)
                     {
                         foreach (var pi in pendingParaAnchored)
-                        {
-                            if (pi is ImageBlock pimg) pimg.AnchorParagraphBlockIndex = anchorStartIdx;
-                            else if (pi is ShapeObject psh) psh.AnchorParagraphBlockIndex = anchorStartIdx;
-                        }
+                            pi.AnchorParagraphBlockIndex = anchorStartIdx;
                         pendingParaAnchored.Clear();
                     }
                     break;

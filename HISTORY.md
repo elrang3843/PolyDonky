@@ -78,6 +78,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 - **HWP 단락 PARA_CHAR_SHAPE 다중 엔트리 보존**: 한 단락 내 캐릭터별로 다른 폰트·크기·색상·이탤릭 속성이 있는 경우, 기존 코드는 첫 번째 CharShapeId만 사용해 전체를 단일 Run으로 처리했으나, 이제 `(charPos, charShapeId)` 쌍 시퀀스를 `HwpParagraph.CharRuns`에 모두 수집해 텍스트를 구간별로 잘라 별도 Run을 생성. 글상자·표 셀·머리말/꼬리말·본문 모든 단락에 적용. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
+### Internal
+
+- **단락앵커 오버레이 공통 인터페이스 `IParaAnchoredOverlay` 추출**: `AnchorParagraphBlockIndex`·`AnchorRelativeYMm` 속성이 `ImageBlock`·`ShapeObject`에 중복 선언되어 있던 것을 공통 인터페이스로 통합. `FlowDocumentPaginationAdapter.ResolveParaAnchoredImages`의 이중 타입-스위치가 인터페이스 직접 접근으로 단순화되고, `HwpReader.BuildDocument`의 보류 목록도 `List<IParaAnchoredOverlay>`로 정리됨. 보조 함수 `FindAnchorBlock` 분리. (`src/PolyDonky.Core/IParaAnchoredOverlay.cs`, `src/PolyDonky.Core/ImageBlock.cs`, `src/PolyDonky.Core/ShapeObject.cs`, `src/PolyDonky.App/Pagination/FlowDocumentPaginationAdapter.cs`, `src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
+
 - **HWP 도형 회전각 오류 수정**: offset 28의 값을 1/100도 단위 회전각으로 읽었으나 해당 위치는 크기 필드의 일부임 — 변환 행렬(offset 52의 cos(θ), offset 60의 sin(θ))로부터 `atan2`로 정확한 각도를 추출하도록 수정. (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
 
 - **HWP 도형 속성 정확도 개선**: `SHAPE_COMPONENT` 너비/높이 오프셋을 KS X 5700 기준(offset 20/24)으로 수정(이전 코드는 4바이트 밀린 24/28을 읽었음), 회전각(offset 28, 1/100도) 추출 추가, `borderFillId` sanity 범위 상향(≤1024). `RECT_COMPONENT`에서 둥근 모서리 비율(`roundedCornerPercent`) 읽기 추가(`RoundedRect` 종류 자동 선택). `LINE_COMPONENT`에서 시작/끝 화살표 유형 파싱 추가. `POLYGON_COMPONENT`·`CURVE_COMPONENT`에서 꼭짓점 좌표 배열 추출 추가. `BuildDocument`에서 `borderFill` Top/Left/Bottom/Right 테두리 중 첫 번째 Non-None을 도형 획(stroke) 색상·두께·선 종류에 올바르게 반영(이전에는 획 제거 조건만 처리하고 실제 색상·두께는 항상 기본값으로 남음). (`src/PolyDonky.Codecs.Hwp/HwpReader.cs`)

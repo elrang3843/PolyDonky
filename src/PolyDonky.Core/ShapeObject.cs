@@ -82,7 +82,7 @@ public sealed class ShapePoint
 ///   <item>Star : <see cref="SideCount"/> (뾰족 수) + <see cref="InnerRadiusRatio"/> 로 결정.</item>
 /// </list>
 /// </summary>
-public sealed class ShapeObject : Block, IOverlayAnchored
+public sealed class ShapeObject : Block, IParaAnchoredOverlay
 {
     // Line = 0 (enum default) 인 도형이 WhenWritingDefault 정책으로 JSON 에서 누락되어
     // 역직렬화 시 Rectangle(C# 기본값) 로 복원되던 버그 → 항상 직렬화하도록 명시.

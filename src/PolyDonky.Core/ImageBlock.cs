@@ -40,7 +40,7 @@ public enum ImageWrapMode
 /// 바이너리는 <see cref="Data"/> 에 직접 보관되지만, IWPF 패키징 시
 /// <see cref="ResourcePath"/> 가 채워지면 ZIP 의 resources/images/ 로 분리되고 Data 는 비워진다.
 /// </summary>
-public sealed class ImageBlock : Block, IOverlayAnchored
+public sealed class ImageBlock : Block, IParaAnchoredOverlay
 {
     /// <summary>예: "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff".</summary>
     public string MediaType { get; set; } = "application/octet-stream";

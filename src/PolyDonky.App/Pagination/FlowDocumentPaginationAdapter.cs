@@ -1610,71 +1610,58 @@ public static class FlowDocumentPaginationAdapter
         {
             for (int bi = 0; bi < section.Blocks.Count; bi++)
             {
-                // 이미지·도형 공통: AnchorParagraphBlockIndex / AnchorRelativeYMm 추출.
-                (int idx, double relY) anchor = section.Blocks[bi] switch
-                {
-                    ImageBlock  i => (i.AnchorParagraphBlockIndex, i.AnchorRelativeYMm),
-                    ShapeObject s => (s.AnchorParagraphBlockIndex, s.AnchorRelativeYMm),
-                    _             => (-1, 0.0),
-                };
-                if (anchor.idx < 0) continue;
+                if (section.Blocks[bi] is not IParaAnchoredOverlay target) continue;
+                if (target.AnchorParagraphBlockIndex < 0) continue;
 
-                int anchorIdx = anchor.idx;
-                // 해소 완료(또는 실패) 표시 — 1회성.
-                if (section.Blocks[bi] is ImageBlock  imgClr) imgClr.AnchorParagraphBlockIndex = -1;
-                if (section.Blocks[bi] is ShapeObject shpClr) shpClr.AnchorParagraphBlockIndex = -1;
+                int anchorIdx = target.AnchorParagraphBlockIndex;
+                double relY   = target.AnchorRelativeYMm;
+                target.AnchorParagraphBlockIndex = -1; // 해소 완료(1회성)
 
-                if (section.Blocks.Count == 0) continue;
-                // 앵커 단락이 문서 마지막 블록이라 그 뒤에 블록이 없으면(인덱스 범위 밖)
-                // 마지막 블록을 앵커로 사용.
                 if (anchorIdx >= section.Blocks.Count)
                     anchorIdx = section.Blocks.Count - 1;
 
-                var anchorBlock = section.Blocks[anchorIdx];
-                // 앵커 인덱스 블록이 곧 앵커 단락 위치(스킵된 단락 직후 블록의 상단 = 앵커 Y)면
-                // bodyLocalRect.Y(상단)를 쓴다. 역방향 fallback 으로 찾은 블록은 앵커 단락
-                // *앞* 의 블록이므로 그 하단(.Bottom)이 앵커 단락 위치에 가깝다.
-                bool usedBackwardFallback = false;
+                var anchorBlock = FindAnchorBlock(section, anchorIdx, lookup,
+                    out bool usedBackwardFallback, out var info);
+                if (anchorBlock == null) continue;
 
-                if (!lookup.TryGetValue(anchorBlock, out var info))
-                {
-                    // 앵커 인덱스의 블록이 오버레이 등으로 bodyAssignments에 없는 경우
-                    // (앵커 단락이 마지막이고 스킵되어 앵커 인덱스가 오버레이 블록을 가리킬 때).
-                    // 앵커 인덱스부터 역방향으로 가장 가까운 body 블록을 찾아 대용으로 사용.
-                    anchorBlock = null!;
-                    for (int k = anchorIdx; k >= 0; k--)
-                    {
-                        if (lookup.ContainsKey(section.Blocks[k]))
-                        {
-                            anchorBlock = section.Blocks[k];
-                            break;
-                        }
-                    }
-                    if (anchorBlock == null || !lookup.TryGetValue(anchorBlock, out info))
-                        continue; // 섹션 내 body 블록 전혀 없음 → 포기
-                    usedBackwardFallback = true;
-                }
-
-                double bodyLocalYMm = 0.0;
-                if (info.bodyLocalRect != Rect.Empty)
-                {
-                    bodyLocalYMm = FlowDocumentBuilder.DipToMm(
+                double bodyLocalYMm = info.bodyLocalRect == Rect.Empty ? 0.0 :
+                    FlowDocumentBuilder.DipToMm(
                         usedBackwardFallback ? info.bodyLocalRect.Bottom : info.bodyLocalRect.Y);
-                }
-                double overlayYMm = padTopMm + bodyLocalYMm + anchor.relY;
 
-                if (section.Blocks[bi] is ImageBlock img)
-                {
-                    img.AnchorPageIndex = info.pageIdx;
-                    img.OverlayYMm      = overlayYMm;
-                }
-                else if (section.Blocks[bi] is ShapeObject shp)
-                {
-                    shp.AnchorPageIndex = info.pageIdx;
-                    shp.OverlayYMm      = overlayYMm;
-                }
+                target.AnchorPageIndex = info.pageIdx;
+                target.OverlayYMm      = padTopMm + bodyLocalYMm + relY;
             }
         }
+    }
+
+    /// <summary>
+    /// anchorIdx 의 블록이 bodyAssignments 에 없으면(오버레이 블록 등) 역방향으로
+    /// 가장 가까운 body 블록을 탐색해 반환한다. 찾지 못하면 null.
+    /// </summary>
+    private static Block? FindAnchorBlock(
+        Section                                              section,
+        int                                                  anchorIdx,
+        System.Collections.Generic.Dictionary<Block, (int pageIdx, Rect bodyLocalRect)> lookup,
+        out bool                                             usedBackwardFallback,
+        out (int pageIdx, Rect bodyLocalRect)                info)
+    {
+        usedBackwardFallback = false;
+        info = default;
+
+        var block = section.Blocks[anchorIdx];
+        if (lookup.TryGetValue(block, out info))
+            return block;
+
+        // 앵커 인덱스 블록이 body 배정에 없음(오버레이 등) → 역방향 탐색
+        for (int k = anchorIdx; k >= 0; k--)
+        {
+            if (lookup.TryGetValue(section.Blocks[k], out info))
+            {
+                usedBackwardFallback = true;
+                return section.Blocks[k];
+            }
+        }
+        return null;
     }
 
     // ── 오버레이 블록 수집 ────────────────────────────────────────────────────
