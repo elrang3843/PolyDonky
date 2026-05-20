@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="Handtech.PolyDonky"
+    Publisher="CN=HANDTECH"
+    Version="1.0.0.0" />
+
+  <Properties>
+    <DisplayName>PolyDonky</DisplayName>
+    <PublisherDisplayName>HANDTECH</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 1809 (Redstone 5) 이상 — .NET 10 WPF 최소 요구사항과 일치 -->
+    <TargetDeviceFamily Name="Windows.Desktop"
+                        MinVersion="10.0.17763.0"
+                        MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="ko-KR" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="PolyDonky"
+                 Executable="PolyDonky.exe"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="PolyDonky"
+        Description="다중 포맷 워드프로세서 — HWP·HWPX·DOCX·HTML·MD·TXT 문서를 통합 관리"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"
+                         ShortName="PolyDonky" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#3F6FB6" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- 패키지된 WPF .NET 앱에 필수 -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+</Package>

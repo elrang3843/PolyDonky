@@ -1,7 +1,4 @@
-# This workflow will build a .NET project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
-
-name: .NET
+name: .NET Libraries & Tests (Linux)
 
 on:
   push:
@@ -11,18 +8,24 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 8.0.x
-    - name: Restore dependencies
-      run: dotnet restore
-    - name: Build
-      run: dotnet build --no-restore
-    - name: Test
-      run: dotnet test --no-build --verbosity normal
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore PolyDonky.sln -p:EnableWindowsTargeting=true
+
+      - name: Build (WPF 포함 — EnableWindowsTargeting)
+        run: dotnet build PolyDonky.sln -c Debug --no-restore -p:EnableWindowsTargeting=true
+
+      - name: Test (App.Tests 제외 — WPF 단위 테스트는 Windows 전용)
+        run: >
+          dotnet test PolyDonky.sln -c Debug --no-build --verbosity normal
+          --filter "FullyQualifiedName!~PolyDonky.App.Tests"
+          -p:EnableWindowsTargeting=true

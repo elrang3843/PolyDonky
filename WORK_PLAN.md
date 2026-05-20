@@ -184,7 +184,7 @@ PolyDonky/
 - ✅ G-Themes 다중 테마 — Light/Dark/Soft/Student/Youth/Senior 6종 완료 (2026-05-20)
 
 ### Phase H — 인스톨러 / `1.0.0` 릴리즈
-- ☐ H1 MSIX 인스톨러 패키징
+- ✅ H1 MSIX 인스톨러 패키징 — `Package.appxmanifest` + `MSIX.pubxml` + CI 워크플로 자동화 (2026-05-20)
 - ☐ G5 사용자 명시 지시 후 `1.0.0` 컷 — `[Unreleased]` → `[1.0.0]` 승격, `v1.0.0` 태그
 
 ---
@@ -236,7 +236,7 @@ PolyDonky/
 
 3. **F2 HWP ingest** — v1.0.0 이후. 자체 CLI 파서(`tools/PolyDonky.Convert.Hwp`) 구현.
 
-4. **H1 MSIX 인스톨러** — 1.0.0 릴리즈 전 패키징.
+4. ~~**H1 MSIX 인스톨러**~~ ✅ 완료 (2026-05-20) — `Package.appxmanifest` + 게시 프로파일 + CI 워크플로.
 
 ### 알려진 한계·주의사항
 
