@@ -44,6 +44,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+---
+
+## [1.0.0] - 2026-05-20
+
 ### Added
 
 - **CLI `--debug` 옵션**: 모든 CLI 변환기(`Convert.Hwp/Hwpx/Docx/Doc/Html/Xml`)에 `--debug | -d | DEBUG` 옵션 추가. HWP 변환기에서는 `d:\Temp\PolyDonky-HwpReader.log`(Windows) 또는 `/tmp/PolyDonky-HwpReader.log`(Linux/macOS)에 상세 파싱 로그를 기록하고, 나머지 변환기에서는 예외 스택 트레이스를 stderr에 출력. Release 빌드에서도 동작하며, Debug 빌드에서는 항상 활성. 공통 파서 `ConverterArgs` 추가(`tools/PolyDonky.Convert.Common/ConverterArgs.cs`). (`tools/PolyDonky.Convert.*/Program.cs`, `src/PolyDonky.Codecs.Hwp/HwpReader.cs`)
