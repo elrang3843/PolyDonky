@@ -496,7 +496,7 @@ public sealed class HwpReader : IDocumentReader
                                 gsoWMm = BitConverter.ToUInt32(p, 16) * HwpUnitToMm;
                                 gsoHMm = BitConverter.ToUInt32(p, 20) * HwpUnitToMm;
                             }
-                            HwpLog.Write($"[ParseSectionRecords] GSO flags=0x{gsoFlags:X8}, anchorType={(gsoFlags >> 4) & 0x3}");
+                            HwpLog.Write($"[ParseSectionRecords] GSO flags=0x{gsoFlags:X8}, holdSpace={(gsoFlags & 0x10000000u) != 0}, isBehindText={(gsoFlags & 0x4000u) != 0}");
                             // 앵커 단락 마킹: 이 단락은 GSO 앵커 전용이므로 빈 줄 생성 억제.
                             if (current != null) current.HasGsoAnchor = true;
                             // 그리기 개체(GSO): 도형/글상자/이미지
@@ -581,13 +581,18 @@ public sealed class HwpReader : IDocumentReader
         HwpShapeKind kind = HwpShapeKind.Rectangle;
         int binDataId = 0;
         int shapeBorderFillId = -1;  // SHAPE_COMPONENT 의 borderFillId (채우기 색상 참조)
-        // CTRL_HEADER flags bits:
-        //   0-2: layout type (배치방식): 0=inline/float, 1=wrap, 2=fixed, 3=in-front, 4=behind, …
-        //   4-5: anchorType: 0=page, 1=paragraph, 2=character
-        //   bit 14: isBehindText (글 뒤에 배치) — KS X 5700 §4.7.2
-        uint wrapType = ctrlFlags & 0x7;
-        bool isBehindText = (ctrlFlags & 0x4000u) != 0;  // bit 14
-        HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, wrapType={wrapType}, isBehindText={isBehindText}");
+        // CTRL_HEADER flags 비트 레이아웃 (실측 기반):
+        //   bit  0: 글자처럼 취급 (TreatAsChar) — 텍스트 흐름 내 인라인 배치
+        //   bit  4-5: 가로 위치 기준 (HorzRef): 0=단, 1=쪽, 2=종이, 3=단락
+        //   bit  8-9: 세로 위치 기준 (VertRef): 0=쪽, 1=단락, 2=줄
+        //   bit 14: 글 뒤에 배치 (isBehindText) — overlay behind text
+        //   bit 28: 자리차지 (HoldSpace) — 단락 흐름 내 공간 점유 (OLE 차트 등)
+        //   bits 14/28 모두 0, bit 0도 0 → 글자 앞에 배치 (InFrontOfText overlay)
+        bool isBehindText = (ctrlFlags & 0x4000u)    != 0;  // bit 14
+        bool holdSpace    = (ctrlFlags & 0x10000000u) != 0; // bit 28: 자리차지
+        bool treatAsChar  = (ctrlFlags & 0x1u)        != 0; // bit  0: 글자처럼 취급
+        bool isInlineFlow = treatAsChar || holdSpace;
+        HwpLog.Write($"[ParseGsoControl@{startIdx}] ctrlFlags=0x{ctrlFlags:X8}, isBehindText={isBehindText}, holdSpace={holdSpace}, treatAsChar={treatAsChar}");
         List<HwpParagraph>? tbContent = null;
 
         // 도형별 추가 속성 (도형 서브컴포넌트에서 채워짐)
@@ -857,22 +862,18 @@ public sealed class HwpReader : IDocumentReader
 
         if (!hasShape) return i;
 
-        // ── 인라인/단락 앵커 LINE → ThematicBreakBlock ─────────────────────────
-        // CTRL_HEADER flags (offset 4) 의 bits 4-5: anchorType
-        //   0 = page (절대 좌표) | 1 = paragraph (단락 기준) | 2 = character (인라인)
-        // 단락·문자 앵커된 수평 선(LINE)은 본문 흐름 안에 구분선으로 삽입해야 한다.
-        // 이러한 경우 overlay ShapeObject 로 렌더하면 위치가 완전히 틀어지므로
-        // ThematicBreakBlock 으로 변환해 인라인 흐름에 끼워 넣는다.
+        // ── 자리차지 LINE → ThematicBreakBlock ───────────────────────────────
+        // 자리차지(holdSpace) 수평선은 본문 흐름 안에 구분선으로 삽입한다.
+        // overlay ShapeObject 로 렌더하면 위치가 틀어지므로 ThematicBreakBlock 으로 변환.
         if (kind == HwpShapeKind.Line)
         {
-            uint anchorType = (ctrlFlags >> 4) & 0x3;
-            bool isNonPageAnchor = anchorType != 0;
-            // 폴백: anchorType 비트를 읽지 못한 경우에도, 넓은 수평선(넓이>100mm, 높이≈0)이
-            // 페이지 절대좌표로 배치 불가능한 좌표(너비가 페이지 밖)를 가지면 인라인으로 판단.
+            bool isNonPageAnchor = holdSpace;
+            // 폴백: holdSpace 비트가 0이어도 넓은 수평선(너비>100mm, 높이≈0)이
+            // 페이지 절대좌표 밖이면 인라인으로 판단.
             if (!isNonPageAnchor && wMm > 100 && Math.Abs(hMm) < 5 && xMm + wMm > 220)
                 isNonPageAnchor = true;
 
-            HwpLog.Write($"[ParseGsoControl] LINE anchorType={anchorType} ({(isNonPageAnchor ? "non-page → ThematicBreak" : "page → overlay")})");
+            HwpLog.Write($"[ParseGsoControl] LINE holdSpace={holdSpace} ({(isNonPageAnchor ? "inline → ThematicBreak" : "page-absolute → overlay")})");
             if (isNonPageAnchor)
             {
                 body.Blocks.Add(new HwpThematicBreakBlock());
@@ -904,13 +905,12 @@ public sealed class HwpReader : IDocumentReader
         {
             case HwpShapeKind.Picture:
             {
-                uint picAnchorType = (ctrlFlags >> 4) & 0x3;
                 var img = new HwpImage
                 {
                     XMm = xMm, YMm = yMm, WidthMm = wMm, HeightMm = hMm,
                     BinDataId = binDataId,
                     AnchorPageIndex = anchorPageIndex,
-                    IsInline = picAnchorType != 0,
+                    IsInline = isInlineFlow,
                 };
                 body.Images.Add(img);
                 body.Blocks.Add(new HwpImageBlock { Image = img });
@@ -945,7 +945,7 @@ public sealed class HwpReader : IDocumentReader
                     EndArrow = shapeEndArrow,
                     CornerRadiusPct = shapeCornerRadiusPct,
                     Points = shapePoints,
-                    IsInline = ((ctrlFlags >> 4) & 0x3) != 0,
+                    IsInline = isInlineFlow,
                 };
                 body.Shapes.Add(sh);
                 body.Blocks.Add(new HwpShapeBlock { Shape = sh });
