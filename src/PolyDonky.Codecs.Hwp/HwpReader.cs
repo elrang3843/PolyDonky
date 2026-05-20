@@ -6,12 +6,14 @@ using PolyDonky.Core;
 namespace PolyDonky.Codecs.Hwp;
 
 /// <summary>
-/// HwpReader 전용 파일 로거. d:\Temp\PolyDonky-HwpReader.log 에 기록한다.
+/// HwpReader 전용 파일 로거. Debug 빌드에서만 동작한다.
+/// d:\Temp\PolyDonky-HwpReader.log 에 기록한다.
 /// Debug.WriteLine 은 외부 CLI 프로세스에서 VS 출력 창에 표시되지 않으므로
 /// 파일 로그로 대체해 진단한다.
 /// </summary>
 internal static class HwpLog
 {
+#if DEBUG
     private static readonly string LogPath = Path.Combine(
         Environment.OSVersion.Platform == PlatformID.Win32NT ? @"d:\Temp" : "/tmp",
         "PolyDonky-HwpReader.log");
@@ -25,12 +27,16 @@ internal static class HwpLog
         }
         catch { }
     }
+#endif
 
+    [System.Diagnostics.Conditional("DEBUG")]
     public static void Write(string message)
     {
+#if DEBUG
         var line = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
         System.Diagnostics.Debug.WriteLine(line);
         try { File.AppendAllText(LogPath, line + "\n"); } catch { }
+#endif
     }
 }
 
