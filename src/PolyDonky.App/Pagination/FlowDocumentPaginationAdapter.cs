@@ -1628,8 +1628,20 @@ public static class FlowDocumentPaginationAdapter
 
                 if (!lookup.TryGetValue(anchorBlock, out var info))
                 {
-                    // 앵커 단락이 레이아웃 매핑에 없음 — OverlayYMm 그대로 유지(0)
-                    continue;
+                    // 앵커 인덱스의 블록이 오버레이 등으로 bodyAssignments에 없는 경우
+                    // (앵커 단락이 마지막이고 스킵되어 앵커 인덱스가 오버레이 블록을 가리킬 때).
+                    // 앵커 인덱스부터 역방향으로 가장 가까운 body 블록을 찾아 대용으로 사용.
+                    anchorBlock = null!;
+                    for (int k = anchorIdx; k >= 0; k--)
+                    {
+                        if (lookup.ContainsKey(section.Blocks[k]))
+                        {
+                            anchorBlock = section.Blocks[k];
+                            break;
+                        }
+                    }
+                    if (anchorBlock == null || !lookup.TryGetValue(anchorBlock, out info))
+                        continue; // 섹션 내 body 블록 전혀 없음 → 포기
                 }
 
                 img.AnchorPageIndex = info.pageIdx;
