@@ -181,7 +181,7 @@ PolyDonky/
 - 이해 못 한 개체를 read-only 보존, HWPX export 원형 직렬화
 
 ### Phase G — 고급 기능
-- ◑ G-Themes 다중 테마 — ThemeService 구현 완료, 테마 파일 추가 필요
+- ✅ G-Themes 다중 테마 — Light/Dark/Soft/Student/Youth/Senior 6종 완료 (2026-05-20)
 
 ### Phase H — 인스톨러 / `1.0.0` 릴리즈
 - ☐ H1 MSIX 인스톨러 패키징

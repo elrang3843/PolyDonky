@@ -6,7 +6,7 @@ namespace PolyDonky.App.Services;
 /// <summary>런타임 테마 전환. App.xaml 의 첫 번째 MergedDictionary 가 테마 사전이라는 규약에 의존.</summary>
 public static class ThemeService
 {
-    public enum Theme { Light, Dark, Soft }
+    public enum Theme { Light, Dark, Soft, Student, Youth, Senior }
 
     private static Theme _current = Theme.Light;
     public static Theme Current => _current;
@@ -20,9 +20,12 @@ public static class ThemeService
 
         var uri = theme switch
         {
-            Theme.Dark => new Uri("pack://application:,,,/Themes/Dark.xaml"),
-            Theme.Soft => new Uri("pack://application:,,,/Themes/Soft.xaml"),
-            _          => new Uri("pack://application:,,,/Themes/Light.xaml"),
+            Theme.Dark    => new Uri("pack://application:,,,/Themes/Dark.xaml"),
+            Theme.Soft    => new Uri("pack://application:,,,/Themes/Soft.xaml"),
+            Theme.Student => new Uri("pack://application:,,,/Themes/Student.xaml"),
+            Theme.Youth   => new Uri("pack://application:,,,/Themes/Youth.xaml"),
+            Theme.Senior  => new Uri("pack://application:,,,/Themes/Senior.xaml"),
+            _             => new Uri("pack://application:,,,/Themes/Light.xaml"),
         };
 
         var merged = Application.Current.Resources.MergedDictionaries;

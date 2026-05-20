@@ -334,6 +334,9 @@ Please save as IWPF, DOCX, Markdown, or TXT.</value></data>
   <data name="SettingsThemeLight" xml:space="preserve"><value>Light (Default)</value></data>
   <data name="SettingsThemeDark" xml:space="preserve"><value>Dark</value></data>
   <data name="SettingsThemeSoft" xml:space="preserve"><value>Soft</value></data>
+  <data name="SettingsThemeStudent" xml:space="preserve"><value>Student</value></data>
+  <data name="SettingsThemeYouth" xml:space="preserve"><value>Youth</value></data>
+  <data name="SettingsThemeSenior" xml:space="preserve"><value>Senior</value></data>
   <data name="SettingsApply" xml:space="preserve"><value>Apply</value></data>
   <data name="SettingsLanguage" xml:space="preserve"><value>Language:</value></data>
   <data name="SettingsLangKorean" xml:space="preserve"><value>한국어</value></data>

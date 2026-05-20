@@ -334,6 +334,9 @@
   <data name="SettingsThemeLight" xml:space="preserve"><value>라이트 (기본)</value></data>
   <data name="SettingsThemeDark" xml:space="preserve"><value>다크</value></data>
   <data name="SettingsThemeSoft" xml:space="preserve"><value>소프트</value></data>
+  <data name="SettingsThemeStudent" xml:space="preserve"><value>학생</value></data>
+  <data name="SettingsThemeYouth" xml:space="preserve"><value>청년</value></data>
+  <data name="SettingsThemeSenior" xml:space="preserve"><value>장년</value></data>
   <data name="SettingsApply" xml:space="preserve"><value>적용</value></data>
   <data name="SettingsLanguage" xml:space="preserve"><value>언어:</value></data>
   <data name="SettingsLangKorean" xml:space="preserve"><value>한국어 (기본)</value></data>

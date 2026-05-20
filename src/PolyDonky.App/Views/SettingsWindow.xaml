@@ -25,6 +25,15 @@
         <RadioButton x:Name="ThemeSoft"
                      Content="{Binding SettingsThemeSoft, Source={x:Static svc:LocalizedStrings.Instance}}"
                      GroupName="Theme" Margin="0,2" Checked="OnThemeChecked" />
+        <RadioButton x:Name="ThemeStudent"
+                     Content="{Binding SettingsThemeStudent, Source={x:Static svc:LocalizedStrings.Instance}}"
+                     GroupName="Theme" Margin="0,2" Checked="OnThemeChecked" />
+        <RadioButton x:Name="ThemeYouth"
+                     Content="{Binding SettingsThemeYouth, Source={x:Static svc:LocalizedStrings.Instance}}"
+                     GroupName="Theme" Margin="0,2" Checked="OnThemeChecked" />
+        <RadioButton x:Name="ThemeSenior"
+                     Content="{Binding SettingsThemeSenior, Source={x:Static svc:LocalizedStrings.Instance}}"
+                     GroupName="Theme" Margin="0,2" Checked="OnThemeChecked" />
 
         <Separator Margin="0,14,0,10" />
 
