@@ -101,8 +101,8 @@ PolyDonky는 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 | IWPF  | ✅  | ✅  | 자체 정본(canonical) 포맷                     |
 | MD    | ✅  | ✅  | 기본 내장 (Markdig)                           |
 | TXT   | ✅  | ✅  | 기본 내장                                     |
-| DOCX  | ✅  | ✅  | 1급 시민. **메인 앱 직접 처리** (DocumentFormat.OpenXml) |
-| HWPX  | ✅  | ✅  | 1급 시민. **자체 구현 (KS X 6101)**           |
+| DOCX  | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Docx` (DocumentFormat.OpenXml) |
+| HWPX  | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Hwpx` (자체 구현, KS X 6101) |
 | HTML / HTM | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Html` (AngleSharp) |
 | XML / XHTML | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Xml`       |
 | RTF   | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Doc` (자체 구현) |
@@ -151,7 +151,7 @@ PolyDonky는 외부 포맷 변환을 **독립 CLI 실행 파일**로 분리합�
 
 ### 개발 단계
 
-1. **1단계 ✅** — DOCX, HWPX 1급 지원 / IWPF 저장·로드 / 기본 편집 / HTML·XML·RTF·HWP 외부 CLI
+1. **1단계 ✅** — DOCX, HWPX 주력 포맷 지원 (외부 CLI) / IWPF 저장·로드 / 기본 편집 / HTML·XML·RTF·HWP 외부 CLI
 2. **2단계 (진행 중)** — 안정화, 고급 도형/텍스트박스, 표 편집 강화, DOC OLE2 ingest
 3. **3단계** — 변경추적, 주석, 수식, 필드/목차, 고급 표, 특수 조판
 
@@ -350,12 +350,12 @@ PolyDonky.exe (WPF / .NET 10)
    ├─ Editor / Renderer       ── 공통 의미 모델 위에서 동작 (FlowDocumentBuilder/Parser)
    ├─ Pagination              ── PerPageEditorHost / FlowDocumentPaginationAdapter
    ├─ IWPF Reader/Writer      ── ZIP 패키지 입출력 (PolyDonky.Iwpf)
-   ├─ 내장 코덱               ── MD (Markdig), TXT, DOCX (OpenXml), HWPX (자체 구현)
+   ├─ 내장 코덱               ── MD (Markdig), TXT
    └─ External Converters (CLI) ── ExternalConverter.cs 가 spawn
         ├─ PolyDonky.Convert.Html  — HTML/HTM ↔ IWPF (AngleSharp)
         ├─ PolyDonky.Convert.Xml   — XML/XHTML ↔ IWPF
-        ├─ PolyDonky.Convert.Docx  — DOCX ↔ IWPF
-        ├─ PolyDonky.Convert.Hwpx  — HWPX ↔ IWPF
+        ├─ PolyDonky.Convert.Docx  — DOCX ↔ IWPF (DocumentFormat.OpenXml)
+        ├─ PolyDonky.Convert.Hwpx  — HWPX ↔ IWPF (자체 구현, KS X 6101)
         ├─ PolyDonky.Convert.Doc   — RTF ↔ IWPF (자체 구현)
         └─ PolyDonky.Convert.Hwp   — HWP → IWPF (자체 파서)
 ```
