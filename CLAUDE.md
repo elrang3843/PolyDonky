@@ -44,7 +44,7 @@ Claude Code가 이 저장소에서 작업할 때 참고하는 가이드. 자세�
 
 ### 4. 변환 품질 목표
 - 외부 포맷 import 시 원본 레이아웃 **99% 보존** 목표.
-- HWPX ↔ IWPF ↔ DOCX 라운드트립이 1급 시민.
+- HWPX ↔ IWPF ↔ DOCX 라운드트립이 핵심 시나리오.
 
 ## IWPF 패키지 구조
 
@@ -83,7 +83,7 @@ HWPX export 시 원형에 가깝게 직렬화, DOCX export 시 시각 대체(이
 
 ## 개발 단계 (구현 순서)
 
-1. **1단계** — DOCX, HWPX **1급 시민** 지원. import/export + IWPF save/load + 기본 편집.
+1. **1단계** — DOCX, HWPX 완전 지원 (외부 CLI). import/export + IWPF save/load + 기본 편집.
 2. **2단계** — DOC, HWP **ingest 전용** 추가. 내부 포맷으로 정규화 후 출력은 HWPX/DOCX.
 3. **3단계** — 고급 기능: 변경추적, 주석, 수식, 텍스트박스/도형, 필드/목차, 고급 표, 특수 조판.
 
@@ -130,11 +130,11 @@ src/
   PolyDonky.Iwpf/             IWPF ZIP 패키지 reader/writer, manifest, 암호화, write-lock
   PolyDonky.Codecs.Text/      TXT codec
   PolyDonky.Codecs.Markdown/  MD codec (Markdig)
-  PolyDonky.Codecs.Docx/      DOCX codec (DocumentFormat.OpenXml) — 1급 시민, 메인 앱 직접 처리
-  PolyDonky.Codecs.Hwpx/      HWPX codec (자체 구현, KS X 6101) — 1급 시민
+  PolyDonky.Codecs.Docx/      DOCX codec (DocumentFormat.OpenXml) — CLI(PolyDonky.Convert.Docx) 전용
+  PolyDonky.Codecs.Hwpx/      HWPX codec (자체 구현, KS X 6101) — CLI(PolyDonky.Convert.Hwpx) 전용
   PolyDonky.Codecs.Hwp/       HWP codec stub — v1.0.0 이후 자체 파서 구현 예정
-  PolyDonky.Codecs.Html/      HTML5 codec (AngleSharp) — 메인 앱 직접 처리
-  PolyDonky.Codecs.Xml/       XML / XHTML5 codec (Codecs.Html 위에 polyglot serializer)
+  PolyDonky.Codecs.Html/      HTML5 codec (AngleSharp) — CLI(PolyDonky.Convert.Html) 전용
+  PolyDonky.Codecs.Xml/       XML / XHTML5 codec (Codecs.Html 위에 polyglot serializer) — CLI(PolyDonky.Convert.Xml) 전용
   PolyDonky.App/              WPF 데스크톱 앱 (AssemblyName=PolyDonky)
                               MVVM (CommunityToolkit.Mvvm), Views/ViewModels/Services/Themes
                               FlowDocument 기반 에디터 — FlowDocumentBuilder/Parser/Search,
