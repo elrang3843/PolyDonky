@@ -151,7 +151,7 @@ PolyDonky는 외부 포맷 변환을 **독립 CLI 실행 파일**로 분리합�
 
 ### 개발 단계
 
-1. **1단계 ✅** — DOCX, HWPX 완전 지원 (외부 CLI) / IWPF 저장·로드 / 기본 편집 / HTML·XML·RTF·HWP 외부 CLI
+1. **1단계 ✅** — DOCX, HWPX 주력 포맷 지원 (외부 CLI) / IWPF 저장·로드 / 기본 편집 / HTML·XML·RTF·HWP 외부 CLI
 2. **2단계 (진행 중)** — 안정화, 고급 도형/텍스트박스, 표 편집 강화, DOC OLE2 ingest
 3. **3단계** — 변경추적, 주석, 수식, 필드/목차, 고급 표, 특수 조판
 
