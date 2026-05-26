@@ -405,21 +405,35 @@ public class DocBinaryReader
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
         ref Table? pendingTable, ref TableRow? pendingRow)
     {
-        var (paraIstd, ps, inTable, isTtp, rgdxa) = fmt.GetParagraphInfo(paraEndFc);
+        var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps) = fmt.GetParagraphInfo(paraEndFc);
 
         // 행 종료 단락 (TTP). 비어 있고 행을 마무리하는 신호.
         if (isTtp)
         {
             pendingTable ??= new Table();
+            // Phase 2c — TTP 직전에 누적된 행 셀들에 sprmTDefTable 의 rgTc 에서 추출한
+            // 셀별 테두리를 1:1 적용.
+            if (pendingRow is not null && cellProps is not null)
+            {
+                int n = Math.Min(pendingRow.Cells.Count, cellProps.Length);
+                for (int i = 0; i < n; i++)
+                {
+                    var cell = pendingRow.Cells[i];
+                    var cp   = cellProps[i];
+                    if (cp.Top    is not null) cell.BorderTop    = cp.Top;
+                    if (cp.Left   is not null) cell.BorderLeft   = cp.Left;
+                    if (cp.Bottom is not null) cell.BorderBottom = cp.Bottom;
+                    if (cp.Right  is not null) cell.BorderRight  = cp.Right;
+                }
+            }
             if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
             pendingRow = null;
             // Phase 2b — TTP 의 PAPX 에 sprmTDefTable 가 있으면 셀 너비를 표 컬럼에 적용.
-            // rgdxaCenter[i+1] - rgdxaCenter[i] = i 번째 셀의 너비 (twips).
             if (rgdxa is { Length: > 1 } && pendingTable.Columns.Count == 0)
             {
                 for (int i = 0; i < rgdxa.Length - 1; i++)
                 {
-                    double widthMm = (rgdxa[i + 1] - rgdxa[i]) / 56.692;  // twips → mm
+                    double widthMm = (rgdxa[i + 1] - rgdxa[i]) / 56.692;
                     if (widthMm <= 0) widthMm = 0;
                     pendingTable.Columns.Add(new TableColumn { WidthMm = widthMm });
                 }
@@ -688,10 +702,12 @@ public class DocBinaryReader
         // Phase 1f — (istd, ParagraphStyle?, InTable, IsTtp) — Phase 1 기본.
         // Phase 2a — InTable / IsTtp 플래그 추가 (sprmPFInTable / sprmPFTtp).
         // Phase 2b — Rgdxa (sprmTDefTable 의 셀 boundary, twips) 추가.
-        public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp, short[]? Rgdxa) GetParagraphInfo(int paraEndFc)
+        // Phase 2c — CellProps (sprmTDefTable 의 rgTc 에서 추출한 셀 테두리) 추가.
+        public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp,
+                short[]? Rgdxa, TableCellProps[]? CellProps) GetParagraphInfo(int paraEndFc)
         {
             var papx = LoadPapx(paraEndFc);
-            if (papx is null) return (-1, null, false, false, null);
+            if (papx is null) return (-1, null, false, false, null, null);
 
             var (istd, directSprms) = papx.Value;
             var style = new ParagraphStyle();
@@ -699,6 +715,7 @@ public class DocBinaryReader
             bool inTable = false;
             bool isTtp   = false;
             short[]? rgdxa = null;
+            TableCellProps[]? cellProps = null;
 
             // 1. STSH built-in sti → Outline (Heading N → HN).
             if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
@@ -714,15 +731,15 @@ public class DocBinaryReader
                 if (_styles[chainIstd]?.PapxSprms is { Length: > 0 } chainSprms)
                 {
                     touched |= ApplyParagraphSprms(chainSprms, style);
-                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa);
+                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps);
                 }
             }
 
             // 3. 직접 PAPX sprms — 스타일 상속값을 덮어쓴다.
             touched |= ApplyParagraphSprms(directSprms, style);
-            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa);
+            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps);
 
-            return (istd, touched ? style : null, inTable, isTtp, rgdxa);
+            return (istd, touched ? style : null, inTable, isTtp, rgdxa, cellProps);
         }
 
         // [MS-DOC] 단락의 표 관련 sprm 일괄 스캔:
@@ -730,13 +747,15 @@ public class DocBinaryReader
         //   sprmPFTtp     (0x2417, 1-byte) — 단락이 행 종료 단락(TTP)인지
         //   sprmTDefTable (0xD608, variable, spra=6 2-byte length)
         //                — TTP 단락의 PAPX 에 포함. itcMac(1) + rgdxaCenter[itcMac+1] (2 byte signed each)
-        //                  + rgTc[itcMac] (20 byte each). 본 단계에서는 rgdxaCenter 만 활용.
+        //                  + rgTc[itcMac] (20 byte each, §2.9.301 TC97).
         // ref 매개변수는 람다 캡처 불가라 로컬에 모은 뒤 호출부에서 합친다.
-        private static void ScanTableProps(byte[] grpprl, ref bool inTable, ref bool isTtp, ref short[]? rgdxa)
+        private static void ScanTableProps(byte[] grpprl,
+            ref bool inTable, ref bool isTtp, ref short[]? rgdxa, ref TableCellProps[]? cellProps)
         {
             bool localIn  = inTable;
             bool localTtp = isTtp;
             short[]? localDxa = rgdxa;
+            TableCellProps[]? localCp = cellProps;
             WalkSprms(grpprl, (sprm, operand) =>
             {
                 if (sprm == 0x2416 && operand.Length >= 1) localIn = operand[0] != 0;
@@ -745,18 +764,63 @@ public class DocBinaryReader
                 {
                     if (operand.Length < 1) return;
                     int itcMac = operand[0];
-                    int needed = 1 + 2 * (itcMac + 1) + 20 * itcMac;
+                    int dxaBase  = 1;
+                    int tcBase   = 1 + 2 * (itcMac + 1);
+                    int needed   = tcBase + 20 * itcMac;
                     if (itcMac <= 0 || itcMac > 63 || operand.Length < needed) return;
                     var dxa = new short[itcMac + 1];
                     for (int j = 0; j <= itcMac; j++)
-                        dxa[j] = BitConverter.ToInt16(operand, 1 + j * 2);
+                        dxa[j] = BitConverter.ToInt16(operand, dxaBase + j * 2);
                     localDxa = dxa;
+                    // TC97[itcMac] — 각 20 byte: bf(2)+wUnused(2)+brcTop(4)+brcLeft(4)+brcBottom(4)+brcRight(4)
+                    var tcs = new TableCellProps[itcMac];
+                    for (int j = 0; j < itcMac; j++)
+                    {
+                        int tcOff = tcBase + j * 20;
+                        tcs[j] = new TableCellProps(
+                            ParseBrc80(operand, tcOff + 4),
+                            ParseBrc80(operand, tcOff + 8),
+                            ParseBrc80(operand, tcOff + 12),
+                            ParseBrc80(operand, tcOff + 16));
+                    }
+                    localCp = tcs;
                 }
             });
-            inTable = localIn;
-            isTtp   = localTtp;
-            rgdxa   = localDxa;
+            inTable   = localIn;
+            isTtp     = localTtp;
+            rgdxa     = localDxa;
+            cellProps = localCp;
         }
+
+        // [MS-DOC] §2.9.16 Brc80 (4 byte border code):
+        //   byte 0: dptLineWidth (1/8 pt 단위)
+        //   byte 1: brcType (0=none, 1=single, 3=double, 5=dotted, 6=dashed, 7=dotDash, 8=dotDotDash, ...)
+        //   byte 2: ico (Word 16-color palette index)
+        //   byte 3: dptSpace(5)+fShadow(1)+fFrame(1)+reserved(1)
+        private static CellBorderSide? ParseBrc80(byte[] tc, int off)
+        {
+            if (off + 4 > tc.Length) return null;
+            byte dpt  = tc[off];
+            byte type = tc[off + 1];
+            byte ico  = tc[off + 2];
+            if (type == 0 || dpt == 0) return null;  // none
+            var line = type switch
+            {
+                3            => BorderLineStyle.Double,
+                5            => BorderLineStyle.Dotted,
+                6            => BorderLineStyle.Dashed,
+                7 or 8       => BorderLineStyle.DashDot,
+                _            => BorderLineStyle.Solid,
+            };
+            string? colorHex = WordPaletteColor(ico)?.ToHex();
+            return new CellBorderSide(dpt / 8.0, colorHex, line);
+        }
+
+        // 한 행의 셀별 테두리/배경 묶음. ScanTableProps 가 sprmTDefTable 의 rgTc 에서 채우고
+        // FlushParagraph 의 TTP 처리에서 pendingRow.Cells 에 1:1 적용.
+        internal sealed record TableCellProps(
+            CellBorderSide? Top, CellBorderSide? Left,
+            CellBorderSide? Bottom, CellBorderSide? Right);
 
         // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
         // 부모가 먼저 적용되고 자식이 덮어쓰는 순서. 순환 참조와 nil(0xFFF) 종료를 모두 처리.
