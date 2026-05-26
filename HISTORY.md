@@ -45,6 +45,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **DOC (Word 97-2003 binary) ingest — Phase 2b 셀 너비**: TTP 단락의 PAPX 에 포함되는 `sprmTDefTable` (0xD608, `[MS-DOC]` §2.9.293) 의 operand 에서 `itcMac` + `rgdxaCenter[itcMac+1]` (twips) 를 추출해 `Table.Columns[i].WidthMm = (rgdxaCenter[i+1] - rgdxaCenter[i]) / 56.692` 로 셀 너비 적용. `WalkSprms` 의 spra=6 처리에 sprm 별 길이 prefix 변형 추가 (`sprmTDefTable` 등은 1-byte 가 아니라 2-byte 길이 prefix). `ScanTableFlags` 를 `ScanTableProps` 로 확장해 InTable/IsTtp + Rgdxa 동시 추출.
 - **DOC (Word 97-2003 binary) ingest — Phase 2a 표 인식**: PAPX `sprmPFInTable` (0x2416) 와 `sprmPFTtp` (0x2417) 를 인식해 단락이 표 안인지 / 행 종료 단락인지 식별. `BuildDocument` 가 표 누적 상태(`pendingTable`/`pendingRow`)를 갖고 흐름 처리:
   - InTable 단락의 텍스트를 `0x07` (cell mark) 으로 분리해 `TableCell` 별 단일 단락으로 변환
   - TTP(row terminator) 단락 만나면 현재 행 마무리

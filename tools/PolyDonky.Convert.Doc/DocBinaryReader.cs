@@ -405,7 +405,7 @@ public class DocBinaryReader
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
         ref Table? pendingTable, ref TableRow? pendingRow)
     {
-        var (paraIstd, ps, inTable, isTtp) = fmt.GetParagraphInfo(paraEndFc);
+        var (paraIstd, ps, inTable, isTtp, rgdxa) = fmt.GetParagraphInfo(paraEndFc);
 
         // 행 종료 단락 (TTP). 비어 있고 행을 마무리하는 신호.
         if (isTtp)
@@ -413,6 +413,17 @@ public class DocBinaryReader
             pendingTable ??= new Table();
             if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
             pendingRow = null;
+            // Phase 2b — TTP 의 PAPX 에 sprmTDefTable 가 있으면 셀 너비를 표 컬럼에 적용.
+            // rgdxaCenter[i+1] - rgdxaCenter[i] = i 번째 셀의 너비 (twips).
+            if (rgdxa is { Length: > 1 } && pendingTable.Columns.Count == 0)
+            {
+                for (int i = 0; i < rgdxa.Length - 1; i++)
+                {
+                    double widthMm = (rgdxa[i + 1] - rgdxa[i]) / 56.692;  // twips → mm
+                    if (widthMm <= 0) widthMm = 0;
+                    pendingTable.Columns.Add(new TableColumn { WidthMm = widthMm });
+                }
+            }
             paraChars.Clear();
             paraFcs.Clear();
             return;
@@ -674,18 +685,20 @@ public class DocBinaryReader
             return new FormatStyles(wd, papx, chpx, fonts, styles);
         }
 
-        // Phase 1f — 단락 정보를 (istd, ParagraphStyle?, InTable, IsTtp) 4-tuple 로 반환.
-        // Phase 2a — InTable / IsTtp 플래그가 추가됨 (sprmPFInTable / sprmPFTtp).
-        public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp) GetParagraphInfo(int paraEndFc)
+        // Phase 1f — (istd, ParagraphStyle?, InTable, IsTtp) — Phase 1 기본.
+        // Phase 2a — InTable / IsTtp 플래그 추가 (sprmPFInTable / sprmPFTtp).
+        // Phase 2b — Rgdxa (sprmTDefTable 의 셀 boundary, twips) 추가.
+        public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp, short[]? Rgdxa) GetParagraphInfo(int paraEndFc)
         {
             var papx = LoadPapx(paraEndFc);
-            if (papx is null) return (-1, null, false, false);
+            if (papx is null) return (-1, null, false, false, null);
 
             var (istd, directSprms) = papx.Value;
             var style = new ParagraphStyle();
             bool touched = false;
             bool inTable = false;
             bool isTtp   = false;
+            short[]? rgdxa = null;
 
             // 1. STSH built-in sti → Outline (Heading N → HN).
             if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
@@ -695,37 +708,54 @@ public class DocBinaryReader
                 touched = true;
             }
 
-            // 2. Phase 1g — istdBase 체인을 따라 root → leaf 순으로 STD PAPX sprms + 표 플래그 적용.
+            // 2. Phase 1g — istdBase 체인을 따라 root → leaf 순으로 STD PAPX sprms + 표 sprm 적용.
             foreach (int chainIstd in ResolveStyleChain(istd))
             {
                 if (_styles[chainIstd]?.PapxSprms is { Length: > 0 } chainSprms)
                 {
                     touched |= ApplyParagraphSprms(chainSprms, style);
-                    ScanTableFlags(chainSprms, ref inTable, ref isTtp);
+                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa);
                 }
             }
 
             // 3. 직접 PAPX sprms — 스타일 상속값을 덮어쓴다.
             touched |= ApplyParagraphSprms(directSprms, style);
-            ScanTableFlags(directSprms, ref inTable, ref isTtp);
+            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa);
 
-            return (istd, touched ? style : null, inTable, isTtp);
+            return (istd, touched ? style : null, inTable, isTtp, rgdxa);
         }
 
-        // [MS-DOC] sprmPFInTable (0x2416, 1-byte): 단락이 표 안에 있는지.
-        //          sprmPFTtp    (0x2417, 1-byte): 단락이 행 종료 단락(TTP)인지.
+        // [MS-DOC] 단락의 표 관련 sprm 일괄 스캔:
+        //   sprmPFInTable (0x2416, 1-byte) — 단락이 표 안에 있는지
+        //   sprmPFTtp     (0x2417, 1-byte) — 단락이 행 종료 단락(TTP)인지
+        //   sprmTDefTable (0xD608, variable, spra=6 2-byte length)
+        //                — TTP 단락의 PAPX 에 포함. itcMac(1) + rgdxaCenter[itcMac+1] (2 byte signed each)
+        //                  + rgTc[itcMac] (20 byte each). 본 단계에서는 rgdxaCenter 만 활용.
         // ref 매개변수는 람다 캡처 불가라 로컬에 모은 뒤 호출부에서 합친다.
-        private static void ScanTableFlags(byte[] grpprl, ref bool inTable, ref bool isTtp)
+        private static void ScanTableProps(byte[] grpprl, ref bool inTable, ref bool isTtp, ref short[]? rgdxa)
         {
             bool localIn  = inTable;
             bool localTtp = isTtp;
+            short[]? localDxa = rgdxa;
             WalkSprms(grpprl, (sprm, operand) =>
             {
                 if (sprm == 0x2416 && operand.Length >= 1) localIn = operand[0] != 0;
                 else if (sprm == 0x2417 && operand.Length >= 1) localTtp = operand[0] != 0;
+                else if (sprm == 0xD608)
+                {
+                    if (operand.Length < 1) return;
+                    int itcMac = operand[0];
+                    int needed = 1 + 2 * (itcMac + 1) + 20 * itcMac;
+                    if (itcMac <= 0 || itcMac > 63 || operand.Length < needed) return;
+                    var dxa = new short[itcMac + 1];
+                    for (int j = 0; j <= itcMac; j++)
+                        dxa[j] = BitConverter.ToInt16(operand, 1 + j * 2);
+                    localDxa = dxa;
+                }
             });
             inTable = localIn;
             isTtp   = localTtp;
+            rgdxa   = localDxa;
         }
 
         // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
@@ -1050,8 +1080,21 @@ public class DocBinaryReader
                     case 7: operandSize = 3; break;
                     case 6:
                         if (i >= sprms.Length) return;
-                        operandSize = sprms[i];
-                        i += 1;
+                        // [MS-DOC] §2.6.2 spra=6: 가변 길이 sprm.
+                        //   기본: 첫 1 byte = operand 길이.
+                        //   예외 (§2.9.293 sprmTDefTable / §2.9.292 sprmTDefTable10): 첫 2 byte = 길이.
+                        //   sprmPChgTabs (0xC615) 도 같은 2-byte 변형. 그 외는 1-byte.
+                        if (sprm == 0xD608 || sprm == 0xD605 || sprm == 0xC615)
+                        {
+                            if (i + 2 > sprms.Length) return;
+                            operandSize = BitConverter.ToUInt16(sprms, i);
+                            i += 2;
+                        }
+                        else
+                        {
+                            operandSize = sprms[i];
+                            i += 1;
+                        }
                         break;
                     default: return;
                 }
