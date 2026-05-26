@@ -45,6 +45,12 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **DOC (Word 97-2003 binary) ingest — Phase 2a 표 인식**: PAPX `sprmPFInTable` (0x2416) 와 `sprmPFTtp` (0x2417) 를 인식해 단락이 표 안인지 / 행 종료 단락인지 식별. `BuildDocument` 가 표 누적 상태(`pendingTable`/`pendingRow`)를 갖고 흐름 처리:
+  - InTable 단락의 텍스트를 `0x07` (cell mark) 으로 분리해 `TableCell` 별 단일 단락으로 변환
+  - TTP(row terminator) 단락 만나면 현재 행 마무리
+  - 비-InTable 단락 만나면 표 마감 후 일반 단락 추가
+  - `0x07` 처리가 `\t` 치환 (Phase 1) 에서 보존 (Phase 2) 으로 변경 — InTable 인 경우만 셀 분리에 사용. 단순 균등 너비 가정, 테두리/배경/병합/멀티-단락 셀은 후속 단계.
+- `tools/PolyDonky.SmokeTest`: Phase 2a 합성 검증 케이스 추가 (1행 2셀 표 + 본문 단락 → `Table(1행 2셀) + Paragraph("End")`).
 - **DOC (Word 97-2003 binary) ingest — Phase 1a**: `tools/PolyDonky.Convert.Doc` 에 `DocBinaryReader` 추가. OLE2 Compound File 안의 WordDocument stream 의 FIB(File Information Block) → CLX(Complex File Information) → Piece Table 을 따라 텍스트를 추출하고 단락 마커 `0x0D` 기준으로 분리. 자체 구현(`OpenMcdf` 의존)으로 비-OSS 상용 라이브러리(Aspose 등) 회피. 메인 앱의 "열기" 다이얼로그 필터에 `*.doc` 추가, `ExternalConverter` 가 `.doc` → `Convert.Doc` CLI 로 라우팅.
 - **DOC (Word 97-2003 binary) ingest — Phase 1b 기본 서식**: PAPX/CHPX 바인 테이블 + FKP 운영으로 단락·문자 서식 적용. [MS-DOC] §2.8.1 PapxFkp / §2.8.2 ChpxFkp / §2.4.6 BTE plex / §2.6.2 Sprm 명세에 따라:
   - PAPX `sprmPJc80` (0x2461) → 단락 정렬 (Left/Center/Right/Justify)
