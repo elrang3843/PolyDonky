@@ -8,7 +8,7 @@ using PolyDonky.Core;
 namespace PolyDonky.Convert.Doc;
 
 /// <summary>
-/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a~1f — 텍스트·단락·서식·폰트·스타일·상속).
+/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a~1g — 텍스트·단락·서식·폰트·스타일·체인 상속).
 ///
 /// 참고 공식 공개 명세:
 ///   - [MS-DOC]      Word (.doc) Binary File Format — FIB·CLX·piece table·PAPX/CHPX·SEPX 등
@@ -35,9 +35,9 @@ namespace PolyDonky.Convert.Doc;
 ///   - 비-OLE2 입력·손상 CFB 컨테이너는 한국어 진단으로 명확히 거부
 ///
 /// 의도적으로 다음 작업의 범위 밖 (다음 PR 들에서 다룸):
-///   - STD istdBase 체이닝 (부모 스타일까지 거슬러 올라가는 상속) — 현재는 1단계만             (Phase 1g)
 ///   - 표 / 이미지 / 필드 / 헤더·푸터 / 섹션                                          (Phase 2)
 ///   - MS-OFFCRYPTO 의 실제 해독 (RC4/AES 키 유도·복호화)
+///   - 리스트·번호 (LST/LFO) 와 STSH 의 stk=4 numbering 스타일                       (Phase 3)
 ///
 /// 자체 구현인 이유는 CLAUDE.md: HWP 코덱과 마찬가지로 비-OSS 상용 라이브러리(Aspose 등) 의존을 피한다.
 /// </summary>
@@ -616,14 +616,38 @@ public class DocBinaryReader
                 touched = true;
             }
 
-            // 2. STD 의 papxSprms (스타일의 기본 단락 속성).
-            if (istd >= 0 && istd < _styles.Count && _styles[istd]?.PapxSprms is { Length: > 0 } stdSprms)
-                touched |= ApplyParagraphSprms(stdSprms, style);
+            // 2. Phase 1g — istd 부터 istdBase 체인을 따라 root → leaf 순으로 STD PAPX sprms 적용.
+            //    Heading 1 가 Normal 의 단락 속성을 상속하는 표준 워드 동작.
+            foreach (int chainIstd in ResolveStyleChain(istd))
+            {
+                if (_styles[chainIstd]?.PapxSprms is { Length: > 0 } chainSprms)
+                    touched |= ApplyParagraphSprms(chainSprms, style);
+            }
 
-            // 3. 직접 PAPX sprms — 스타일 기본값을 덮어쓴다.
+            // 3. 직접 PAPX sprms — 스타일 상속값을 덮어쓴다.
             touched |= ApplyParagraphSprms(directSprms, style);
 
             return (istd, touched ? style : null);
+        }
+
+        // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
+        // 부모가 먼저 적용되고 자식이 덮어쓰는 순서. 순환 참조와 nil(0xFFF) 종료를 모두 처리.
+        private IEnumerable<int> ResolveStyleChain(int startIstd)
+        {
+            if (startIstd < 0 || startIstd >= _styles.Count) yield break;
+            var chain  = new List<int>();
+            var seen   = new HashSet<int>();
+            int cur    = startIstd;
+            while (cur >= 0 && cur < _styles.Count && cur != IstdNil && seen.Add(cur))
+            {
+                var sd = _styles[cur];
+                if (sd is null) break;
+                chain.Add(cur);
+                cur = sd.IstdBase;
+            }
+            // root → leaf 순서로 yield (부모 먼저 → 자식 덮어쓰기).
+            for (int i = chain.Count - 1; i >= 0; i--)
+                yield return chain[i];
         }
 
         private static bool ApplyParagraphSprms(byte[] grpprl, ParagraphStyle style)
@@ -702,10 +726,13 @@ public class DocBinaryReader
             var rs = new RunStyle();
             bool touched = false;
 
-            // 1. 단락 스타일의 CHPX sprms (Heading 의 기본 폰트/크기 등).
-            if (paraIstd >= 0 && paraIstd < _styles.Count &&
-                _styles[paraIstd]?.ChpxSprms is { Length: > 0 } stdChpx)
-                touched |= ApplyRunSprms(stdChpx, rs);
+            // 1. Phase 1g — 단락 스타일의 istdBase 체인을 따라 root → leaf 순으로 STD CHPX sprms 적용.
+            //    예: Heading 1 의 폰트가 Normal 의 폰트 패밀리를 상속.
+            foreach (int chainIstd in ResolveStyleChain(paraIstd))
+            {
+                if (_styles[chainIstd]?.ChpxSprms is { Length: > 0 } chainChpx)
+                    touched |= ApplyRunSprms(chainChpx, rs);
+            }
 
             // 2. 직접 CHPX FKP sprms (override).
             var direct = LoadChpx(charFc);
@@ -998,9 +1025,12 @@ public class DocBinaryReader
 
         // [MS-DOC] §2.9.270 STD 의 핵심 필드 — sti(12 bit): built-in style identifier
         // (0=Normal, 1..9=Heading 1..9), stk(4 bit): 1=paragraph, 2=character, 3=table, 4=numbering.
-        // Phase 1f — STD 의 grLPUpxSw 에서 추출한 단락/문자 sprm 기본값. Heading 의 폰트 크기·
-        // 굵게 같은 속성을 직접 sprm 없이도 상속하기 위해 보존한다.
-        private sealed record StyleDef(int Sti, int Stk, string? Name, byte[]? PapxSprms, byte[]? ChpxSprms);
+        // Phase 1f — STD 의 grLPUpxSw 에서 추출한 단락/문자 sprm 기본값.
+        // Phase 1g — IstdBase(12 bit): 상속 부모 styleId. 0xFFF = nil (체인 종료).
+        private sealed record StyleDef(int Sti, int Stk, int IstdBase, string? Name,
+                                       byte[]? PapxSprms, byte[]? ChpxSprms);
+
+        private const int IstdNil = 0xFFF;
 
         // [MS-DOC] §2.9.271 STSH 파서.
         // STSH = LPStshi (2 byte cbStshi + Stshi) + rgLPStd[cstd] (각 LPStd: 2 byte cbStd + STD).
@@ -1041,9 +1071,10 @@ public class DocBinaryReader
                     ushort word0 = BitConverter.ToUInt16(table, stdStart);
                     ushort word1 = BitConverter.ToUInt16(table, stdStart + 2);
                     ushort word2 = cbStd >= 6 ? BitConverter.ToUInt16(table, stdStart + 4) : (ushort)0;
-                    int sti  = word0 & 0x0FFF;
-                    int stk  = word1 & 0x000F;
-                    int cupx = word2 & 0x000F;  // cupx (low 4 bits of word2)
+                    int sti       = word0 & 0x0FFF;
+                    int stk       = word1 & 0x000F;
+                    int istdBase  = (word1 >> 4) & 0x0FFF;  // 부모 styleId — 0xFFF 면 nil.
+                    int cupx      = word2 & 0x000F;
 
                     // xstzName — stdfBase(+stdfPost2000) 뒤. Xstz: cchData(2) + chars(2*cchData) + null(2).
                     string? name = null;
@@ -1072,7 +1103,7 @@ public class DocBinaryReader
                     //   paragraph style(stk=1): LPUpx[0]=PAPX (UPX = istd(2)+grpprl), LPUpx[1]=CHPX (UPX=grpprl)
                     //   character style(stk=2): LPUpx[0]=CHPX
                     var (papx, chpx) = ParseGrLPUpxSw(table, stdStart, afterName, stdEnd, cupx, stk);
-                    styles[i] = new StyleDef(sti, stk, name, papx, chpx);
+                    styles[i] = new StyleDef(sti, stk, istdBase, name, papx, chpx);
                 }
                 pos += cbStd;
             }
