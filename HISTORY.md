@@ -45,6 +45,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
+- WPF App (`FlowDocumentBuilder.ApplyVerticalAlignmentToCell`): 표 셀에 수직 정렬(Middle/Bottom) 을 적용할 때 `Wpf.Paragraph.Margin/Padding` 의 NaN ("Auto") 값을 `TextBlock` 으로 그대로 옮겨 `set_Margin` 에서 `ArgumentException` (`'Auto,Auto,Auto,Auto'은(는) 'Margin' 속성의 유효한 값이 아닙니다.`) 가 발생하던 결함 수정 — `SanitizeThickness` 헬퍼로 NaN→0 정규화.
 - DOC (RTF) Reader: `\ansicpg<N>` 코드페이지를 인식해 `\'XX` 시퀀스를 해당 코드페이지(CP949/932/1252 등)로 디코딩 — Linux 환경의 시스템 기본 인코딩에 의존하던 한글 RTF 가 깨지는 문제 해결.
 - DOC (RTF) Reader: `\uc<N>` (Unicode skip count) 지시자 반영 — `\u<N>` 뒤의 ANSI fallback 문자/escape 시퀀스를 정확히 N개 소비. 이전에는 `?` 한 글자만 옵션으로 스킵해 fallback 이 본문에 노출되던 결함 수정.
 - DOC (RTF) Reader: 머리말/꼬리말·필드·북마크 그룹(`\header*`, `\footer*`, `\field`, `\bkmkstart`/`\bkmkend`, `\pntext`, `\fldinst`, `\datafield`, `\filetbl`, `\revtbl` 등) 을 본문에서 스킵 — 머리말/꼬리말 텍스트가 본문에 새어들던 문제 차단.
