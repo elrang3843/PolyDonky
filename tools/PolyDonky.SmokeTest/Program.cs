@@ -4,6 +4,7 @@ using PolyDonky.Codecs.Html;
 using PolyDonky.Codecs.Hwpx;
 using PolyDonky.Codecs.Markdown;
 using PolyDonky.Codecs.Text;
+using PolyDonky.Convert.Doc;
 using PolyDonky.Core;
 using PolyDonky.Iwpf;
 using PdXmlReader = PolyDonky.Codecs.Xml.XmlReader;
@@ -23,6 +24,8 @@ harness.Run("DOCX round-trip (headings + emphasis)", DocxRoundTrip);
 harness.Run("HWPX round-trip (KS X 6101 self interop)", HwpxRoundTrip);
 harness.Run("HTML round-trip (HTML5 + tables + links)", HtmlRoundTrip);
 harness.Run("XML/XHTML round-trip (well-formed XHTML5)", XmlRoundTrip);
+harness.Run("DOC (RTF) round-trip — encoding/escape/empty-para", DocRtfRoundTrip);
+harness.Run("DOC (RTF) read — CP949 한글 \\'XX + \\uc1 fallback", DocRtfKoreanAnsi);
 
 return harness.Finish();
 
@@ -281,6 +284,79 @@ static void XmlRoundTrip()
     SmokeHarness.Equal(OutlineLevel.H1, rps[0].Style.Outline,        "round-trip H1");
     SmokeHarness.True(read.Sections[0].Blocks.OfType<ThematicBreakBlock>().Any(), "round-trip thematic break");
     SmokeHarness.True(rps.SelectMany(rp => rp.Runs).Any(r => r.Url == "https://x"), "round-trip link URL");
+}
+
+static void DocRtfRoundTrip()
+{
+    // DocWriter 가 RTF 로 직렬화한 결과를 DocReader 로 다시 읽어 의미가 보존되는지 검증.
+    var doc = new PolyDonkyument();
+    doc.Metadata.Title  = "DOC RTF 스모크";
+    doc.Metadata.Author = "Noh JinMoon";
+    var section = new Section();
+    doc.Sections.Add(section);
+
+    var heading = new Paragraph { Style = { Alignment = Alignment.Center } };
+    heading.AddText("RTF 라운드트립", new RunStyle { Bold = true, FontSizePt = 16 });
+    section.Blocks.Add(heading);
+
+    var body = new Paragraph();
+    body.AddText("본문 ");
+    body.AddText("굵게", new RunStyle { Bold = true });
+    body.AddText(" + ");
+    body.AddText("기울임", new RunStyle { Italic = true });
+    body.AddText(" — 한글 조판 테스트.");
+    section.Blocks.Add(body);
+
+    // 빈 단락 (사용자가 본 빈 줄) 이 보존되는지
+    section.Blocks.Add(new Paragraph());
+
+    var tail = new Paragraph();
+    tail.AddText("끝 단락.");
+    section.Blocks.Add(tail);
+
+    using var ms = new MemoryStream();
+    new DocWriter().Write(doc, ms);
+    SmokeHarness.True(ms.Length > 200, $"RTF size > 200 bytes (got {ms.Length})");
+
+    ms.Position = 0;
+    var read = new DocReader().Read(ms);
+    SmokeHarness.Equal("DOC RTF 스모크", read.Metadata.Title!, "RTF metadata.title");
+    SmokeHarness.Equal("Noh JinMoon",   read.Metadata.Author!, "RTF metadata.author");
+
+    var paragraphs = read.EnumerateParagraphs().ToList();
+    // 헤딩 + 본문 + 빈 단락 + 꼬리 = 4
+    SmokeHarness.Equal(4, paragraphs.Count, "RTF paragraph count (empty para preserved)");
+    SmokeHarness.Equal(Alignment.Center, paragraphs[0].Style.Alignment, "RTF heading alignment");
+    SmokeHarness.True(paragraphs[1].Runs.Any(r => r.Style.Bold   && r.Text.Contains("굵게")),   "RTF bold run preserved");
+    SmokeHarness.True(paragraphs[1].Runs.Any(r => r.Style.Italic && r.Text.Contains("기울임")), "RTF italic run preserved");
+    SmokeHarness.True(paragraphs[3].GetPlainText().Contains("끝 단락"), "RTF tail paragraph text");
+}
+
+static void DocRtfKoreanAnsi()
+{
+    // 한글 CP949 RTF 의 \'XX + \uc1 fallback 처리 검증.
+    // 워드패드/한글 등이 저장하는 실제 RTF 와 유사한 헤더로 합성.
+    // CP949: 안=BEC8 녕=B3E7 하=C7CF 세=BCBC 요=BFE4. '한' U+D55C = 54620.
+    const string rtf =
+        @"{\rtf1\ansi\ansicpg949\deff0" +
+        @"{\fonttbl{\f0\fnil\fcharset129 Malgun Gothic;}}" +
+        @"{\colortbl;\red0\green0\blue0;}" +
+        @"\viewkind4\uc1\pard\f0\fs22 " +
+        @"\'be\'c8\'b3\'e7\'c7\'cf\'bc\'bc\'bf\'e4" +     // '안녕하세요' (CP949 \'XX)
+        @"\par " +
+        // '한' (U+D55C = 54620) + ANSI fallback '?' (1글자) → 디코딩 결과 "한 END"
+        @"\" + "u54620 ? END" + @"\par}";
+
+    using var ms = new MemoryStream(Encoding.GetEncoding(28591).GetBytes(rtf));
+    var read = new DocReader().Read(ms);
+
+    var text = string.Join("\n", read.EnumerateParagraphs().Select(p => p.GetPlainText()));
+    SmokeHarness.True(text.Contains("안녕하세요"), $"CP949 \\'XX 디코딩 (got: {text})");
+    SmokeHarness.True(text.Contains("한"),         $"\\u54620 → '한' 디코딩 (got: {text})");
+    SmokeHarness.True(text.Contains("END"),
+        $"\\uc1 fallback '?' 소비 후 다음 텍스트 살아 있음 (got: {text})");
+    SmokeHarness.True(!text.Contains("?"),
+        $"fallback '?' 자체는 출력되지 않아야 함 (got: {text})");
 }
 
 static byte[] TamperDocumentJson(byte[] original)

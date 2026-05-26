@@ -44,6 +44,18 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Fixed
+- DOC (RTF) Reader: `\ansicpg<N>` 코드페이지를 인식해 `\'XX` 시퀀스를 해당 코드페이지(CP949/932/1252 등)로 디코딩 — Linux 환경의 시스템 기본 인코딩에 의존하던 한글 RTF 가 깨지는 문제 해결.
+- DOC (RTF) Reader: `\uc<N>` (Unicode skip count) 지시자 반영 — `\u<N>` 뒤의 ANSI fallback 문자/escape 시퀀스를 정확히 N개 소비. 이전에는 `?` 한 글자만 옵션으로 스킵해 fallback 이 본문에 노출되던 결함 수정.
+- DOC (RTF) Reader: 머리말/꼬리말·필드·북마크 그룹(`\header*`, `\footer*`, `\field`, `\bkmkstart`/`\bkmkend`, `\pntext`, `\fldinst`, `\datafield`, `\filetbl`, `\revtbl` 등) 을 본문에서 스킵 — 머리말/꼬리말 텍스트가 본문에 새어들던 문제 차단.
+- DOC (RTF) Reader: `\info` 의 `\title`/`\author` 등 메타 필드 값에 포함된 `\u<N>?`·`\'XX` escape 를 디코딩 (이전에는 raw RTF 문자열 그대로 메타데이터로 저장됨).
+- DOC (RTF) Reader: `\creatim`/`\revtim` 의 `yr=0`/범위 밖 값에서 `DateTimeOffset` 생성자가 예외를 던지는 문제 — 안전 클램프 + try/catch 로 보호하고 실패 시 메타데이터를 비워둠.
+- DOC (RTF) Reader: 빈 단락 (`\par\par` 연속) 이 유실되던 결함 수정 — 사용자가 본 빈 줄이 그대로 보존됨.
+
+### Added
+- DOC (RTF) Reader: `\bullet`/`\endash`/`\emdash`/`\lquote`/`\rquote`/`\ldblquote`/`\rdblquote`/`\emspace`/`\enspace`/`\zwnj`/`\zwj` 등 RTF 특수 문자 escape 매핑.
+- `tools/PolyDonky.SmokeTest`: DOC(RTF) 라운드트립 검증 케이스 2종 추가 — DocWriter↔DocReader 서식·빈 단락 라운드트립, 그리고 합성 CP949 RTF 의 `\'XX` + `\uc1` fallback 디코딩.
+
 ---
 
 ## [1.0.0] - 2026-05-20

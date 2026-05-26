@@ -9,6 +9,9 @@
     <ProjectReference Include="..\..\src\PolyDonky.Codecs.Hwpx\PolyDonky.Codecs.Hwpx.csproj" />
     <ProjectReference Include="..\..\src\PolyDonky.Codecs.Html\PolyDonky.Codecs.Html.csproj" />
     <ProjectReference Include="..\..\src\PolyDonky.Codecs.Xml\PolyDonky.Codecs.Xml.csproj" />
+    <!-- DOC (RTF) 변환기는 CLI Exe 프로젝트이지만 라이브러리처럼 참조해 스모크에서 라운드트립 검증.
+         (CLAUDE.md §3 의 분리 원칙은 메인 앱 한정이며 스모크 도구는 직접 호출 허용.) -->
+    <ProjectReference Include="..\PolyDonky.Convert.Doc\PolyDonky.Convert.Doc.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
