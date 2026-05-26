@@ -345,6 +345,9 @@ public class DocBinaryReader
         var paraChars = new List<char>();
         var paraFcs   = new List<int>();
         int lastFc    = 0;
+        // Phase 2a — 표 누적 상태 (pending: 진행 중인 표/행).
+        Table? pendingTable = null;
+        TableRow? pendingRow = null;
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -356,13 +359,13 @@ public class DocBinaryReader
             {
                 case '\r':
                 case '\f':  // page break — 단락 분리로 처리
-                    FlushParagraph(section, paraChars, paraFcs, fc, fmt);
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, ref pendingTable, ref pendingRow);
                     break;
                 case '\v':  // soft line break
                     paraChars.Add('\n'); paraFcs.Add(fc);
                     break;
                 case '':  // cell mark
-                    paraChars.Add('\t'); paraFcs.Add(fc);
+                    paraChars.Add('\u0007'); paraFcs.Add(fc);
                     break;
                 case '': // field begin
                 case '': // field separator
@@ -383,45 +386,121 @@ public class DocBinaryReader
                     break;
             }
         }
-        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt);
+        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, ref pendingTable, ref pendingRow);
+        // 본문 끝에서 표가 미완 상태이면 마감.
+        if (pendingTable is not null)
+        {
+            if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
+            if (pendingTable.Rows.Count > 0) section.Blocks.Add(pendingTable);
+        }
 
         if (section.Blocks.Count == 0) section.Blocks.Add(new Paragraph());
         return doc;
     }
 
-    // Phase 1b — 누적된 (char, fc) 쌍을 한 단락으로 묶어 Section.Blocks 에 추가.
-    // 단락 정렬은 PAPX (paragraph end FC) 에서, run 분할은 CHPX (char FC) 에서 best-effort 로 적용.
+    // Phase 1b — 누적된 (char, fc) 쌍을 한 단락으로 묶어 만든다.
+    // Phase 2a — InTable=true 단락은 pendingTable 에 셀별로 누적, IsTtp 단락은 행 종료,
+    //          비-InTable 단락은 표를 마감하고 section.Blocks 에 직접 추가.
     private static void FlushParagraph(
-        Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt)
+        Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
+        ref Table? pendingTable, ref TableRow? pendingRow)
     {
-        var para = new Paragraph();
-        var (paraIstd, ps) = fmt.GetParagraphInfo(paraEndFc);
-        if (ps is not null) para.Style = ps;
+        var (paraIstd, ps, inTable, isTtp) = fmt.GetParagraphInfo(paraEndFc);
 
-        if (paraChars.Count > 0)
+        // 행 종료 단락 (TTP). 비어 있고 행을 마무리하는 신호.
+        if (isTtp)
         {
-            RunStyle? curStyle = null;
-            var curText = new StringBuilder();
-            for (int i = 0; i < paraChars.Count; i++)
-            {
-                // Phase 1f — paraIstd 를 전달해 STD CHPX 상속 활성화.
-                var rs = fmt.GetRunStyle(paraFcs[i], paraIstd) ?? new RunStyle();
-                if (curStyle is null || !RunStyleEquals(curStyle, rs))
-                {
-                    if (curText.Length > 0 && curStyle is not null)
-                        para.AddText(curText.ToString(), curStyle);
-                    curStyle = rs;
-                    curText.Clear();
-                }
-                curText.Append(paraChars[i]);
-            }
-            if (curText.Length > 0 && curStyle is not null)
-                para.AddText(curText.ToString(), curStyle);
+            pendingTable ??= new Table();
+            if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
+            pendingRow = null;
+            paraChars.Clear();
+            paraFcs.Clear();
+            return;
         }
 
+        // 표 안 단락. 0x07 셀 마커로 분리해서 셀별 단락을 누적.
+        if (inTable)
+        {
+            pendingTable ??= new Table();
+            pendingRow   ??= new TableRow();
+            SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, pendingRow);
+            paraChars.Clear();
+            paraFcs.Clear();
+            return;
+        }
+
+        // 비-InTable 단락 — 표가 진행 중이면 마감.
+        if (pendingTable is not null)
+        {
+            if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
+            if (pendingTable.Rows.Count > 0) section.Blocks.Add(pendingTable);
+            pendingTable = null;
+            pendingRow   = null;
+        }
+
+        var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
         section.Blocks.Add(para);
         paraChars.Clear();
         paraFcs.Clear();
+    }
+
+    // 단일 셀 단락 만들기 — Phase 1 의 Run 분할 알고리즘 재사용.
+    private static Paragraph BuildParaFromChars(
+        List<char> chars, List<int> fcs, int paraIstd, ParagraphStyle? ps, FormatStyles fmt)
+    {
+        var para = new Paragraph();
+        if (ps is not null) para.Style = ps;
+        if (chars.Count == 0) return para;
+
+        RunStyle? curStyle = null;
+        var curText = new StringBuilder();
+        for (int i = 0; i < chars.Count; i++)
+        {
+            var rs = fmt.GetRunStyle(fcs[i], paraIstd) ?? new RunStyle();
+            if (curStyle is null || !RunStyleEquals(curStyle, rs))
+            {
+                if (curText.Length > 0 && curStyle is not null)
+                    para.AddText(curText.ToString(), curStyle);
+                curStyle = rs;
+                curText.Clear();
+            }
+            curText.Append(chars[i]);
+        }
+        if (curText.Length > 0 && curStyle is not null)
+            para.AddText(curText.ToString(), curStyle);
+        return para;
+    }
+
+    // Phase 2a — paraChars 의 0x07 (cell mark) 위치마다 셀을 나눠 pendingRow 에 추가.
+    // 셀 안에는 단일 단락 가정 (멀티-단락 셀은 후속 단계).
+    private static void SplitIntoCells(
+        List<char> paraChars, List<int> paraFcs, int paraIstd, FormatStyles fmt, TableRow pendingRow)
+    {
+        var curChars = new List<char>();
+        var curFcs   = new List<int>();
+        for (int i = 0; i < paraChars.Count; i++)
+        {
+            if (paraChars[i] == '')
+            {
+                var cell = new TableCell();
+                cell.Blocks.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
+                pendingRow.Cells.Add(cell);
+                curChars.Clear();
+                curFcs.Clear();
+            }
+            else
+            {
+                curChars.Add(paraChars[i]);
+                curFcs.Add(paraFcs[i]);
+            }
+        }
+        // 잔여 텍스트 — 0x07 없이 단락이 끝났다면 (셀의 미완 단락) 별개 셀로 처리.
+        if (curChars.Count > 0)
+        {
+            var cell = new TableCell();
+            cell.Blocks.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
+            pendingRow.Cells.Add(cell);
+        }
     }
 
     private static bool RunStyleEquals(RunStyle a, RunStyle b)
@@ -595,20 +674,20 @@ public class DocBinaryReader
             return new FormatStyles(wd, papx, chpx, fonts, styles);
         }
 
-        // Phase 1f — 단락 정보를 (istd, ParagraphStyle?) 페어로 반환. istd 는 BuildDocument 가
-        // 단락 내 char 들의 RunStyle 조회에 전달해 STD CHPX 상속을 활성화한다.
-        public (int Istd, ParagraphStyle? Style) GetParagraphInfo(int paraEndFc)
+        // Phase 1f — 단락 정보를 (istd, ParagraphStyle?, InTable, IsTtp) 4-tuple 로 반환.
+        // Phase 2a — InTable / IsTtp 플래그가 추가됨 (sprmPFInTable / sprmPFTtp).
+        public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp) GetParagraphInfo(int paraEndFc)
         {
             var papx = LoadPapx(paraEndFc);
-            if (papx is null) return (-1, null);
+            if (papx is null) return (-1, null, false, false);
 
             var (istd, directSprms) = papx.Value;
             var style = new ParagraphStyle();
             bool touched = false;
+            bool inTable = false;
+            bool isTtp   = false;
 
             // 1. STSH built-in sti → Outline (Heading N → HN).
-            // Word built-in sti: 0=Normal, 1..9 = Heading 1..9. 본 모델은 H1..H6 만 지원하므로
-            // sti 1..6 만 매핑하고 7..9 는 H6 로 클램프.
             if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
             {
                 int level = Math.Min(sd.Sti, 6);
@@ -616,18 +695,37 @@ public class DocBinaryReader
                 touched = true;
             }
 
-            // 2. Phase 1g — istd 부터 istdBase 체인을 따라 root → leaf 순으로 STD PAPX sprms 적용.
-            //    Heading 1 가 Normal 의 단락 속성을 상속하는 표준 워드 동작.
+            // 2. Phase 1g — istdBase 체인을 따라 root → leaf 순으로 STD PAPX sprms + 표 플래그 적용.
             foreach (int chainIstd in ResolveStyleChain(istd))
             {
                 if (_styles[chainIstd]?.PapxSprms is { Length: > 0 } chainSprms)
+                {
                     touched |= ApplyParagraphSprms(chainSprms, style);
+                    ScanTableFlags(chainSprms, ref inTable, ref isTtp);
+                }
             }
 
             // 3. 직접 PAPX sprms — 스타일 상속값을 덮어쓴다.
             touched |= ApplyParagraphSprms(directSprms, style);
+            ScanTableFlags(directSprms, ref inTable, ref isTtp);
 
-            return (istd, touched ? style : null);
+            return (istd, touched ? style : null, inTable, isTtp);
+        }
+
+        // [MS-DOC] sprmPFInTable (0x2416, 1-byte): 단락이 표 안에 있는지.
+        //          sprmPFTtp    (0x2417, 1-byte): 단락이 행 종료 단락(TTP)인지.
+        // ref 매개변수는 람다 캡처 불가라 로컬에 모은 뒤 호출부에서 합친다.
+        private static void ScanTableFlags(byte[] grpprl, ref bool inTable, ref bool isTtp)
+        {
+            bool localIn  = inTable;
+            bool localTtp = isTtp;
+            WalkSprms(grpprl, (sprm, operand) =>
+            {
+                if (sprm == 0x2416 && operand.Length >= 1) localIn = operand[0] != 0;
+                else if (sprm == 0x2417 && operand.Length >= 1) localTtp = operand[0] != 0;
+            });
+            inTable = localIn;
+            isTtp   = localTtp;
         }
 
         // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
