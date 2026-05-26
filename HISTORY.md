@@ -49,11 +49,18 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - **DOC (Word 97-2003 binary) ingest — Phase 1b 기본 서식**: PAPX/CHPX 바인 테이블 + FKP 운영으로 단락·문자 서식 적용. [MS-DOC] §2.8.1 PapxFkp / §2.8.2 ChpxFkp / §2.4.6 BTE plex / §2.6.2 Sprm 명세에 따라:
   - PAPX `sprmPJc80` (0x2461) → 단락 정렬 (Left/Center/Right/Justify)
   - CHPX `sprmCFBold` (0x0835) / `sprmCFItalic` (0x0836) / `sprmCFStrike` (0x0837) / `sprmCKul` (0x2A3E) / `sprmCHps` (0x4A43) → Run 별 굵게·이탤릭·취소선·밑줄·글자 크기. 텍스트 추출 단계가 char 별 file character position(FC) 을 함께 산출하고, 단락 빌드 시 FC 기준으로 CHPX 를 조회해 같은 RunStyle 끼리 묶어 Run 으로 분할.
+- **DOC (Word 97-2003 binary) ingest — Phase 1c 들여쓰기·간격·색**: PAPX/CHPX sprm 인식 확장.
+  - PAPX `sprmPDxaLeft` (0x845D) / `sprmPDxaRight` (0x845E) / `sprmPDxaLeft1` (0x8460) → 단락 들여쓰기 (twips → mm)
+  - PAPX `sprmPDyaBefore` (0xA413) / `sprmPDyaAfter` (0xA415) → 단락 앞·뒤 간격 (twips → pt)
+  - PAPX `sprmPDyaLine` (0x6412 LSPD) → 줄 간격 (fMultLinespace=1 일 때 dyaLine/240 배수, fMultLinespace=0 absolute 는 근사)
+  - CHPX `sprmCIco` (0x2A42) / `sprmCCv` (0x6870) → Run 전경색 (Word 16-color 팔레트 또는 24-bit RGB+auto)
+  - CHPX `sprmCHighlight` (0x2A0C) → Run 하이라이트(배경색, Word 16-color 팔레트)
+  - `RunStyleEquals` 가 Foreground/Background 차이를 반영해 색상 경계에서도 Run 분할 동작.
 - DOC binary 인식의 공식 공개 명세 적용:
   - **[MS-CFB]**: `OpenMcdf` 가 컨테이너 무결성을 검증; 비-OLE2 / 손상 입력은 한국어 진단 메시지로 래핑해 거부.
   - **[MS-OLEPS]** §2.18 SummaryInformation PropertySet: PID 0x02 Title / 0x03 Subject / 0x04 Author / 0x05 Keywords / 0x06 Comments / 0x08 LastSavedBy(Editor) / 0x09 RevisionNumber / 0x0C CreateTime / 0x0D LastSavedTime / 0x12 AppName 를 VT_LPSTR / VT_LPWSTR / VT_FILETIME 인코딩으로 디코딩해 `DocumentMetadata` 와 `Custom` 사전에 매핑.
   - **[MS-OFFCRYPTO]**: FIB flags 의 `fEncrypted`(bit 8) 또는 `EncryptionInfo`/`EncryptedSummary` stream 존재 시 본문 파싱 진입 전 거부 — 깨진 piece table 진입에 의한 의미 불명 예외를 방지.
-- `tools/PolyDonky.SmokeTest`: DOC binary 검증 케이스 4종 (합성 OLE2 텍스트·단락 round-trip, OFFCRYPTO 암호화 감지 거부, 비-OLE2 입력 거부, Phase 1b PAPX 정렬 + CHPX 굵게·크기 적용).
+- `tools/PolyDonky.SmokeTest`: DOC binary 검증 케이스 5종 (합성 OLE2 텍스트·단락 round-trip, OFFCRYPTO 암호화 감지 거부, 비-OLE2 입력 거부, Phase 1b PAPX 정렬 + CHPX 굵게·크기 적용, Phase 1c PAPX 들여쓰기·간격·줄간격 + CHPX 색·하이라이트).
 - DOC (RTF) Reader: `\bullet`/`\endash`/`\emdash`/`\lquote`/`\rquote`/`\ldblquote`/`\rdblquote`/`\emspace`/`\enspace`/`\zwnj`/`\zwj` 등 RTF 특수 문자 escape 매핑.
 - `tools/PolyDonky.SmokeTest`: DOC(RTF) 라운드트립 검증 케이스 2종 추가 — DocWriter↔DocReader 서식·빈 단락 라운드트립, 그리고 합성 CP949 RTF 의 `\'XX` + `\uc1` fallback 디코딩.
 

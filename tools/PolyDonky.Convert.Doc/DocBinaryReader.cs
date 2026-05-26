@@ -8,7 +8,7 @@ using PolyDonky.Core;
 namespace PolyDonky.Convert.Doc;
 
 /// <summary>
-/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a/1b — 텍스트·단락·기본 서식).
+/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a/1b/1c — 텍스트·단락·서식).
 ///
 /// 참고 공식 공개 명세:
 ///   - [MS-DOC]      Word (.doc) Binary File Format — FIB·CLX·piece table·PAPX/CHPX·SEPX 등
@@ -23,15 +23,18 @@ namespace PolyDonky.Convert.Doc;
 ///   - CLX / Piece Table 따라 WordDocument stream 에서 텍스트 추출 (MS-DOC §2.3, §2.8)
 ///   - 단락 마커 0x0D 기준 단락 분리; 표 셀 마커 0x07 / 줄바꿈 0x0B / 페이지 break 0x0C /
 ///     필드 제어 0x13..0x15 등은 공백·줄바꿈으로 정규화하거나 폐기
-///   - PAPX 운영 → 단락 정렬 (sprmPJc80 0x2461)                                    (Phase 1b)
+///   - PAPX 운영 → 정렬(sprmPJc80 0x2461) / 들여쓰기(sprmPDxaLeft 0x845D, sprmPDxaRight 0x845E,
+///     sprmPDxaLeft1 0x8460) / 단락 간격(sprmPDyaBefore 0xA413, sprmPDyaAfter 0xA415) /
+///     줄 간격(sprmPDyaLine 0x6412 LSPD)                                            (Phase 1b/1c)
 ///   - CHPX 운영 → 굵게(0x0835)·이탤릭(0x0836)·취소선(0x0837)·밑줄(0x2A3E)·
-///     글자 크기(sprmCHps 0x4A43) 로 Run 분할                                       (Phase 1b)
+///     글자 크기(sprmCHps 0x4A43) / 전경색(sprmCIco 0x2A42 팔레트, sprmCCv 0x6870 RGB) /
+///     하이라이트(sprmCHighlight 0x2A0C) 로 Run 분할                                 (Phase 1b/1c)
 ///   - SummaryInformation PropertySet (MS-OLEPS §2.18) 에서 Title/Subject/Author/Keywords/
 ///     LastSavedBy/Created/Modified/AppName 추출 (VT_LPSTR/VT_LPWSTR/VT_FILETIME)
 ///   - 비-OLE2 입력·손상 CFB 컨테이너는 한국어 진단으로 명확히 거부
 ///
 /// 의도적으로 다음 작업의 범위 밖 (다음 PR 들에서 다룸):
-///   - 폰트 패밀리·색상·하이라이트 (CHPX 추가 sprm)                                  (Phase 1c)
+///   - 폰트 패밀리 (STTB FFN 운영) / 스타일 시트 (STSH stream)                         (Phase 1d)
 ///   - 표 / 이미지 / 필드 / 헤더·푸터 / 섹션                                          (Phase 2)
 ///   - MS-OFFCRYPTO 의 실제 해독 (RC4/AES 키 유도·복호화)
 ///
@@ -409,7 +412,9 @@ public class DocBinaryReader
         && a.Italic == b.Italic
         && a.Underline == b.Underline
         && a.Strikethrough == b.Strikethrough
-        && a.FontSizePt == b.FontSizePt;
+        && a.FontSizePt == b.FontSizePt
+        && Nullable.Equals(a.Foreground, b.Foreground)
+        && Nullable.Equals(a.Background, b.Background);
 
     // ─────────────────────────────── 메타데이터 ─────────────────────────────────
 
@@ -526,11 +531,21 @@ public class DocBinaryReader
     //                                     ChpxInFkp = cb(1) + grpprlInChpx(cb byte). istd 없음.
     //
     // 본 단계에서 인식하는 sprm (Word 97+):
-    //   PAPX:  sprmPJc80 (0x2461)  — 단락 정렬 1 byte (0=L, 1=C, 2=R, 3=J)
+    //   PAPX:  sprmPJc80     (0x2461)  — 단락 정렬 1 byte (0=L, 1=C, 2=R, 3=J)
+    //          sprmPDxaLeft  (0x845D)  — 왼쪽 들여쓰기 (signed twips, 2-byte)
+    //          sprmPDxaRight (0x845E)  — 오른쪽 들여쓰기 (signed twips, 2-byte)
+    //          sprmPDxaLeft1 (0x8460)  — 첫 줄 들여쓰기 (signed twips, 2-byte)
+    //          sprmPDyaBefore(0xA413)  — 단락 앞 여백 (unsigned twips, 2-byte)
+    //          sprmPDyaAfter (0xA415)  — 단락 뒤 여백 (unsigned twips, 2-byte)
+    //          sprmPDyaLine  (0x6412)  — 줄 간격 LSPD (4-byte: dyaLine + fMultLinespace)
     //   CHPX:  sprmCFBold (0x0835), sprmCFItalic (0x0836)        — 1 byte toggle/on/off
-    //          sprmCFUnderline (0x2A3E)                          — 1 byte (0=none, 그 외=ON)
-    //          sprmCHps (0x4A43)                                 — 2 byte 글자크기 (half-points)
-    // 그 외 sprm 은 본 단계에서 무시 — Phase 2 에서 점진적으로 추가한다.
+    //          sprmCFStrike    (0x0837)                           — 1 byte
+    //          sprmCKul        (0x2A3E)                           — 1 byte (0=none, 그 외=ON)
+    //          sprmCHps        (0x4A43)                           — 2 byte 글자크기 (half-points)
+    //          sprmCIco        (0x2A42)                           — 1 byte Word16 팔레트 전경색
+    //          sprmCCv         (0x6870)                           — 4 byte RGB+1 (Word 2002+) 전경색
+    //          sprmCHighlight  (0x2A0C)                           — 1 byte Word16 팔레트 하이라이트
+    // 그 외 sprm 은 본 단계에서 무시 — Phase 1d/2 에서 점진적으로 추가한다 (폰트 패밀리는 STSH/STTB FFN 필요).
 
     private sealed class FormatStyles
     {
@@ -563,20 +578,67 @@ public class DocBinaryReader
             bool touched = false;
             WalkSprms(grpprl, (sprm, operand) =>
             {
-                if (sprm == 0x2461 && operand.Length >= 1)
+                switch (sprm)
                 {
-                    style.Alignment = operand[0] switch
-                    {
-                        1 => Alignment.Center,
-                        2 => Alignment.Right,
-                        3 => Alignment.Justify,
-                        _ => Alignment.Left,
-                    };
-                    touched = true;
+                    case 0x2461:  // sprmPJc80 — alignment
+                        if (operand.Length >= 1)
+                        {
+                            style.Alignment = operand[0] switch
+                            {
+                                1 => Alignment.Center,
+                                2 => Alignment.Right,
+                                3 => Alignment.Justify,
+                                _ => Alignment.Left,
+                            };
+                            touched = true;
+                        }
+                        break;
+                    case 0x845D:  // sprmPDxaLeft  — left indent (signed twips)
+                        if (operand.Length >= 2)
+                        { style.IndentLeftMm  = BitConverter.ToInt16(operand, 0) * TwipsToMm; touched = true; }
+                        break;
+                    case 0x845E:  // sprmPDxaRight — right indent
+                        if (operand.Length >= 2)
+                        { style.IndentRightMm = BitConverter.ToInt16(operand, 0) * TwipsToMm; touched = true; }
+                        break;
+                    case 0x8460:  // sprmPDxaLeft1 — first-line indent (relative to left)
+                        if (operand.Length >= 2)
+                        { style.IndentFirstLineMm = BitConverter.ToInt16(operand, 0) * TwipsToMm; touched = true; }
+                        break;
+                    case 0xA413:  // sprmPDyaBefore — space before (unsigned twips)
+                        if (operand.Length >= 2)
+                        { style.SpaceBeforePt = BitConverter.ToUInt16(operand, 0) / 20.0; touched = true; }
+                        break;
+                    case 0xA415:  // sprmPDyaAfter — space after
+                        if (operand.Length >= 2)
+                        { style.SpaceAfterPt  = BitConverter.ToUInt16(operand, 0) / 20.0; touched = true; }
+                        break;
+                    case 0x6412:  // sprmPDyaLine — LSPD (dyaLine + fMultLinespace)
+                        if (operand.Length >= 4)
+                        {
+                            short  dyaLine = BitConverter.ToInt16(operand, 0);
+                            ushort fMult   = BitConverter.ToUInt16(operand, 2);
+                            // fMultLinespace == 1 → dyaLine 은 240ths of single (1.0).
+                            // == 0 → 절대 twips (양수=at least, 음수=exactly) — 본 모델의 LineHeightFactor 로
+                            // 정확 표현 불가하나 single 기준 multiplier 로 근사한다.
+                            if (fMult == 1 && dyaLine > 0)
+                            { style.LineHeightFactor = dyaLine / 240.0; touched = true; }
+                            else if (fMult == 0 && dyaLine != 0)
+                            {
+                                // 12pt 기준 1.0 줄높이 (대략). 정밀하진 않지만 본 단계 휴리스틱.
+                                double abs = Math.Abs(dyaLine) / 240.0;
+                                if (abs > 0.5 && abs < 5.0)
+                                { style.LineHeightFactor = abs; touched = true; }
+                            }
+                        }
+                        break;
                 }
             });
             return touched ? style : null;
         }
+
+        // Twips → mm 변환 — 1 mm = 56.692 twips (1440/25.4).
+        private const double TwipsToMm = 1.0 / 56.692;
 
         public RunStyle? GetRunStyle(int charFc)
         {
@@ -608,10 +670,55 @@ public class DocBinaryReader
                             if (halfPt > 0 && halfPt < 1000) { rs.FontSizePt = halfPt / 2.0; touched = true; }
                         }
                         break;
+                    case 0x2A42:  // sprmCIco — legacy 16-color palette index (전경색)
+                        if (operand.Length >= 1)
+                        {
+                            var c = WordPaletteColor(operand[0]);
+                            if (c.HasValue) { rs.Foreground = c.Value; touched = true; }
+                        }
+                        break;
+                    case 0x6870:  // sprmCCv — Word 2002+ 24-bit RGB + auto byte
+                        if (operand.Length >= 4 && operand[3] != 0xFF)
+                        {
+                            // 4번째 byte 가 0xFF 면 auto (적용 안 함). 그 외는 RGB.
+                            rs.Foreground = new Color(operand[0], operand[1], operand[2]);
+                            touched = true;
+                        }
+                        break;
+                    case 0x2A0C:  // sprmCHighlight — 1-byte palette index (하이라이트)
+                        if (operand.Length >= 1)
+                        {
+                            var c = WordPaletteColor(operand[0]);
+                            if (c.HasValue) { rs.Background = c.Value; touched = true; }
+                        }
+                        break;
                 }
             });
             return touched ? rs : null;
         }
+
+        // [MS-DOC] Word 16-color palette (sprmCIco, sprmCHighlight 의 1-byte 인덱스).
+        // 0 = auto (부모 색 상속 — null 반환).
+        private static Color? WordPaletteColor(byte ico) => ico switch
+        {
+            1  => new Color(0,   0,   0),     //  1 Black
+            2  => new Color(0,   0,   255),   //  2 Blue
+            3  => new Color(0,   255, 255),   //  3 Cyan
+            4  => new Color(0,   255, 0),     //  4 Green
+            5  => new Color(255, 0,   255),   //  5 Magenta
+            6  => new Color(255, 0,   0),     //  6 Red
+            7  => new Color(255, 255, 0),     //  7 Yellow
+            8  => new Color(255, 255, 255),   //  8 White
+            9  => new Color(0,   0,   128),   //  9 Dark Blue
+            10 => new Color(0,   128, 128),   // 10 Dark Cyan
+            11 => new Color(0,   128, 0),     // 11 Dark Green
+            12 => new Color(128, 0,   128),   // 12 Dark Magenta
+            13 => new Color(128, 0,   0),     // 13 Dark Red
+            14 => new Color(128, 128, 0),     // 14 Dark Yellow
+            15 => new Color(128, 128, 128),   // 15 Dark Gray
+            16 => new Color(192, 192, 192),   // 16 Light Gray
+            _  => null,                       //  0 auto / 그 외 알 수 없음
+        };
 
         private byte[]? LoadGrpprl(
             List<BteEntry> bte,

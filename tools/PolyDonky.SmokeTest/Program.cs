@@ -30,6 +30,7 @@ harness.Run("DOC (Word 97-2003 binary) — 합성 OLE2 → 텍스트·단락 추
 harness.Run("DOC (Word 97-2003 binary) — MS-OFFCRYPTO 암호화 감지 후 거부", DocBinaryEncryptedRejected);
 harness.Run("DOC (Word 97-2003 binary) — 비-OLE2 입력은 친절한 한국어 에러로 거부", DocBinaryNonOleRejected);
 harness.Run("DOC (Word 97-2003 binary) — Phase 1b PAPX 단락 정렬 + CHPX 굵게·크기 적용", DocBinaryPapxChpxFormatting);
+harness.Run("DOC (Word 97-2003 binary) — Phase 1c PAPX 들여쓰기·간격·줄간격 + CHPX 색·하이라이트", DocBinaryPhase1cFormatting);
 
 return harness.Finish();
 
@@ -593,6 +594,135 @@ static void DocBinaryPapxChpxFormatting()
         var lastRun1 = paragraphs[0].Runs[^1];
         SmokeHarness.True(!lastRun1.Style.Bold,
             $"단락 1 마지막 Run 은 일반 (got Bold={lastRun1.Style.Bold}, text='{lastRun1.Text}')");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase1cFormatting()
+{
+    // 1 단락 "Styled" 에 PAPX 들여쓰기 720 twips (=0.5 inch ≈ 12.7 mm), 단락-앞 간격 240 twips (=12 pt),
+    // 줄 간격 LSPD(dyaLine=360, fMult=1 → 1.5x), CHPX sprmCCv = #FF0000 (red),
+    // sprmCHighlight = 7 (yellow). 단일 piece + 단일 PAPX + 단일 CHPX 합성.
+    const string text = "Styled\r";   // 7 chars; ccpText = 7
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText  = 0x200;
+    int pnPapx  = 4;
+    int pnChpx  = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize    = fcChpxFkp + 512;
+
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // ── PAPX FKP ───────────────────────────────────────────────
+    // cpara=1, rgfc[0]=0x200, rgfc[1]=0x210 (단락이 다루는 fc 상한)
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)0x210);
+    int papx0Off = 200;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);  // bOffset = 100
+
+    // PapxInFkp: cb=0 형식 → grpprlSize = cb'*2 = 16. istd(2) + 4 sprm-pair(14) = 16.
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0;   // cb=0 (variable form)
+    wd[p++] = 8;   // cb' = 8 → grpprl size = 16 byte
+    // istd (2 byte) = 0
+    p += 2;
+    // sprmPDxaLeft (0x845D, 2-byte signed): 720 twips
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0x845D); p += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (short)720);     p += 2;
+    // sprmPDyaBefore (0xA413, 2-byte unsigned): 240 twips
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0xA413); p += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)240);    p += 2;
+    // sprmPDyaLine (0x6412, 4-byte LSPD)
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0x6412); p += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (short)360);     p += 2;  // dyaLine
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)1);      p += 2;  // fMultLinespace = 1
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // ── CHPX FKP ───────────────────────────────────────────────
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)0x20E);   // 7 chars * 2 byte = 14 (0xE)
+    int chpx0Off = 64;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    // ChpxInFkp: cb = 9 (sprmCCv 6 + sprmCHighlight 3)
+    int c = fcChpxFkp + chpx0Off;
+    wd[c++] = 9;
+    // sprmCCv (0x6870, 4-byte: R, G, B, fAuto)
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6870); c += 2;
+    wd[c++] = 0xFF; wd[c++] = 0x00; wd[c++] = 0x00; wd[c++] = 0x00;  // red, not auto
+    // sprmCHighlight (0x2A0C, 1-byte palette index)
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x2A0C); c += 2;
+    wd[c++] = 7;  // yellow
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // ── Table stream ───────────────────────────────────────────
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var table = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(table);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var ps  = doc.EnumerateParagraphs().First().Style;
+        var run = doc.EnumerateParagraphs().First().Runs[0];
+
+        // PAPX
+        SmokeHarness.True(Math.Abs(ps.IndentLeftMm - 720.0 / 56.692) < 0.01,
+            $"PAPX 들여쓰기 12.7 mm (got {ps.IndentLeftMm:F2})");
+        SmokeHarness.Equal(12.0, ps.SpaceBeforePt, "PAPX 단락 앞 간격 12pt");
+        SmokeHarness.Equal(1.5,  ps.LineHeightFactor, "PAPX 줄 간격 1.5x");
+
+        // CHPX
+        SmokeHarness.True(run.Style.Foreground.HasValue, "CHPX sprmCCv 전경색이 설정됨");
+        SmokeHarness.Equal((byte)255, run.Style.Foreground!.Value.R, "전경 R = 255 (red)");
+        SmokeHarness.Equal((byte)0,   run.Style.Foreground!.Value.G, "전경 G = 0");
+        SmokeHarness.True(run.Style.Background.HasValue, "CHPX sprmCHighlight 배경색이 설정됨");
+        SmokeHarness.Equal((byte)255, run.Style.Background!.Value.R, "하이라이트 R = 255");
+        SmokeHarness.Equal((byte)255, run.Style.Background!.Value.G, "하이라이트 G = 255 (yellow)");
+        SmokeHarness.Equal((byte)0,   run.Style.Background!.Value.B, "하이라이트 B = 0");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
