@@ -31,6 +31,7 @@ harness.Run("DOC (Word 97-2003 binary) — MS-OFFCRYPTO 암호화 감지 후 거
 harness.Run("DOC (Word 97-2003 binary) — 비-OLE2 입력은 친절한 한국어 에러로 거부", DocBinaryNonOleRejected);
 harness.Run("DOC (Word 97-2003 binary) — Phase 1b PAPX 단락 정렬 + CHPX 굵게·크기 적용", DocBinaryPapxChpxFormatting);
 harness.Run("DOC (Word 97-2003 binary) — Phase 1c PAPX 들여쓰기·간격·줄간격 + CHPX 색·하이라이트", DocBinaryPhase1cFormatting);
+harness.Run("DOC (Word 97-2003 binary) — Phase 1d STTB FFN + sprmCRgFtc0 폰트 패밀리", DocBinaryPhase1dFontFamily);
 
 return harness.Finish();
 
@@ -723,6 +724,131 @@ static void DocBinaryPhase1cFormatting()
         SmokeHarness.Equal((byte)255, run.Style.Background!.Value.R, "하이라이트 R = 255");
         SmokeHarness.Equal((byte)255, run.Style.Background!.Value.G, "하이라이트 G = 255 (yellow)");
         SmokeHarness.Equal((byte)0,   run.Style.Background!.Value.B, "하이라이트 B = 0");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase1dFontFamily()
+{
+    // STTB FFN 에 폰트명 "Malgun Gothic" 1 개 등록, CHPX sprmCRgFtc0 = 0 으로 Run 에 적용.
+    const string fontName = "Malgun Gothic";
+    const string text = "FontTest\r";   // 9 chars; ccpText = 9
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText  = 0x200;
+    int pnPapx  = 4;
+    int pnChpx  = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize    = fcChpxFkp + 512;
+
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // ── PAPX FKP (정렬만; FontFamily 와 무관) ──────────────────
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)0x214);
+    int papx0Off = 200;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 3;   // cb=3 (grpprl size = 5)
+    p += 2;        // istd
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0x2461); p += 2;
+    wd[p++] = 0;   // left
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // ── CHPX FKP (sprmCRgFtc0 = 0 → 첫 폰트) ──────────────────
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)0x212);  // 9 chars * 2 byte
+    int chpx0Off = 64;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    int c = fcChpxFkp + chpx0Off;
+    wd[c++] = 4;  // cb = 4 (sprmCRgFtc0 2 + operand 2)
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x4A4F); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0);      c += 2;  // ftc = 0
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // ── Table stream: CLX + PlcBtePapx + PlcBteChpx + STTB FFN ─
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    // CLX
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    // PlcBtePapx
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    // PlcBteChpx
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // STTB FFN (extended, 1 폰트)
+    // Header: 0xFFFF, cData=1, cbExtra=0
+    int sttbStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4.Slice(0, 2), (ushort)0xFFFF); tblMs.Write(b4.Slice(0, 2));
+    BitConverter.TryWriteBytes(b4.Slice(0, 2), (ushort)1);      tblMs.Write(b4.Slice(0, 2));
+    BitConverter.TryWriteBytes(b4.Slice(0, 2), (ushort)0);      tblMs.Write(b4.Slice(0, 2));
+    // Entry 1: cchData(2) + FFN
+    // FFN: 40 byte header + xszFfn (UTF-16LE null-terminated)
+    var nameBytes = Encoding.Unicode.GetBytes(fontName + "\0");  // null-term
+    int ffnSize = 40 + nameBytes.Length;
+    // cchData = ffnSize / 2 (wide-chars)
+    BitConverter.TryWriteBytes(b4.Slice(0, 2), (ushort)(ffnSize / 2)); tblMs.Write(b4.Slice(0, 2));
+    // FFN header 40 byte (대부분 0 으로 채움)
+    var ffnHdr = new byte[40];
+    ffnHdr[0] = (byte)(ffnSize - 1);  // cbFfnM1
+    ffnHdr[1] = 0;                    // flags
+    BitConverter.TryWriteBytes(ffnHdr.AsSpan(2), (ushort)400);  // wWeight
+    tblMs.Write(ffnHdr);
+    // xszFfn
+    tblMs.Write(nameBytes);
+    int sttbLen = (int)tblMs.Position - sttbStart;
+
+    var table = tblMs.ToArray();
+
+    // ── FIB ───────────────────────────────────────────────────
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0112), (uint)sttbStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0116), (uint)sttbLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(table);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var run = doc.EnumerateParagraphs().First().Runs[0];
+
+        SmokeHarness.Equal(fontName, run.Style.FontFamily ?? "", "CHPX sprmCRgFtc0 → STTB FFN 폰트명");
+        SmokeHarness.Equal("FontTest", run.Text, "본문 텍스트 보존");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }

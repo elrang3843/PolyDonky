@@ -8,7 +8,7 @@ using PolyDonky.Core;
 namespace PolyDonky.Convert.Doc;
 
 /// <summary>
-/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a/1b/1c — 텍스트·단락·서식).
+/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a~1d — 텍스트·단락·서식·폰트).
 ///
 /// 참고 공식 공개 명세:
 ///   - [MS-DOC]      Word (.doc) Binary File Format — FIB·CLX·piece table·PAPX/CHPX·SEPX 등
@@ -28,13 +28,14 @@ namespace PolyDonky.Convert.Doc;
 ///     줄 간격(sprmPDyaLine 0x6412 LSPD)                                            (Phase 1b/1c)
 ///   - CHPX 운영 → 굵게(0x0835)·이탤릭(0x0836)·취소선(0x0837)·밑줄(0x2A3E)·
 ///     글자 크기(sprmCHps 0x4A43) / 전경색(sprmCIco 0x2A42 팔레트, sprmCCv 0x6870 RGB) /
-///     하이라이트(sprmCHighlight 0x2A0C) 로 Run 분할                                 (Phase 1b/1c)
+///     하이라이트(sprmCHighlight 0x2A0C) / 폰트 패밀리(sprmCRgFtc0/1/2 0x4A4F/0x4A50/0x4A51
+///     + STTB FFN 운영) 로 Run 분할                                                  (Phase 1b/1c/1d)
 ///   - SummaryInformation PropertySet (MS-OLEPS §2.18) 에서 Title/Subject/Author/Keywords/
 ///     LastSavedBy/Created/Modified/AppName 추출 (VT_LPSTR/VT_LPWSTR/VT_FILETIME)
 ///   - 비-OLE2 입력·손상 CFB 컨테이너는 한국어 진단으로 명확히 거부
 ///
 /// 의도적으로 다음 작업의 범위 밖 (다음 PR 들에서 다룸):
-///   - 폰트 패밀리 (STTB FFN 운영) / 스타일 시트 (STSH stream)                         (Phase 1d)
+///   - 스타일 시트 (STSH stream) — Normal / Heading 1 등 명명된 스타일 상속              (Phase 1e)
 ///   - 표 / 이미지 / 필드 / 헤더·푸터 / 섹션                                          (Phase 2)
 ///   - MS-OFFCRYPTO 의 실제 해독 (RC4/AES 키 유도·복호화)
 ///
@@ -119,7 +120,10 @@ public class DocBinaryReader
         uint   FcPlcfBteChpx,
         uint   LcbPlcfBteChpx,
         uint   FcPlcfBtePapx,
-        uint   LcbPlcfBtePapx);
+        uint   LcbPlcfBtePapx,
+        // Phase 1d — Font Name STTB
+        uint   FcSttbfFfn,
+        uint   LcbSttbfFfn);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -160,8 +164,13 @@ public class DocBinaryReader
         uint fcPlcfBtePapx  = BitConverter.ToUInt32(wd, 0x0102);
         uint lcbPlcfBtePapx = BitConverter.ToUInt32(wd, 0x0106);
 
+        // Phase 1d — STTB FFN: [MS-DOC] FibRgFcLcb97 fcSttbfFfn @ 0x0112, lcbSttbfFfn @ 0x0116
+        uint fcSttbfFfn  = BitConverter.ToUInt32(wd, 0x0112);
+        uint lcbSttbfFfn = BitConverter.ToUInt32(wd, 0x0116);
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
-                       fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx);
+                       fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
+                       fcSttbfFfn, lcbSttbfFfn);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -413,6 +422,7 @@ public class DocBinaryReader
         && a.Underline == b.Underline
         && a.Strikethrough == b.Strikethrough
         && a.FontSizePt == b.FontSizePt
+        && string.Equals(a.FontFamily, b.FontFamily, StringComparison.Ordinal)
         && Nullable.Equals(a.Foreground, b.Foreground)
         && Nullable.Equals(a.Background, b.Background);
 
@@ -552,21 +562,24 @@ public class DocBinaryReader
         private readonly byte[] _wd;
         private readonly List<BteEntry> _papxBte;
         private readonly List<BteEntry> _chpxBte;
+        // Phase 1d — STTB FFN 에서 추출한 폰트명. sprmCRgFtc{0,1,2} 의 operand 인 ftc 가 이 인덱스.
+        private readonly IReadOnlyList<string> _fonts;
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
         private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _papxGrpprlCache = new();
         private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxGrpprlCache = new();
 
-        private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx)
+        private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx, IReadOnlyList<string> fonts)
         {
-            _wd = wd; _papxBte = papx; _chpxBte = chpx;
+            _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts;
         }
 
         public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
         {
-            var papx = ReadBte(table, (int)fib.FcPlcfBtePapx, (int)fib.LcbPlcfBtePapx);
-            var chpx = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
-            return new FormatStyles(wd, papx, chpx);
+            var papx  = ReadBte(table, (int)fib.FcPlcfBtePapx, (int)fib.LcbPlcfBtePapx);
+            var chpx  = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
+            var fonts = ReadSttbfFfn(table, (int)fib.FcSttbfFfn, (int)fib.LcbSttbfFfn);
+            return new FormatStyles(wd, papx, chpx, fonts);
         }
 
         public ParagraphStyle? GetParagraphStyle(int paraEndFc)
@@ -690,6 +703,21 @@ public class DocBinaryReader
                         {
                             var c = WordPaletteColor(operand[0]);
                             if (c.HasValue) { rs.Background = c.Value; touched = true; }
+                        }
+                        break;
+                    case 0x4A4F:  // sprmCRgFtc0 — ASCII/latin font (2-byte FTC index)
+                    case 0x4A50:  // sprmCRgFtc1 — East Asian font
+                    case 0x4A51:  // sprmCRgFtc2 — Other/complex font
+                        // 마지막 매칭이 RunStyle.FontFamily 를 덮어쓴다. 한 sprm 만 와도 충분.
+                        if (operand.Length >= 2)
+                        {
+                            int ftc = BitConverter.ToUInt16(operand, 0);
+                            if (ftc >= 0 && ftc < _fonts.Count)
+                            {
+                                var name = _fonts[ftc];
+                                if (!string.IsNullOrEmpty(name))
+                                { rs.FontFamily = name; touched = true; }
+                            }
                         }
                         break;
                 }
@@ -845,6 +873,64 @@ public class DocBinaryReader
                 i += operandSize;
                 onSprm(sprm, operand);
             }
+        }
+
+        // [MS-DOC] §2.9.262 SttbfFfn — Word 97+ 의 폰트 이름 STTB. 각 원소는 §2.9.85 FFN.
+        // Extended STTB header (6 byte): 0xFFFF marker + cData(2) + cbExtra(2).
+        // 각 entry: cchData(2 byte, FFN 의 wide-char 수) + FFN(cchData*2 byte) + cbExtra byte.
+        // FFN 내부에서 폰트명(xszFfn) 은 offset 40 부터 null-terminated UTF-16LE.
+        private static IReadOnlyList<string> ReadSttbfFfn(byte[] table, int fc, int lcb)
+        {
+            var fonts = new List<string>();
+            if (lcb <= 0 || fc < 0 || fc + lcb > table.Length) return fonts;
+
+            int pos = fc;
+            int end = fc + lcb;
+            bool extended;
+            int  cbExtra;
+            if (end - pos >= 6 && BitConverter.ToUInt16(table, pos) == 0xFFFF)
+            {
+                extended = true;
+                cbExtra  = BitConverter.ToUInt16(table, pos + 4);
+                pos += 6;
+            }
+            else if (end - pos >= 4)
+            {
+                // 비-extended (legacy) — Word 97+ 에서는 거의 없지만 fallback.
+                extended = false;
+                cbExtra  = BitConverter.ToUInt16(table, pos + 2);
+                pos += 4;
+            }
+            else
+            {
+                return fonts;
+            }
+
+            while (pos < end)
+            {
+                int hdrLen = extended ? 2 : 1;
+                if (pos + hdrLen > end) break;
+                int cchData = extended ? BitConverter.ToUInt16(table, pos) : table[pos];
+                int ffnByteLen = cchData * 2;
+                if (pos + hdrLen + ffnByteLen + cbExtra > end) break;
+
+                int ffnStart = pos + hdrLen;
+                string name = string.Empty;
+                if (ffnByteLen > 40)
+                {
+                    int nameStart = ffnStart + 40;
+                    int nameMax   = ffnStart + ffnByteLen;
+                    int nameEnd   = nameStart;
+                    while (nameEnd + 1 < nameMax && BitConverter.ToUInt16(table, nameEnd) != 0)
+                        nameEnd += 2;
+                    if (nameEnd > nameStart)
+                        name = Encoding.Unicode.GetString(table, nameStart, nameEnd - nameStart);
+                }
+                fonts.Add(name);
+
+                pos += hdrLen + ffnByteLen + cbExtra;
+            }
+            return fonts;
         }
 
         private readonly record struct BteEntry(int FcStart, int FcEnd, int PnFkp);
