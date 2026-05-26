@@ -8,7 +8,7 @@ using PolyDonky.Core;
 namespace PolyDonky.Convert.Doc;
 
 /// <summary>
-/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a — 텍스트·단락 추출).
+/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a/1b — 텍스트·단락·기본 서식).
 ///
 /// 참고 공식 공개 명세:
 ///   - [MS-DOC]      Word (.doc) Binary File Format — FIB·CLX·piece table·PAPX/CHPX·SEPX 등
@@ -23,13 +23,16 @@ namespace PolyDonky.Convert.Doc;
 ///   - CLX / Piece Table 따라 WordDocument stream 에서 텍스트 추출 (MS-DOC §2.3, §2.8)
 ///   - 단락 마커 0x0D 기준 단락 분리; 표 셀 마커 0x07 / 줄바꿈 0x0B / 페이지 break 0x0C /
 ///     필드 제어 0x13..0x15 등은 공백·줄바꿈으로 정규화하거나 폐기
+///   - PAPX 운영 → 단락 정렬 (sprmPJc80 0x2461)                                    (Phase 1b)
+///   - CHPX 운영 → 굵게(0x0835)·이탤릭(0x0836)·취소선(0x0837)·밑줄(0x2A3E)·
+///     글자 크기(sprmCHps 0x4A43) 로 Run 분할                                       (Phase 1b)
 ///   - SummaryInformation PropertySet (MS-OLEPS §2.18) 에서 Title/Subject/Author/Keywords/
 ///     LastSavedBy/Created/Modified/AppName 추출 (VT_LPSTR/VT_LPWSTR/VT_FILETIME)
 ///   - 비-OLE2 입력·손상 CFB 컨테이너는 한국어 진단으로 명확히 거부
 ///
 /// 의도적으로 다음 작업의 범위 밖 (다음 PR 들에서 다룸):
-///   - PAPX / CHPX FKP 운영 → 단락 정렬·굵게/이탤릭/밑줄/폰트 크기 (Phase 1b)
-///   - 표 / 이미지 / 필드 / 헤더·푸터 / 섹션 (Phase 2)
+///   - 폰트 패밀리·색상·하이라이트 (CHPX 추가 sprm)                                  (Phase 1c)
+///   - 표 / 이미지 / 필드 / 헤더·푸터 / 섹션                                          (Phase 2)
 ///   - MS-OFFCRYPTO 의 실제 해독 (RC4/AES 키 유도·복호화)
 ///
 /// 자체 구현인 이유는 CLAUDE.md: HWP 코덱과 마찬가지로 비-OSS 상용 라이브러리(Aspose 등) 의존을 피한다.
@@ -80,8 +83,10 @@ public class DocBinaryReader
             byte[] table = ReadAll(root, fib.TableStreamName)
                 ?? throw new InvalidOperationException($"{fib.TableStreamName} stream 이 없습니다.");
 
-            string text = ExtractText(wd, table, fib);
-            var doc = BuildDocument(text);
+            var (text, fcs) = ExtractTextWithFcs(wd, table, fib);
+            // Phase 1b — PAPX/CHPX 바인 테이블을 한 번 로드해서 단락·문자 서식 조회에 재사용.
+            var fmt = FormatStyles.Build(wd, table, fib);
+            var doc = BuildDocument(text, fcs, fmt);
 
             // 메타데이터 (best-effort)
             var summary = ReadAll(root, "SummaryInformation");
@@ -106,7 +111,12 @@ public class DocBinaryReader
         uint   LcbClx,
         ushort NFib,
         bool   Encrypted,
-        bool   Obfuscated);
+        bool   Obfuscated,
+        // Phase 1b — PAPX / CHPX bin tables (FIB §2.5.5 FibRgFcLcb97)
+        uint   FcPlcfBteChpx,
+        uint   LcbPlcfBteChpx,
+        uint   FcPlcfBtePapx,
+        uint   LcbPlcfBtePapx);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -138,7 +148,17 @@ public class DocBinaryReader
         uint fcClx   = BitConverter.ToUInt32(wd, 0x01A2);
         uint lcbClx  = BitConverter.ToUInt32(wd, 0x01A6);
 
-        return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated);
+        // PAPX / CHPX bin tables — Phase 1b
+        // [MS-DOC] §2.5.5 FibRgFcLcb97:
+        //   fcPlcfBteChpx @ 0x00FA, lcbPlcfBteChpx @ 0x00FE
+        //   fcPlcfBtePapx @ 0x0102, lcbPlcfBtePapx @ 0x0106
+        uint fcPlcfBteChpx  = BitConverter.ToUInt32(wd, 0x00FA);
+        uint lcbPlcfBteChpx = BitConverter.ToUInt32(wd, 0x00FE);
+        uint fcPlcfBtePapx  = BitConverter.ToUInt32(wd, 0x0102);
+        uint lcbPlcfBtePapx = BitConverter.ToUInt32(wd, 0x0106);
+
+        return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
+                       fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -157,15 +177,23 @@ public class DocBinaryReader
     // ─────────────────────────────── 텍스트 추출 ────────────────────────────────
 
     // 본문 main text 영역(CP 0..ccpText)에 대해 piece table 따라가며 raw 텍스트를 구성.
-    private static string ExtractText(byte[] wd, byte[] table, Fib fib)
+    // Phase 1b 부터 각 char 에 대응하는 file character position(FC byte offset) 도 함께 반환 —
+    // PAPX/CHPX 바인 테이블이 FC 기준이므로 단락/문자 서식 조회에 필수.
+    private static (string Text, int[] Fcs) ExtractTextWithFcs(byte[] wd, byte[] table, Fib fib)
     {
         if (fib.LcbClx == 0)
+        {
             // 비-복합 문서 — 매우 드물지만 fall-back. fcMin..fcMin+ccpText 를 1252 로 본다.
-            return DecodeAnsi(wd, (int)fib.FcMin, (int)fib.CcpText);
+            var s = DecodeAnsi(wd, (int)fib.FcMin, (int)fib.CcpText);
+            var fc = new int[s.Length];
+            for (int i = 0; i < s.Length; i++) fc[i] = (int)fib.FcMin + i;
+            return (s, fc);
+        }
 
         var pcds = ParsePieceTable(table, (int)fib.FcClx, (int)fib.LcbClx, out int[] cps);
 
-        var sb = new StringBuilder((int)fib.CcpText);
+        var sb  = new StringBuilder((int)fib.CcpText);
+        var fcs = new List<int>((int)fib.CcpText);
         for (int i = 0; i < pcds.Count; i++)
         {
             int cpStart = cps[i];
@@ -183,18 +211,29 @@ public class DocBinaryReader
             {
                 // ANSI (CP1252) 1-byte chars, fc /= 2.
                 fc /= 2;
-                sb.Append(DecodeAnsi(wd, fc, len));
+                if (fc < 0 || fc + len > wd.Length) continue;
+                var piece = DecodeAnsi(wd, fc, len);
+                for (int j = 0; j < piece.Length; j++)
+                {
+                    sb.Append(piece[j]);
+                    fcs.Add(fc + j);
+                }
             }
             else
             {
                 // UTF-16LE 2-byte chars.
                 int byteLen = len * 2;
                 if (fc < 0 || fc + byteLen > wd.Length) continue;
-                sb.Append(Encoding.Unicode.GetString(wd, fc, byteLen));
+                var piece = Encoding.Unicode.GetString(wd, fc, byteLen);
+                for (int j = 0; j < piece.Length; j++)
+                {
+                    sb.Append(piece[j]);
+                    fcs.Add(fc + j * 2);
+                }
             }
         }
 
-        return sb.ToString();
+        return (sb.ToString(), fcs.ToArray());
     }
 
     private sealed record Pcd(uint Fc);
@@ -276,26 +315,35 @@ public class DocBinaryReader
     //   0x08       → drawing anchor → 제거
     //   0x01       → picture anchor → 제거 (Phase 2 에서 이미지 처리)
     //   기타 0x00..0x1F 중 \t(0x09) 외 → 제거
-    private static PolyDonkyument BuildDocument(string raw)
+    // Phase 1b — 단락 경계(\r 또는 \f) 도달 시 그 FC 로 PAPX 를 조회해 단락 정렬 적용.
+    //          단락 내 각 char 의 FC 로 CHPX 를 조회해 같은 RunStyle 끼리 묶어 Run 분할.
+    private static PolyDonkyument BuildDocument(string raw, int[] fcs, FormatStyles fmt)
     {
         var doc     = new PolyDonkyument();
         var section = new Section();
         doc.Sections.Add(section);
 
-        var cur = new StringBuilder();
-        foreach (char c in raw)
+        var paraChars = new List<char>();
+        var paraFcs   = new List<int>();
+        int lastFc    = 0;
+
+        for (int i = 0; i < raw.Length; i++)
         {
+            char c  = raw[i];
+            int  fc = i < fcs.Length ? fcs[i] : lastFc;
+            lastFc = fc;
+
             switch (c)
             {
                 case '\r':
                 case '\f':  // page break — 단락 분리로 처리
-                    AppendParagraph(section, cur);
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt);
                     break;
                 case '\v':  // soft line break
-                    cur.Append('\n');
+                    paraChars.Add('\n'); paraFcs.Add(fc);
                     break;
                 case '':  // cell mark
-                    cur.Append('\t');
+                    paraChars.Add('\t'); paraFcs.Add(fc);
                     break;
                 case '': // field begin
                 case '': // field separator
@@ -308,28 +356,60 @@ public class DocBinaryReader
                     break;
                 case '\t':
                 case '\n':
-                    cur.Append(c);
+                    paraChars.Add(c); paraFcs.Add(fc);
                     break;
                 default:
                     if (c < 0x20) break;  // 그 외 제어 문자 폐기
-                    cur.Append(c);
+                    paraChars.Add(c); paraFcs.Add(fc);
                     break;
             }
         }
-        AppendParagraph(section, cur);
+        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt);
 
         if (section.Blocks.Count == 0) section.Blocks.Add(new Paragraph());
         return doc;
     }
 
-    private static void AppendParagraph(Section section, StringBuilder cur)
+    // Phase 1b — 누적된 (char, fc) 쌍을 한 단락으로 묶어 Section.Blocks 에 추가.
+    // 단락 정렬은 PAPX (paragraph end FC) 에서, run 분할은 CHPX (char FC) 에서 best-effort 로 적용.
+    private static void FlushParagraph(
+        Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt)
     {
-        var text = cur.ToString();
-        cur.Clear();
         var para = new Paragraph();
-        if (text.Length > 0) para.AddText(text);
+        var ps = fmt.GetParagraphStyle(paraEndFc);
+        if (ps is not null) para.Style = ps;
+
+        if (paraChars.Count > 0)
+        {
+            RunStyle? curStyle = null;
+            var curText = new StringBuilder();
+            for (int i = 0; i < paraChars.Count; i++)
+            {
+                var rs = fmt.GetRunStyle(paraFcs[i]) ?? new RunStyle();
+                if (curStyle is null || !RunStyleEquals(curStyle, rs))
+                {
+                    if (curText.Length > 0 && curStyle is not null)
+                        para.AddText(curText.ToString(), curStyle);
+                    curStyle = rs;
+                    curText.Clear();
+                }
+                curText.Append(paraChars[i]);
+            }
+            if (curText.Length > 0 && curStyle is not null)
+                para.AddText(curText.ToString(), curStyle);
+        }
+
         section.Blocks.Add(para);
+        paraChars.Clear();
+        paraFcs.Clear();
     }
+
+    private static bool RunStyleEquals(RunStyle a, RunStyle b)
+        => a.Bold == b.Bold
+        && a.Italic == b.Italic
+        && a.Underline == b.Underline
+        && a.Strikethrough == b.Strikethrough
+        && a.FontSizePt == b.FontSizePt;
 
     // ─────────────────────────────── 메타데이터 ─────────────────────────────────
 
@@ -431,6 +511,254 @@ public class DocBinaryReader
             s = Encoding.Unicode.GetString(data, offset + 4, byteLen);
         }
         return s.TrimEnd('\0');
+    }
+
+    // ─────────────────────────────── PAPX / CHPX 운영 (Phase 1b) ────────────────
+    //
+    // [MS-DOC] §2.4.6 BTE (Bin Table Entry) plex: aFC[n+1] + aPnFkp[n], 각 PnFkp 는 4-byte 페이지 번호.
+    // [MS-DOC] §2.8.1 PapxFkp (512 byte): rgfc[cpara+1] + rgbx[cpara] (각 13 byte BXPap) + cpara(1 byte at off 511).
+    //                                     BXPap = bOffset(1) + PHE(12); bOffset 단위는 2-byte.
+    //                                     bOffset 위치의 PapxInFkp = cb(1) + grpprlInPapx(...).
+    //                                       cb!=0 → 크기 = cb*2 - 1, grpprl 은 +1 에서 시작
+    //                                       cb==0 → 다음 1 byte cb'; 크기 = cb'*2, grpprl 은 +2 에서 시작
+    //                                     grpprlInPapx 의 첫 2 byte 는 istd; 그 뒤가 sprm 배열.
+    // [MS-DOC] §2.8.2 ChpxFkp (512 byte): rgfc[crun+1] + rgb[crun] (각 1 byte bOffset) + crun(1 byte at off 511).
+    //                                     ChpxInFkp = cb(1) + grpprlInChpx(cb byte). istd 없음.
+    //
+    // 본 단계에서 인식하는 sprm (Word 97+):
+    //   PAPX:  sprmPJc80 (0x2461)  — 단락 정렬 1 byte (0=L, 1=C, 2=R, 3=J)
+    //   CHPX:  sprmCFBold (0x0835), sprmCFItalic (0x0836)        — 1 byte toggle/on/off
+    //          sprmCFUnderline (0x2A3E)                          — 1 byte (0=none, 그 외=ON)
+    //          sprmCHps (0x4A43)                                 — 2 byte 글자크기 (half-points)
+    // 그 외 sprm 은 본 단계에서 무시 — Phase 2 에서 점진적으로 추가한다.
+
+    private sealed class FormatStyles
+    {
+        private readonly byte[] _wd;
+        private readonly List<BteEntry> _papxBte;
+        private readonly List<BteEntry> _chpxBte;
+
+        // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
+        private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _papxGrpprlCache = new();
+        private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxGrpprlCache = new();
+
+        private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx)
+        {
+            _wd = wd; _papxBte = papx; _chpxBte = chpx;
+        }
+
+        public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
+        {
+            var papx = ReadBte(table, (int)fib.FcPlcfBtePapx, (int)fib.LcbPlcfBtePapx);
+            var chpx = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
+            return new FormatStyles(wd, papx, chpx);
+        }
+
+        public ParagraphStyle? GetParagraphStyle(int paraEndFc)
+        {
+            var grpprl = LoadGrpprl(_papxBte, _papxGrpprlCache, paraEndFc, isPapx: true);
+            if (grpprl is null || grpprl.Length == 0) return null;
+
+            var style = new ParagraphStyle();
+            bool touched = false;
+            WalkSprms(grpprl, (sprm, operand) =>
+            {
+                if (sprm == 0x2461 && operand.Length >= 1)
+                {
+                    style.Alignment = operand[0] switch
+                    {
+                        1 => Alignment.Center,
+                        2 => Alignment.Right,
+                        3 => Alignment.Justify,
+                        _ => Alignment.Left,
+                    };
+                    touched = true;
+                }
+            });
+            return touched ? style : null;
+        }
+
+        public RunStyle? GetRunStyle(int charFc)
+        {
+            var grpprl = LoadGrpprl(_chpxBte, _chpxGrpprlCache, charFc, isPapx: false);
+            if (grpprl is null || grpprl.Length == 0) return null;
+
+            var rs = new RunStyle();
+            bool touched = false;
+            WalkSprms(grpprl, (sprm, operand) =>
+            {
+                switch (sprm)
+                {
+                    case 0x0835:  // sprmCFBold
+                        if (operand.Length >= 1) { rs.Bold = operand[0] != 0; touched = true; }
+                        break;
+                    case 0x0836:  // sprmCFItalic
+                        if (operand.Length >= 1) { rs.Italic = operand[0] != 0; touched = true; }
+                        break;
+                    case 0x0837:  // sprmCFStrike
+                        if (operand.Length >= 1) { rs.Strikethrough = operand[0] != 0; touched = true; }
+                        break;
+                    case 0x2A3E:  // sprmCKul (underline kind)
+                        if (operand.Length >= 1) { rs.Underline = operand[0] != 0; touched = true; }
+                        break;
+                    case 0x4A43:  // sprmCHps (font size in half-points)
+                        if (operand.Length >= 2)
+                        {
+                            ushort halfPt = BitConverter.ToUInt16(operand, 0);
+                            if (halfPt > 0 && halfPt < 1000) { rs.FontSizePt = halfPt / 2.0; touched = true; }
+                        }
+                        break;
+                }
+            });
+            return touched ? rs : null;
+        }
+
+        private byte[]? LoadGrpprl(
+            List<BteEntry> bte,
+            Dictionary<(int Pn, int RgIdx), byte[]?> cache,
+            int fc, bool isPapx)
+        {
+            if (bte.Count == 0) return null;
+            // BTE 내에서 fc 가 [FcStart, FcEnd) 에 속하는 entry 찾기 — 보통 페이지 수가 적어 선형 충분.
+            int pn = -1;
+            foreach (var e in bte)
+            {
+                if (fc >= e.FcStart && fc < e.FcEnd) { pn = e.PnFkp; break; }
+            }
+            if (pn < 0) return null;
+
+            int fkpOff = pn * 512;
+            if (fkpOff < 0 || fkpOff + 512 > _wd.Length) return null;
+
+            int cRun = _wd[fkpOff + 511];
+            if (cRun == 0) return null;
+
+            // rgfc[cRun+1] 에서 i 를 찾아 fc ∈ [rgfc[i], rgfc[i+1])
+            int rgIdx = -1;
+            for (int i = 0; i < cRun; i++)
+            {
+                int fc0 = BitConverter.ToInt32(_wd, fkpOff + i * 4);
+                int fc1 = BitConverter.ToInt32(_wd, fkpOff + (i + 1) * 4);
+                if (fc >= fc0 && fc < fc1) { rgIdx = i; break; }
+            }
+            if (rgIdx < 0) return null;
+
+            if (cache.TryGetValue((pn, rgIdx), out var cached)) return cached;
+
+            int rgbxBase = fkpOff + 4 * (cRun + 1);
+            int bOffset;
+            if (isPapx)
+            {
+                // BXPap = 13 byte; first byte = bOffset
+                bOffset = _wd[rgbxBase + rgIdx * 13];
+            }
+            else
+            {
+                // ChpxFkp rgb = 1 byte each
+                bOffset = _wd[rgbxBase + rgIdx];
+            }
+            byte[]? result;
+            if (bOffset == 0)
+            {
+                result = null;
+            }
+            else
+            {
+                int xinFkpOff = fkpOff + bOffset * 2;
+                result = isPapx ? ReadPapxInFkp(_wd, xinFkpOff) : ReadChpxInFkp(_wd, xinFkpOff);
+            }
+            cache[(pn, rgIdx)] = result;
+            return result;
+        }
+
+        private static byte[]? ReadPapxInFkp(byte[] data, int off)
+        {
+            if (off < 0 || off >= data.Length) return null;
+            byte cb = data[off];
+            int grpprlStart, grpprlSize;
+            if (cb == 0)
+            {
+                if (off + 1 >= data.Length) return null;
+                byte cb2 = data[off + 1];
+                grpprlSize = cb2 * 2;
+                grpprlStart = off + 2;
+            }
+            else
+            {
+                grpprlSize = cb * 2 - 1;
+                grpprlStart = off + 1;
+            }
+            if (grpprlSize < 2 || grpprlStart + grpprlSize > data.Length) return null;
+            // 처음 2 byte 는 istd — sprm 만 잘라낸다.
+            int sprmsLen = grpprlSize - 2;
+            var sprms = new byte[sprmsLen];
+            Buffer.BlockCopy(data, grpprlStart + 2, sprms, 0, sprmsLen);
+            return sprms;
+        }
+
+        private static byte[]? ReadChpxInFkp(byte[] data, int off)
+        {
+            if (off < 0 || off >= data.Length) return null;
+            byte cb = data[off];
+            if (cb == 0) return Array.Empty<byte>();
+            if (off + 1 + cb > data.Length) return null;
+            var sprms = new byte[cb];
+            Buffer.BlockCopy(data, off + 1, sprms, 0, cb);
+            return sprms;
+        }
+
+        // [MS-DOC] §2.6.2 Sprm: 2-byte sprm 헤더 → ispmd(9) + fSpec(1) + sgc(3) + spra(3).
+        // spra 가 operand 크기를 결정: 0/1 → 1 byte, 2/4/5 → 2 byte, 3 → 4 byte, 7 → 3 byte,
+        // 6 → variable (다음 1 byte 가 길이).
+        private static void WalkSprms(byte[] sprms, Action<ushort, byte[]> onSprm)
+        {
+            int i = 0;
+            while (i + 2 <= sprms.Length)
+            {
+                ushort sprm = BitConverter.ToUInt16(sprms, i);
+                i += 2;
+                int spra = (sprm >> 13) & 0x07;
+                int operandSize;
+                switch (spra)
+                {
+                    case 0: case 1: operandSize = 1; break;
+                    case 2: case 4: case 5: operandSize = 2; break;
+                    case 3: operandSize = 4; break;
+                    case 7: operandSize = 3; break;
+                    case 6:
+                        if (i >= sprms.Length) return;
+                        operandSize = sprms[i];
+                        i += 1;
+                        break;
+                    default: return;
+                }
+                if (i + operandSize > sprms.Length) return;
+                var operand = new byte[operandSize];
+                Buffer.BlockCopy(sprms, i, operand, 0, operandSize);
+                i += operandSize;
+                onSprm(sprm, operand);
+            }
+        }
+
+        private readonly record struct BteEntry(int FcStart, int FcEnd, int PnFkp);
+
+        private static List<BteEntry> ReadBte(byte[] table, int fc, int lcb)
+        {
+            var list = new List<BteEntry>();
+            if (lcb <= 4 || fc < 0 || fc + lcb > table.Length) return list;
+            // PlcBteFcN: aFC[n+1] (4 byte each) + aPnFkp[n] (4 byte each) → 8n + 4 = lcb
+            int n = (lcb - 4) / 8;
+            if (n <= 0) return list;
+            for (int i = 0; i < n; i++)
+            {
+                int fcStart = BitConverter.ToInt32(table, fc + i * 4);
+                int fcEnd   = BitConverter.ToInt32(table, fc + (i + 1) * 4);
+                // PnFkp 의 하위 22 bit 가 페이지 번호 (전체 4 byte 중 bit 0~21).
+                int pn      = BitConverter.ToInt32(table, fc + (n + 1) * 4 + i * 4) & 0x003FFFFF;
+                list.Add(new BteEntry(fcStart, fcEnd, pn));
+            }
+            return list;
+        }
     }
 
     // ─────────────────────────────── 유틸 ───────────────────────────────────────
