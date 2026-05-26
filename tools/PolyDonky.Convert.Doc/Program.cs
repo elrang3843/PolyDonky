@@ -4,14 +4,16 @@ using PolyDonky.Convert.Doc;
 using PolyDonky.Core;
 using PolyDonky.Iwpf;
 
-// PolyDonky.Convert.Doc — IWPF ↔ RTF 변환 전용 콘솔 도구.
+// PolyDonky.Convert.Doc — IWPF ↔ RTF / DOC (Word 97-2003 binary) 변환 콘솔 도구.
 // CLAUDE.md §3 의 외부 변환 모듈 분리 원칙: 메인 앱은 IWPF/MD/TXT 만 직접 처리하고
-// RTF 는 이 CLI 가 처리한다.
+// RTF / DOC 는 이 CLI 가 처리한다.
 //
 // 변환 파이프라인:
-//   *.iwpf → *.rtf : IwpfReader → DocWriter (RTF 생성기) → 저장
+//   *.rtf  → *.iwpf : DocReader       → IwpfWriter
+//   *.doc  → *.iwpf : DocBinaryReader → IwpfWriter   (Phase 1a — 텍스트·단락; 서식은 향후 PR)
+//   *.iwpf → *.rtf  : IwpfReader      → DocWriter
 //
-// 참고: DOC (Word 97-2003 OLE2 포맷)는 v1.0.0 이후에 지원 예정 (Aspose.Words)
+// 참고: .doc → .rtf 또는 .doc 쓰기는 미구현. DOC export 는 호환성 비용이 커서 보류.
 //
 // 사용법:
 //   PolyDonky.Convert.Doc <input> <output>
@@ -52,6 +54,7 @@ if (positional.Length != 2)
 {
     Console.Error.WriteLine("Usage: PolyDonky.Convert.Doc <input> <output> [--debug]");
     Console.Error.WriteLine("  Supported: .rtf → .iwpf  (import)");
+    Console.Error.WriteLine("             .doc → .iwpf  (import, Word 97-2003 OLE2 binary, Phase 1a — 텍스트·단락)");
     Console.Error.WriteLine("             .iwpf → .rtf  (export)");
     return ConverterExitCodes.BadArgs;
 }
@@ -78,12 +81,15 @@ if (string.Equals(inPath, outPath, StringComparison.OrdinalIgnoreCase))
     return ConverterExitCodes.BadArgs;
 }
 
-bool isImport = inExt == "rtf"  && outExt == "iwpf";
-bool isExport = inExt == "iwpf" && outExt == "rtf";
+bool isRtfImport = inExt == "rtf" && outExt == "iwpf";
+bool isDocImport = inExt == "doc" && outExt == "iwpf";
+bool isExport    = inExt == "iwpf" && outExt == "rtf";
+bool isImport    = isRtfImport || isDocImport;
 if (!isImport && !isExport)
 {
     Console.Error.WriteLine($"지원하지 않는 변환: .{inExt} → .{outExt}");
     Console.Error.WriteLine("  지원: .rtf → .iwpf  (import)");
+    Console.Error.WriteLine("        .doc → .iwpf  (import)");
     Console.Error.WriteLine("        .iwpf → .rtf  (export)");
     return ConverterExitCodes.UnsupportedOp;
 }
@@ -114,11 +120,21 @@ if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
 try
 {
     PolyDonkyument doc;
-    if (isImport)
+    if (isRtfImport)
     {
         ConverterProgress.Write(0, "RTF 읽는 중");
         using (var fs = File.OpenRead(inPath))
             doc = new DocReader().Read(fs);
+
+        ConverterProgress.Write(80, "IWPF 로 변환 중");
+        using (var ofs = File.Create(outPath))
+            new IwpfWriter().Write(doc, ofs);
+    }
+    else if (isDocImport)
+    {
+        ConverterProgress.Write(0, "DOC (Word 97-2003 binary) 읽는 중");
+        using (var fs = File.OpenRead(inPath))
+            doc = new DocBinaryReader().Read(fs);
 
         ConverterProgress.Write(80, "IWPF 로 변환 중");
         using (var ofs = File.Create(outPath))
@@ -176,10 +192,13 @@ static void PrintHelp()
     Console.WriteLine();
     Console.WriteLine("변환 쌍:");
     Console.WriteLine("  *.rtf  → *.iwpf : import (텍스트·서식 지원)");
+    Console.WriteLine("  *.doc  → *.iwpf : import (Word 97-2003 OLE2 binary; Phase 1a — 텍스트·단락)");
     Console.WriteLine("  *.iwpf → *.rtf  : export (텍스트·서식·배경색 지원)");
     Console.WriteLine();
-    Console.WriteLine("향후 (v1.0.0 이후 언젠가):");
-    Console.WriteLine("  *.iwpf → *.doc  : export (Word 97-2003 OLE2 바이너리 포맷)");
+    Console.WriteLine("향후 단계:");
+    Console.WriteLine("  *.doc  → *.iwpf : Phase 1b — 단락 정렬·굵게/이탤릭/밑줄/폰트크기");
+    Console.WriteLine("  *.doc  → *.iwpf : Phase 2  — 표·이미지·필드·헤더/푸터·섹션");
+    Console.WriteLine("  *.iwpf → *.doc  : export (보류 — 호환성 비용 큼)");
     Console.WriteLine();
     Console.WriteLine("종료 코드:");
     Console.WriteLine("  0  성공");

@@ -44,6 +44,16 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Added
+- **DOC (Word 97-2003 binary) ingest — Phase 1a**: `tools/PolyDonky.Convert.Doc` 에 `DocBinaryReader` 추가. OLE2 Compound File 안의 WordDocument stream 의 FIB(File Information Block) → CLX(Complex File Information) → Piece Table 을 따라 텍스트를 추출하고 단락 마커 `0x0D` 기준으로 분리. 자체 구현(`OpenMcdf` 의존)으로 비-OSS 상용 라이브러리(Aspose 등) 회피. 메인 앱의 "열기" 다이얼로그 필터에 `*.doc` 추가, `ExternalConverter` 가 `.doc` → `Convert.Doc` CLI 로 라우팅.
+- DOC binary 인식의 공식 공개 명세 적용:
+  - **[MS-CFB]**: `OpenMcdf` 가 컨테이너 무결성을 검증; 비-OLE2 / 손상 입력은 한국어 진단 메시지로 래핑해 거부.
+  - **[MS-OLEPS]** §2.18 SummaryInformation PropertySet: PID 0x02 Title / 0x03 Subject / 0x04 Author / 0x05 Keywords / 0x06 Comments / 0x08 LastSavedBy(Editor) / 0x09 RevisionNumber / 0x0C CreateTime / 0x0D LastSavedTime / 0x12 AppName 를 VT_LPSTR / VT_LPWSTR / VT_FILETIME 인코딩으로 디코딩해 `DocumentMetadata` 와 `Custom` 사전에 매핑.
+  - **[MS-OFFCRYPTO]**: FIB flags 의 `fEncrypted`(bit 8) 또는 `EncryptionInfo`/`EncryptedSummary` stream 존재 시 본문 파싱 진입 전 거부 — 깨진 piece table 진입에 의한 의미 불명 예외를 방지.
+- `tools/PolyDonky.SmokeTest`: DOC binary 검증 케이스 3종 (합성 OLE2 텍스트·단락 round-trip, OFFCRYPTO 암호화 감지 거부, 비-OLE2 입력 거부).
+- DOC (RTF) Reader: `\bullet`/`\endash`/`\emdash`/`\lquote`/`\rquote`/`\ldblquote`/`\rdblquote`/`\emspace`/`\enspace`/`\zwnj`/`\zwj` 등 RTF 특수 문자 escape 매핑.
+- `tools/PolyDonky.SmokeTest`: DOC(RTF) 라운드트립 검증 케이스 2종 추가 — DocWriter↔DocReader 서식·빈 단락 라운드트립, 그리고 합성 CP949 RTF 의 `\'XX` + `\uc1` fallback 디코딩.
+
 ### Fixed
 - WPF App (`FlowDocumentBuilder.ApplyVerticalAlignmentToCell`): 표 셀에 수직 정렬(Middle/Bottom) 을 적용할 때 `Wpf.Paragraph.Margin/Padding` 의 NaN ("Auto") 값을 `TextBlock` 으로 그대로 옮겨 `set_Margin` 에서 `ArgumentException` (`'Auto,Auto,Auto,Auto'은(는) 'Margin' 속성의 유효한 값이 아닙니다.`) 가 발생하던 결함 수정 — `SanitizeThickness` 헬퍼로 NaN→0 정규화.
 - DOC (RTF) Reader: `\ansicpg<N>` 코드페이지를 인식해 `\'XX` 시퀀스를 해당 코드페이지(CP949/932/1252 등)로 디코딩 — Linux 환경의 시스템 기본 인코딩에 의존하던 한글 RTF 가 깨지는 문제 해결.
@@ -52,10 +62,6 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - DOC (RTF) Reader: `\info` 의 `\title`/`\author` 등 메타 필드 값에 포함된 `\u<N>?`·`\'XX` escape 를 디코딩 (이전에는 raw RTF 문자열 그대로 메타데이터로 저장됨).
 - DOC (RTF) Reader: `\creatim`/`\revtim` 의 `yr=0`/범위 밖 값에서 `DateTimeOffset` 생성자가 예외를 던지는 문제 — 안전 클램프 + try/catch 로 보호하고 실패 시 메타데이터를 비워둠.
 - DOC (RTF) Reader: 빈 단락 (`\par\par` 연속) 이 유실되던 결함 수정 — 사용자가 본 빈 줄이 그대로 보존됨.
-
-### Added
-- DOC (RTF) Reader: `\bullet`/`\endash`/`\emdash`/`\lquote`/`\rquote`/`\ldblquote`/`\rdblquote`/`\emspace`/`\enspace`/`\zwnj`/`\zwj` 등 RTF 특수 문자 escape 매핑.
-- `tools/PolyDonky.SmokeTest`: DOC(RTF) 라운드트립 검증 케이스 2종 추가 — DocWriter↔DocReader 서식·빈 단락 라운드트립, 그리고 합성 CP949 RTF 의 `\'XX` + `\uc1` fallback 디코딩.
 
 ---
 

@@ -14,6 +14,11 @@
     <ProjectReference Include="..\PolyDonky.Convert.Doc\PolyDonky.Convert.Doc.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- DOC (Word 97-2003) 합성 검증용 — OLE2 Compound File 을 in-memory 로 만들어 DocBinaryReader 에 흘려본다. -->
+    <PackageReference Include="OpenMcdf" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

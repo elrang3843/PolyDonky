@@ -26,6 +26,9 @@ harness.Run("HTML round-trip (HTML5 + tables + links)", HtmlRoundTrip);
 harness.Run("XML/XHTML round-trip (well-formed XHTML5)", XmlRoundTrip);
 harness.Run("DOC (RTF) round-trip — encoding/escape/empty-para", DocRtfRoundTrip);
 harness.Run("DOC (RTF) read — CP949 한글 \\'XX + \\uc1 fallback", DocRtfKoreanAnsi);
+harness.Run("DOC (Word 97-2003 binary) — 합성 OLE2 → 텍스트·단락 추출", DocBinaryMinimalRead);
+harness.Run("DOC (Word 97-2003 binary) — MS-OFFCRYPTO 암호화 감지 후 거부", DocBinaryEncryptedRejected);
+harness.Run("DOC (Word 97-2003 binary) — 비-OLE2 입력은 친절한 한국어 에러로 거부", DocBinaryNonOleRejected);
 
 return harness.Finish();
 
@@ -357,6 +360,128 @@ static void DocRtfKoreanAnsi()
         $"\\uc1 fallback '?' 소비 후 다음 텍스트 살아 있음 (got: {text})");
     SmokeHarness.True(!text.Contains("?"),
         $"fallback '?' 자체는 출력되지 않아야 함 (got: {text})");
+}
+
+static void DocBinaryMinimalRead()
+{
+    // Word 97-2003 binary 파일을 합성해 DocBinaryReader 가 텍스트·단락을 정확히 추출하는지 검증.
+    // 단락 마커 '\r' 기준 분리, UTF-16LE piece 디코딩, 한글 round-trip 까지 확인.
+    const string mainText = "Hello\rWorld\r한글 단락\r";  // 3 단락
+
+    byte[] wordDocBytes;
+    byte[] tableBytes;
+    BuildMinimalDocStreams(mainText, out wordDocBytes, out tableBytes);
+
+    // OLE2 컨테이너 생성 (임시 파일)
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var wd = root.CreateStream("WordDocument"))
+                wd.Write(wordDocBytes);
+            using (var tb = root.CreateStream("0Table"))
+                tb.Write(tableBytes);
+            // non-transacted 모드 — Commit 없이 Dispose 시 flush.
+        }
+
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        var paragraphs = doc.EnumerateParagraphs().ToList();
+        // mainText 의 마지막 '\r' 후 빈 단락을 BuildDocument 가 만들어내므로 단락 수는 4.
+        SmokeHarness.True(paragraphs.Count >= 3,
+            $"단락 수 >= 3 (got {paragraphs.Count})");
+        SmokeHarness.Equal("Hello",     paragraphs[0].GetPlainText(), "1st paragraph text");
+        SmokeHarness.Equal("World",     paragraphs[1].GetPlainText(), "2nd paragraph text");
+        SmokeHarness.Equal("한글 단락", paragraphs[2].GetPlainText(), "3rd paragraph text (Korean)");
+    }
+    finally
+    {
+        try { File.Delete(tmp); } catch { }
+    }
+}
+
+static void DocBinaryEncryptedRejected()
+{
+    // 같은 minimal 합성에 FIB flags 의 fEncrypted (bit 8 = 0x0100) 를 켜고 던지면
+    // 명세 [MS-OFFCRYPTO] 에 따라 본문 진입 전에 거부되어야 한다.
+    const string mainText = "ignored\r";
+    BuildMinimalDocStreams(mainText, out var wordDoc, out var table);
+    // FIB flags @ 0x000A 의 fEncrypted 비트 켜기
+    ushort flags = BitConverter.ToUInt16(wordDoc, 0x0A);
+    flags |= 0x0100;
+    BitConverter.TryWriteBytes(wordDoc.AsSpan(0x0A), flags);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    bool rejected = false;
+    string? msg = null;
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var wd = root.CreateStream("WordDocument")) wd.Write(wordDoc);
+            using (var tb = root.CreateStream("0Table"))       tb.Write(table);
+        }
+        using var fs = File.OpenRead(tmp);
+        try { new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs); }
+        catch (InvalidOperationException ex) { rejected = true; msg = ex.Message; }
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+
+    SmokeHarness.True(rejected, "fEncrypted 비트 켜진 .doc 는 거부되어야 함");
+    SmokeHarness.True(msg?.Contains("암호화") == true,
+        $"거부 메시지는 '암호화' 안내를 포함해야 함 (got: {msg})");
+}
+
+static void DocBinaryNonOleRejected()
+{
+    // OLE2 가 아닌 임의 byte 배열을 .doc 로 던지면 CFB 단계에서 친절한 한국어 에러로 거부되어야 한다.
+    var bogus = Encoding.UTF8.GetBytes("이건 그냥 텍스트 파일인데 누가 .doc 라고 우긴 경우.");
+    using var ms = new MemoryStream(bogus);
+    bool rejected = false;
+    string? msg = null;
+    try { new PolyDonky.Convert.Doc.DocBinaryReader().Read(ms); }
+    catch (InvalidOperationException ex) { rejected = true; msg = ex.Message; }
+    SmokeHarness.True(rejected, "OLE2 가 아닌 입력은 거부되어야 함");
+    SmokeHarness.True(msg?.Contains("Word 97-2003") == true || msg?.Contains("OLE2") == true,
+        $"거부 메시지는 형식 안내를 포함해야 함 (got: {msg})");
+}
+
+// minimal Word 97-2003 WordDocument + 0Table stream bytes 합성.
+// FIB(0x200) + UTF-16LE text  /  0Table = CLX(PCDT only, single piece)
+static void BuildMinimalDocStreams(string mainText, out byte[] wordDoc, out byte[] table)
+{
+    byte[] textBytes = Encoding.Unicode.GetBytes(mainText);
+    int fcTextStart  = 0x200;
+    int ccpText      = mainText.Length;
+
+    // CLX: 0x02 + lcb(4) + PlcPcd { aCP[2] + aPcd[1] = 8+8 = 16 bytes payload, lcb=16 }
+    var clx = new MemoryStream();
+    clx.WriteByte(0x02);
+    Span<byte> buf4 = stackalloc byte[4];
+    BitConverter.TryWriteBytes(buf4, (uint)16); clx.Write(buf4);
+    BitConverter.TryWriteBytes(buf4, (uint)0);          clx.Write(buf4);   // aCP[0] = 0
+    BitConverter.TryWriteBytes(buf4, (uint)ccpText);    clx.Write(buf4);   // aCP[1] = ccpText
+    // PCD: flags(2) + fc(4) + prm(2). fc 의 bit 30=0 이면 unicode, fc = byte offset.
+    clx.WriteByte(0); clx.WriteByte(0);                                    // flags
+    BitConverter.TryWriteBytes(buf4, (uint)fcTextStart); clx.Write(buf4);  // fc = 0x200
+    clx.WriteByte(0); clx.WriteByte(0);                                    // prm
+    table = clx.ToArray();
+
+    // FIB
+    var fib = new byte[0x200];
+    BitConverter.TryWriteBytes(fib.AsSpan(0x00),   (ushort)0xA5EC);  // magic
+    BitConverter.TryWriteBytes(fib.AsSpan(0x02),   (ushort)193);     // nFib
+    BitConverter.TryWriteBytes(fib.AsSpan(0x0A),   (ushort)0x0000);  // flags — fWhichTblStm = 0 → "0Table"
+    BitConverter.TryWriteBytes(fib.AsSpan(0x18),   (uint)fcTextStart); // fcMin
+    BitConverter.TryWriteBytes(fib.AsSpan(0x4C),   (uint)ccpText);   // ccpText
+    BitConverter.TryWriteBytes(fib.AsSpan(0x01A2), (uint)0);         // fcClx (Table stream 시작)
+    BitConverter.TryWriteBytes(fib.AsSpan(0x01A6), (uint)table.Length); // lcbClx
+
+    wordDoc = new byte[fcTextStart + textBytes.Length];
+    Buffer.BlockCopy(fib,       0, wordDoc, 0,             fib.Length);
+    Buffer.BlockCopy(textBytes, 0, wordDoc, fcTextStart,   textBytes.Length);
 }
 
 static byte[] TamperDocumentJson(byte[] original)

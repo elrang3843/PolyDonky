@@ -56,7 +56,8 @@ public static class KnownFormats
             "docx" or "hwpx"
             or "html" or "htm"
             or "xml"  or "xhtml"
-            or "hwp"  or "rtf" => true,
+            or "hwp"  or "rtf"
+            or "doc"           => true,   // Phase 1a — 텍스트·단락만, ingest 전용
             _ => false,
         };
     }
@@ -69,6 +70,7 @@ public static class KnownFormats
         "텍스트 (*.txt)|*.txt|" +
         // 외부 CLI 변환 후 IWPF 정본을 통해 읽음
         "Word DOCX (*.docx) — 외부 변환|*.docx|" +
+        "Word DOC (*.doc) — 외부 변환 (텍스트·단락만)|*.doc|" +
         "Word RTF (*.rtf) — 외부 변환|*.rtf|" +
         "한글 HWPX (*.hwpx) — 외부 변환|*.hwpx|" +
         "HTML (*.html;*.htm) — 외부 변환|*.html;*.htm|" +
