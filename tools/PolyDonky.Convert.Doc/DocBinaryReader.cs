@@ -8,7 +8,7 @@ using PolyDonky.Core;
 namespace PolyDonky.Convert.Doc;
 
 /// <summary>
-/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a/1b — 텍스트·단락·기본 서식).
+/// Word 97-2003 binary (.doc, OLE2 Compound File) → IWPF 변환기 (Phase 1a~1f — 텍스트·단락·서식·폰트·스타일·상속).
 ///
 /// 참고 공식 공개 명세:
 ///   - [MS-DOC]      Word (.doc) Binary File Format — FIB·CLX·piece table·PAPX/CHPX·SEPX 등
@@ -23,15 +23,19 @@ namespace PolyDonky.Convert.Doc;
 ///   - CLX / Piece Table 따라 WordDocument stream 에서 텍스트 추출 (MS-DOC §2.3, §2.8)
 ///   - 단락 마커 0x0D 기준 단락 분리; 표 셀 마커 0x07 / 줄바꿈 0x0B / 페이지 break 0x0C /
 ///     필드 제어 0x13..0x15 등은 공백·줄바꿈으로 정규화하거나 폐기
-///   - PAPX 운영 → 단락 정렬 (sprmPJc80 0x2461)                                    (Phase 1b)
+///   - PAPX 운영 → 정렬(sprmPJc80 0x2461) / 들여쓰기(sprmPDxaLeft 0x845D, sprmPDxaRight 0x845E,
+///     sprmPDxaLeft1 0x8460) / 단락 간격(sprmPDyaBefore 0xA413, sprmPDyaAfter 0xA415) /
+///     줄 간격(sprmPDyaLine 0x6412 LSPD) / istd → STSH lookup → OutlineLevel(H1..H6)  (Phase 1b/1c/1e)
 ///   - CHPX 운영 → 굵게(0x0835)·이탤릭(0x0836)·취소선(0x0837)·밑줄(0x2A3E)·
-///     글자 크기(sprmCHps 0x4A43) 로 Run 분할                                       (Phase 1b)
+///     글자 크기(sprmCHps 0x4A43) / 전경색(sprmCIco 0x2A42 팔레트, sprmCCv 0x6870 RGB) /
+///     하이라이트(sprmCHighlight 0x2A0C) / 폰트 패밀리(sprmCRgFtc0/1/2 0x4A4F/0x4A50/0x4A51
+///     + STTB FFN 운영) 로 Run 분할                                                  (Phase 1b/1c/1d)
 ///   - SummaryInformation PropertySet (MS-OLEPS §2.18) 에서 Title/Subject/Author/Keywords/
 ///     LastSavedBy/Created/Modified/AppName 추출 (VT_LPSTR/VT_LPWSTR/VT_FILETIME)
 ///   - 비-OLE2 입력·손상 CFB 컨테이너는 한국어 진단으로 명확히 거부
 ///
 /// 의도적으로 다음 작업의 범위 밖 (다음 PR 들에서 다룸):
-///   - 폰트 패밀리·색상·하이라이트 (CHPX 추가 sprm)                                  (Phase 1c)
+///   - STD istdBase 체이닝 (부모 스타일까지 거슬러 올라가는 상속) — 현재는 1단계만             (Phase 1g)
 ///   - 표 / 이미지 / 필드 / 헤더·푸터 / 섹션                                          (Phase 2)
 ///   - MS-OFFCRYPTO 의 실제 해독 (RC4/AES 키 유도·복호화)
 ///
@@ -116,7 +120,13 @@ public class DocBinaryReader
         uint   FcPlcfBteChpx,
         uint   LcbPlcfBteChpx,
         uint   FcPlcfBtePapx,
-        uint   LcbPlcfBtePapx);
+        uint   LcbPlcfBtePapx,
+        // Phase 1d — STTB FFN
+        uint   FcSttbfFfn,
+        uint   LcbSttbfFfn,
+        // Phase 1e — Style Sheet (STSH)
+        uint   FcStshf,
+        uint   LcbStshf);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -157,8 +167,17 @@ public class DocBinaryReader
         uint fcPlcfBtePapx  = BitConverter.ToUInt32(wd, 0x0102);
         uint lcbPlcfBtePapx = BitConverter.ToUInt32(wd, 0x0106);
 
+        // Phase 1d — STTB FFN: [MS-DOC] FibRgFcLcb97 fcSttbfFfn @ 0x0112, lcbSttbfFfn @ 0x0116
+        uint fcSttbfFfn  = BitConverter.ToUInt32(wd, 0x0112);
+        uint lcbSttbfFfn = BitConverter.ToUInt32(wd, 0x0116);
+
+        // Phase 1e — STSH (Style Sheet): [MS-DOC] FibRgFcLcb97 fcStshf @ 0x00A2, lcbStshf @ 0x00A6
+        uint fcStshf  = BitConverter.ToUInt32(wd, 0x00A2);
+        uint lcbStshf = BitConverter.ToUInt32(wd, 0x00A6);
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
-                       fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx);
+                       fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
+                       fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -376,7 +395,7 @@ public class DocBinaryReader
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt)
     {
         var para = new Paragraph();
-        var ps = fmt.GetParagraphStyle(paraEndFc);
+        var (paraIstd, ps) = fmt.GetParagraphInfo(paraEndFc);
         if (ps is not null) para.Style = ps;
 
         if (paraChars.Count > 0)
@@ -385,7 +404,8 @@ public class DocBinaryReader
             var curText = new StringBuilder();
             for (int i = 0; i < paraChars.Count; i++)
             {
-                var rs = fmt.GetRunStyle(paraFcs[i]) ?? new RunStyle();
+                // Phase 1f — paraIstd 를 전달해 STD CHPX 상속 활성화.
+                var rs = fmt.GetRunStyle(paraFcs[i], paraIstd) ?? new RunStyle();
                 if (curStyle is null || !RunStyleEquals(curStyle, rs))
                 {
                     if (curText.Length > 0 && curStyle is not null)
@@ -409,7 +429,10 @@ public class DocBinaryReader
         && a.Italic == b.Italic
         && a.Underline == b.Underline
         && a.Strikethrough == b.Strikethrough
-        && a.FontSizePt == b.FontSizePt;
+        && a.FontSizePt == b.FontSizePt
+        && string.Equals(a.FontFamily, b.FontFamily, StringComparison.Ordinal)
+        && Nullable.Equals(a.Foreground, b.Foreground)
+        && Nullable.Equals(a.Background, b.Background);
 
     // ─────────────────────────────── 메타데이터 ─────────────────────────────────
 
@@ -526,152 +549,326 @@ public class DocBinaryReader
     //                                     ChpxInFkp = cb(1) + grpprlInChpx(cb byte). istd 없음.
     //
     // 본 단계에서 인식하는 sprm (Word 97+):
-    //   PAPX:  sprmPJc80 (0x2461)  — 단락 정렬 1 byte (0=L, 1=C, 2=R, 3=J)
+    //   PAPX:  sprmPJc80     (0x2461)  — 단락 정렬 1 byte (0=L, 1=C, 2=R, 3=J)
+    //          sprmPDxaLeft  (0x845D)  — 왼쪽 들여쓰기 (signed twips, 2-byte)
+    //          sprmPDxaRight (0x845E)  — 오른쪽 들여쓰기 (signed twips, 2-byte)
+    //          sprmPDxaLeft1 (0x8460)  — 첫 줄 들여쓰기 (signed twips, 2-byte)
+    //          sprmPDyaBefore(0xA413)  — 단락 앞 여백 (unsigned twips, 2-byte)
+    //          sprmPDyaAfter (0xA415)  — 단락 뒤 여백 (unsigned twips, 2-byte)
+    //          sprmPDyaLine  (0x6412)  — 줄 간격 LSPD (4-byte: dyaLine + fMultLinespace)
     //   CHPX:  sprmCFBold (0x0835), sprmCFItalic (0x0836)        — 1 byte toggle/on/off
-    //          sprmCFUnderline (0x2A3E)                          — 1 byte (0=none, 그 외=ON)
-    //          sprmCHps (0x4A43)                                 — 2 byte 글자크기 (half-points)
-    // 그 외 sprm 은 본 단계에서 무시 — Phase 2 에서 점진적으로 추가한다.
+    //          sprmCFStrike    (0x0837)                           — 1 byte
+    //          sprmCKul        (0x2A3E)                           — 1 byte (0=none, 그 외=ON)
+    //          sprmCHps        (0x4A43)                           — 2 byte 글자크기 (half-points)
+    //          sprmCIco        (0x2A42)                           — 1 byte Word16 팔레트 전경색
+    //          sprmCCv         (0x6870)                           — 4 byte RGB+1 (Word 2002+) 전경색
+    //          sprmCHighlight  (0x2A0C)                           — 1 byte Word16 팔레트 하이라이트
+    // 그 외 sprm 은 본 단계에서 무시 — Phase 1d/2 에서 점진적으로 추가한다 (폰트 패밀리는 STSH/STTB FFN 필요).
 
     private sealed class FormatStyles
     {
         private readonly byte[] _wd;
         private readonly List<BteEntry> _papxBte;
         private readonly List<BteEntry> _chpxBte;
+        // Phase 1d — STTB FFN 에서 추출한 폰트명. sprmCRgFtc{0,1,2} 의 operand 인 ftc 가 이 인덱스.
+        private readonly IReadOnlyList<string> _fonts;
+        // Phase 1e — STSH (Style Sheet) 의 STD 배열. istd → sti/stk/name. null = 빈 슬롯.
+        private readonly IReadOnlyList<StyleDef?> _styles;
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
-        private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _papxGrpprlCache = new();
-        private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxGrpprlCache = new();
+        // PAPX 는 (istd, sprms) 가 페어로 필요하므로 별도 캐시.
+        private readonly Dictionary<(int Pn, int RgIdx), (int Istd, byte[] Sprms)?> _papxCache = new();
+        private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxCache = new();
 
-        private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx)
+        private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx,
+                             IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles)
         {
-            _wd = wd; _papxBte = papx; _chpxBte = chpx;
+            _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts; _styles = styles;
         }
 
         public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
         {
-            var papx = ReadBte(table, (int)fib.FcPlcfBtePapx, (int)fib.LcbPlcfBtePapx);
-            var chpx = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
-            return new FormatStyles(wd, papx, chpx);
+            var papx   = ReadBte(table, (int)fib.FcPlcfBtePapx, (int)fib.LcbPlcfBtePapx);
+            var chpx   = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
+            var fonts  = ReadSttbfFfn(table, (int)fib.FcSttbfFfn, (int)fib.LcbSttbfFfn);
+            var styles = ReadStsh(table, (int)fib.FcStshf, (int)fib.LcbStshf);
+            return new FormatStyles(wd, papx, chpx, fonts, styles);
         }
 
-        public ParagraphStyle? GetParagraphStyle(int paraEndFc)
+        // Phase 1f — 단락 정보를 (istd, ParagraphStyle?) 페어로 반환. istd 는 BuildDocument 가
+        // 단락 내 char 들의 RunStyle 조회에 전달해 STD CHPX 상속을 활성화한다.
+        public (int Istd, ParagraphStyle? Style) GetParagraphInfo(int paraEndFc)
         {
-            var grpprl = LoadGrpprl(_papxBte, _papxGrpprlCache, paraEndFc, isPapx: true);
-            if (grpprl is null || grpprl.Length == 0) return null;
+            var papx = LoadPapx(paraEndFc);
+            if (papx is null) return (-1, null);
 
+            var (istd, directSprms) = papx.Value;
             var style = new ParagraphStyle();
             bool touched = false;
-            WalkSprms(grpprl, (sprm, operand) =>
+
+            // 1. STSH built-in sti → Outline (Heading N → HN).
+            // Word built-in sti: 0=Normal, 1..9 = Heading 1..9. 본 모델은 H1..H6 만 지원하므로
+            // sti 1..6 만 매핑하고 7..9 는 H6 로 클램프.
+            if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
             {
-                if (sprm == 0x2461 && operand.Length >= 1)
-                {
-                    style.Alignment = operand[0] switch
-                    {
-                        1 => Alignment.Center,
-                        2 => Alignment.Right,
-                        3 => Alignment.Justify,
-                        _ => Alignment.Left,
-                    };
-                    touched = true;
-                }
-            });
-            return touched ? style : null;
+                int level = Math.Min(sd.Sti, 6);
+                style.Outline = (OutlineLevel)level;
+                touched = true;
+            }
+
+            // 2. STD 의 papxSprms (스타일의 기본 단락 속성).
+            if (istd >= 0 && istd < _styles.Count && _styles[istd]?.PapxSprms is { Length: > 0 } stdSprms)
+                touched |= ApplyParagraphSprms(stdSprms, style);
+
+            // 3. 직접 PAPX sprms — 스타일 기본값을 덮어쓴다.
+            touched |= ApplyParagraphSprms(directSprms, style);
+
+            return (istd, touched ? style : null);
         }
 
-        public RunStyle? GetRunStyle(int charFc)
+        private static bool ApplyParagraphSprms(byte[] grpprl, ParagraphStyle style)
         {
-            var grpprl = LoadGrpprl(_chpxBte, _chpxGrpprlCache, charFc, isPapx: false);
-            if (grpprl is null || grpprl.Length == 0) return null;
-
-            var rs = new RunStyle();
             bool touched = false;
             WalkSprms(grpprl, (sprm, operand) =>
             {
-                switch (sprm)
-                {
-                    case 0x0835:  // sprmCFBold
-                        if (operand.Length >= 1) { rs.Bold = operand[0] != 0; touched = true; }
-                        break;
-                    case 0x0836:  // sprmCFItalic
-                        if (operand.Length >= 1) { rs.Italic = operand[0] != 0; touched = true; }
-                        break;
-                    case 0x0837:  // sprmCFStrike
-                        if (operand.Length >= 1) { rs.Strikethrough = operand[0] != 0; touched = true; }
-                        break;
-                    case 0x2A3E:  // sprmCKul (underline kind)
-                        if (operand.Length >= 1) { rs.Underline = operand[0] != 0; touched = true; }
-                        break;
-                    case 0x4A43:  // sprmCHps (font size in half-points)
-                        if (operand.Length >= 2)
-                        {
-                            ushort halfPt = BitConverter.ToUInt16(operand, 0);
-                            if (halfPt > 0 && halfPt < 1000) { rs.FontSizePt = halfPt / 2.0; touched = true; }
-                        }
-                        break;
-                }
+                if (ApplyParagraphSprm(sprm, operand, style)) touched = true;
             });
+            return touched;
+        }
+
+        private static bool ApplyParagraphSprm(ushort sprm, byte[] operand, ParagraphStyle style)
+        {
+            switch (sprm)
+            {
+                case 0x2461:  // sprmPJc80 — alignment
+                    if (operand.Length >= 1)
+                    {
+                        style.Alignment = operand[0] switch
+                        {
+                            1 => Alignment.Center,
+                            2 => Alignment.Right,
+                            3 => Alignment.Justify,
+                            _ => Alignment.Left,
+                        };
+                        return true;
+                    }
+                    return false;
+                case 0x845D:
+                    if (operand.Length >= 2)
+                    { style.IndentLeftMm  = BitConverter.ToInt16(operand, 0) * TwipsToMm; return true; }
+                    return false;
+                case 0x845E:
+                    if (operand.Length >= 2)
+                    { style.IndentRightMm = BitConverter.ToInt16(operand, 0) * TwipsToMm; return true; }
+                    return false;
+                case 0x8460:
+                    if (operand.Length >= 2)
+                    { style.IndentFirstLineMm = BitConverter.ToInt16(operand, 0) * TwipsToMm; return true; }
+                    return false;
+                case 0xA413:
+                    if (operand.Length >= 2)
+                    { style.SpaceBeforePt = BitConverter.ToUInt16(operand, 0) / 20.0; return true; }
+                    return false;
+                case 0xA415:
+                    if (operand.Length >= 2)
+                    { style.SpaceAfterPt  = BitConverter.ToUInt16(operand, 0) / 20.0; return true; }
+                    return false;
+                case 0x6412:
+                    if (operand.Length >= 4)
+                    {
+                        short  dyaLine = BitConverter.ToInt16(operand, 0);
+                        ushort fMult   = BitConverter.ToUInt16(operand, 2);
+                        if (fMult == 1 && dyaLine > 0)
+                        { style.LineHeightFactor = dyaLine / 240.0; return true; }
+                        if (fMult == 0 && dyaLine != 0)
+                        {
+                            double abs = Math.Abs(dyaLine) / 240.0;
+                            if (abs > 0.5 && abs < 5.0)
+                            { style.LineHeightFactor = abs; return true; }
+                        }
+                    }
+                    return false;
+            }
+            return false;
+        }
+
+        // Twips → mm 변환 — 1 mm = 56.692 twips (1440/25.4).
+        private const double TwipsToMm = 1.0 / 56.692;
+
+        // Phase 1f — paraIstd 가 -1 아니면 단락 스타일의 STD chpxSprms 를 먼저 적용한 뒤
+        // 직접 CHPX 로 override. Heading 의 폰트/크기/굵게 등이 자동 상속된다.
+        public RunStyle? GetRunStyle(int charFc, int paraIstd)
+        {
+            var rs = new RunStyle();
+            bool touched = false;
+
+            // 1. 단락 스타일의 CHPX sprms (Heading 의 기본 폰트/크기 등).
+            if (paraIstd >= 0 && paraIstd < _styles.Count &&
+                _styles[paraIstd]?.ChpxSprms is { Length: > 0 } stdChpx)
+                touched |= ApplyRunSprms(stdChpx, rs);
+
+            // 2. 직접 CHPX FKP sprms (override).
+            var direct = LoadChpx(charFc);
+            if (direct is { Length: > 0 })
+                touched |= ApplyRunSprms(direct, rs);
+
             return touched ? rs : null;
         }
 
-        private byte[]? LoadGrpprl(
-            List<BteEntry> bte,
-            Dictionary<(int Pn, int RgIdx), byte[]?> cache,
-            int fc, bool isPapx)
+        private bool ApplyRunSprms(byte[] grpprl, RunStyle rs)
+        {
+            bool touched = false;
+            WalkSprms(grpprl, (sprm, operand) =>
+            {
+                if (ApplyRunSprm(sprm, operand, rs)) touched = true;
+            });
+            return touched;
+        }
+
+        private bool ApplyRunSprm(ushort sprm, byte[] operand, RunStyle rs)
+        {
+            switch (sprm)
+            {
+                case 0x0835:  // sprmCFBold
+                    if (operand.Length >= 1) { rs.Bold = operand[0] != 0; return true; }
+                    return false;
+                case 0x0836:  // sprmCFItalic
+                    if (operand.Length >= 1) { rs.Italic = operand[0] != 0; return true; }
+                    return false;
+                case 0x0837:  // sprmCFStrike
+                    if (operand.Length >= 1) { rs.Strikethrough = operand[0] != 0; return true; }
+                    return false;
+                case 0x2A3E:  // sprmCKul
+                    if (operand.Length >= 1) { rs.Underline = operand[0] != 0; return true; }
+                    return false;
+                case 0x4A43:  // sprmCHps (font size in half-points)
+                    if (operand.Length >= 2)
+                    {
+                        ushort halfPt = BitConverter.ToUInt16(operand, 0);
+                        if (halfPt > 0 && halfPt < 1000) { rs.FontSizePt = halfPt / 2.0; return true; }
+                    }
+                    return false;
+                case 0x2A42:  // sprmCIco
+                    if (operand.Length >= 1)
+                    {
+                        var c = WordPaletteColor(operand[0]);
+                        if (c.HasValue) { rs.Foreground = c.Value; return true; }
+                    }
+                    return false;
+                case 0x6870:  // sprmCCv
+                    if (operand.Length >= 4 && operand[3] != 0xFF)
+                    {
+                        rs.Foreground = new Color(operand[0], operand[1], operand[2]);
+                        return true;
+                    }
+                    return false;
+                case 0x2A0C:  // sprmCHighlight
+                    if (operand.Length >= 1)
+                    {
+                        var c = WordPaletteColor(operand[0]);
+                        if (c.HasValue) { rs.Background = c.Value; return true; }
+                    }
+                    return false;
+                case 0x4A4F:  // sprmCRgFtc0
+                case 0x4A50:  // sprmCRgFtc1
+                case 0x4A51:  // sprmCRgFtc2
+                    if (operand.Length >= 2)
+                    {
+                        int ftc = BitConverter.ToUInt16(operand, 0);
+                        if (ftc >= 0 && ftc < _fonts.Count)
+                        {
+                            var name = _fonts[ftc];
+                            if (!string.IsNullOrEmpty(name))
+                            { rs.FontFamily = name; return true; }
+                        }
+                    }
+                    return false;
+            }
+            return false;
+        }
+
+        // [MS-DOC] Word 16-color palette (sprmCIco, sprmCHighlight 의 1-byte 인덱스).
+        // 0 = auto (부모 색 상속 — null 반환).
+        private static Color? WordPaletteColor(byte ico) => ico switch
+        {
+            1  => new Color(0,   0,   0),     //  1 Black
+            2  => new Color(0,   0,   255),   //  2 Blue
+            3  => new Color(0,   255, 255),   //  3 Cyan
+            4  => new Color(0,   255, 0),     //  4 Green
+            5  => new Color(255, 0,   255),   //  5 Magenta
+            6  => new Color(255, 0,   0),     //  6 Red
+            7  => new Color(255, 255, 0),     //  7 Yellow
+            8  => new Color(255, 255, 255),   //  8 White
+            9  => new Color(0,   0,   128),   //  9 Dark Blue
+            10 => new Color(0,   128, 128),   // 10 Dark Cyan
+            11 => new Color(0,   128, 0),     // 11 Dark Green
+            12 => new Color(128, 0,   128),   // 12 Dark Magenta
+            13 => new Color(128, 0,   0),     // 13 Dark Red
+            14 => new Color(128, 128, 0),     // 14 Dark Yellow
+            15 => new Color(128, 128, 128),   // 15 Dark Gray
+            16 => new Color(192, 192, 192),   // 16 Light Gray
+            _  => null,                       //  0 auto / 그 외 알 수 없음
+        };
+
+        // PAPX 로드 — istd 와 sprm bytes 를 한 쌍으로 반환. STSH lookup 에 istd 가 필요해 분리.
+        private (int Istd, byte[] Sprms)? LoadPapx(int fc)
+        {
+            var loc = LocateFkpEntry(_papxBte, fc);
+            if (loc is null) return null;
+            var (pn, rgIdx) = loc.Value;
+            if (_papxCache.TryGetValue((pn, rgIdx), out var cached)) return cached;
+
+            int fkpOff = pn * 512;
+            int cRun   = _wd[fkpOff + 511];
+            int rgbxBase = fkpOff + 4 * (cRun + 1);
+            // BXPap = 13 byte; first byte = bOffset (2-byte units from FKP start).
+            int bOffset = _wd[rgbxBase + rgIdx * 13];
+            var result  = bOffset == 0 ? null : ReadPapxInFkp(_wd, fkpOff + bOffset * 2);
+            _papxCache[(pn, rgIdx)] = result;
+            return result;
+        }
+
+        // CHPX 로드 — sprm bytes 만 (istd 없음).
+        private byte[]? LoadChpx(int fc)
+        {
+            var loc = LocateFkpEntry(_chpxBte, fc);
+            if (loc is null) return null;
+            var (pn, rgIdx) = loc.Value;
+            if (_chpxCache.TryGetValue((pn, rgIdx), out var cached)) return cached;
+
+            int fkpOff = pn * 512;
+            int cRun   = _wd[fkpOff + 511];
+            int rgbxBase = fkpOff + 4 * (cRun + 1);
+            // ChpxFkp rgb = 1 byte each.
+            int bOffset = _wd[rgbxBase + rgIdx];
+            var result  = bOffset == 0 ? null : ReadChpxInFkp(_wd, fkpOff + bOffset * 2);
+            _chpxCache[(pn, rgIdx)] = result;
+            return result;
+        }
+
+        private (int Pn, int RgIdx)? LocateFkpEntry(List<BteEntry> bte, int fc)
         {
             if (bte.Count == 0) return null;
-            // BTE 내에서 fc 가 [FcStart, FcEnd) 에 속하는 entry 찾기 — 보통 페이지 수가 적어 선형 충분.
             int pn = -1;
             foreach (var e in bte)
             {
                 if (fc >= e.FcStart && fc < e.FcEnd) { pn = e.PnFkp; break; }
             }
             if (pn < 0) return null;
-
             int fkpOff = pn * 512;
             if (fkpOff < 0 || fkpOff + 512 > _wd.Length) return null;
-
             int cRun = _wd[fkpOff + 511];
             if (cRun == 0) return null;
-
-            // rgfc[cRun+1] 에서 i 를 찾아 fc ∈ [rgfc[i], rgfc[i+1])
-            int rgIdx = -1;
             for (int i = 0; i < cRun; i++)
             {
                 int fc0 = BitConverter.ToInt32(_wd, fkpOff + i * 4);
                 int fc1 = BitConverter.ToInt32(_wd, fkpOff + (i + 1) * 4);
-                if (fc >= fc0 && fc < fc1) { rgIdx = i; break; }
+                if (fc >= fc0 && fc < fc1) return (pn, i);
             }
-            if (rgIdx < 0) return null;
-
-            if (cache.TryGetValue((pn, rgIdx), out var cached)) return cached;
-
-            int rgbxBase = fkpOff + 4 * (cRun + 1);
-            int bOffset;
-            if (isPapx)
-            {
-                // BXPap = 13 byte; first byte = bOffset
-                bOffset = _wd[rgbxBase + rgIdx * 13];
-            }
-            else
-            {
-                // ChpxFkp rgb = 1 byte each
-                bOffset = _wd[rgbxBase + rgIdx];
-            }
-            byte[]? result;
-            if (bOffset == 0)
-            {
-                result = null;
-            }
-            else
-            {
-                int xinFkpOff = fkpOff + bOffset * 2;
-                result = isPapx ? ReadPapxInFkp(_wd, xinFkpOff) : ReadChpxInFkp(_wd, xinFkpOff);
-            }
-            cache[(pn, rgIdx)] = result;
-            return result;
+            return null;
         }
 
-        private static byte[]? ReadPapxInFkp(byte[] data, int off)
+        private static (int Istd, byte[] Sprms)? ReadPapxInFkp(byte[] data, int off)
         {
             if (off < 0 || off >= data.Length) return null;
             byte cb = data[off];
@@ -689,11 +886,12 @@ public class DocBinaryReader
                 grpprlStart = off + 1;
             }
             if (grpprlSize < 2 || grpprlStart + grpprlSize > data.Length) return null;
-            // 처음 2 byte 는 istd — sprm 만 잘라낸다.
+            // GrpPrlAndIstd: 처음 2 byte = istd (style identifier), 그 뒤가 sprm 배열.
+            int istd = BitConverter.ToUInt16(data, grpprlStart);
             int sprmsLen = grpprlSize - 2;
             var sprms = new byte[sprmsLen];
             Buffer.BlockCopy(data, grpprlStart + 2, sprms, 0, sprmsLen);
-            return sprms;
+            return (istd, sprms);
         }
 
         private static byte[]? ReadChpxInFkp(byte[] data, int off)
@@ -738,6 +936,189 @@ public class DocBinaryReader
                 i += operandSize;
                 onSprm(sprm, operand);
             }
+        }
+
+        // [MS-DOC] §2.9.262 SttbfFfn — Word 97+ 의 폰트 이름 STTB. 각 원소는 §2.9.85 FFN.
+        // Extended STTB header (6 byte): 0xFFFF marker + cData(2) + cbExtra(2).
+        // 각 entry: cchData(2 byte, FFN 의 wide-char 수) + FFN(cchData*2 byte) + cbExtra byte.
+        // FFN 내부에서 폰트명(xszFfn) 은 offset 40 부터 null-terminated UTF-16LE.
+        private static IReadOnlyList<string> ReadSttbfFfn(byte[] table, int fc, int lcb)
+        {
+            var fonts = new List<string>();
+            if (lcb <= 0 || fc < 0 || fc + lcb > table.Length) return fonts;
+
+            int pos = fc;
+            int end = fc + lcb;
+            bool extended;
+            int  cbExtra;
+            if (end - pos >= 6 && BitConverter.ToUInt16(table, pos) == 0xFFFF)
+            {
+                extended = true;
+                cbExtra  = BitConverter.ToUInt16(table, pos + 4);
+                pos += 6;
+            }
+            else if (end - pos >= 4)
+            {
+                // 비-extended (legacy) — Word 97+ 에서는 거의 없지만 fallback.
+                extended = false;
+                cbExtra  = BitConverter.ToUInt16(table, pos + 2);
+                pos += 4;
+            }
+            else
+            {
+                return fonts;
+            }
+
+            while (pos < end)
+            {
+                int hdrLen = extended ? 2 : 1;
+                if (pos + hdrLen > end) break;
+                int cchData = extended ? BitConverter.ToUInt16(table, pos) : table[pos];
+                int ffnByteLen = cchData * 2;
+                if (pos + hdrLen + ffnByteLen + cbExtra > end) break;
+
+                int ffnStart = pos + hdrLen;
+                string name = string.Empty;
+                if (ffnByteLen > 40)
+                {
+                    int nameStart = ffnStart + 40;
+                    int nameMax   = ffnStart + ffnByteLen;
+                    int nameEnd   = nameStart;
+                    while (nameEnd + 1 < nameMax && BitConverter.ToUInt16(table, nameEnd) != 0)
+                        nameEnd += 2;
+                    if (nameEnd > nameStart)
+                        name = Encoding.Unicode.GetString(table, nameStart, nameEnd - nameStart);
+                }
+                fonts.Add(name);
+
+                pos += hdrLen + ffnByteLen + cbExtra;
+            }
+            return fonts;
+        }
+
+        // [MS-DOC] §2.9.270 STD 의 핵심 필드 — sti(12 bit): built-in style identifier
+        // (0=Normal, 1..9=Heading 1..9), stk(4 bit): 1=paragraph, 2=character, 3=table, 4=numbering.
+        // Phase 1f — STD 의 grLPUpxSw 에서 추출한 단락/문자 sprm 기본값. Heading 의 폰트 크기·
+        // 굵게 같은 속성을 직접 sprm 없이도 상속하기 위해 보존한다.
+        private sealed record StyleDef(int Sti, int Stk, string? Name, byte[]? PapxSprms, byte[]? ChpxSprms);
+
+        // [MS-DOC] §2.9.271 STSH 파서.
+        // STSH = LPStshi (2 byte cbStshi + Stshi) + rgLPStd[cstd] (각 LPStd: 2 byte cbStd + STD).
+        // 본 단계에서는 STD 의 sti/stk 만 추출 — STD grpprl 상속(default 서식)은 후속 단계.
+        private static IReadOnlyList<StyleDef?> ReadStsh(byte[] table, int fc, int lcb)
+        {
+            var empty = Array.Empty<StyleDef?>();
+            if (lcb < 4 || fc < 0 || fc + lcb > table.Length) return empty;
+
+            int pos = fc;
+            int end = fc + lcb;
+
+            // LPStshi: cbStshi(2) + Stshi(cbStshi)
+            int cbStshi = BitConverter.ToUInt16(table, pos);
+            pos += 2;
+            if (cbStshi < 4 || pos + cbStshi > end) return empty;
+
+            // Stshi 의 첫 4 byte: cstd(2) + cbSTDBaseInFile(2)
+            int cstd            = BitConverter.ToUInt16(table, pos);
+            int cbSTDBaseInFile = BitConverter.ToUInt16(table, pos + 2);
+            pos += cbStshi;
+
+            if (cstd <= 0 || cstd > 8192) return empty;
+            if (cbSTDBaseInFile is not (10 or 18)) cbSTDBaseInFile = 10;
+
+            var styles = new StyleDef?[cstd];
+            for (int i = 0; i < cstd && pos + 2 <= end; i++)
+            {
+                int cbStd = BitConverter.ToUInt16(table, pos);
+                pos += 2;
+                if (cbStd == 0) { styles[i] = null; continue; }
+                if (pos + cbStd > end) break;
+
+                int stdStart = pos;
+                int stdEnd   = stdStart + cbStd;
+                if (cbStd >= 4)
+                {
+                    ushort word0 = BitConverter.ToUInt16(table, stdStart);
+                    ushort word1 = BitConverter.ToUInt16(table, stdStart + 2);
+                    ushort word2 = cbStd >= 6 ? BitConverter.ToUInt16(table, stdStart + 4) : (ushort)0;
+                    int sti  = word0 & 0x0FFF;
+                    int stk  = word1 & 0x000F;
+                    int cupx = word2 & 0x000F;  // cupx (low 4 bits of word2)
+
+                    // xstzName — stdfBase(+stdfPost2000) 뒤. Xstz: cchData(2) + chars(2*cchData) + null(2).
+                    string? name = null;
+                    int nameOff  = stdStart + cbSTDBaseInFile;
+                    int afterName = nameOff;
+                    if (nameOff + 2 <= stdEnd)
+                    {
+                        int cch = BitConverter.ToUInt16(table, nameOff);
+                        int nameStart = nameOff + 2;
+                        int nameByteLen = cch * 2;
+                        if (nameStart + nameByteLen + 2 <= stdEnd)
+                        {
+                            if (cch > 0)
+                                name = Encoding.Unicode.GetString(table, nameStart, nameByteLen);
+                            afterName = nameStart + nameByteLen + 2;  // +null terminator
+                        }
+                        else
+                        {
+                            afterName = stdEnd;  // 손상된 STD — grLPUpxSw 진입 안 함
+                        }
+                    }
+                    // 2-byte 정렬은 STD 내부 offset 기준이라 stdStart 의 parity 와 비교.
+                    if (((afterName - stdStart) & 1) != 0) afterName++;
+
+                    // [MS-DOC] §2.9.135 grLPUpxSw — cupx 개의 LPUpx (각각 cbUpx(2) + UPX(cbUpx)).
+                    //   paragraph style(stk=1): LPUpx[0]=PAPX (UPX = istd(2)+grpprl), LPUpx[1]=CHPX (UPX=grpprl)
+                    //   character style(stk=2): LPUpx[0]=CHPX
+                    var (papx, chpx) = ParseGrLPUpxSw(table, stdStart, afterName, stdEnd, cupx, stk);
+                    styles[i] = new StyleDef(sti, stk, name, papx, chpx);
+                }
+                pos += cbStd;
+            }
+            return styles;
+        }
+
+        // [MS-DOC] §2.9.135 grLPUpxSw — 한 STD 안의 cupx 개 LPUpx 를 순서대로 파싱.
+        // cupx=2 paragraph style: LPUpx[0]=PAPX (UPX는 istd(2)+grpprl), LPUpx[1]=CHPX (UPX=grpprl)
+        // cupx=1 character style: LPUpx[0]=CHPX
+        // (table/numbering style 은 본 단계에서 무시.)
+        private static (byte[]? Papx, byte[]? Chpx) ParseGrLPUpxSw(
+            byte[] table, int stdStart, int start, int end, int cupx, int stk)
+        {
+            byte[]? papx = null;
+            byte[]? chpx = null;
+            int pos = start;
+            for (int idx = 0; idx < cupx && pos + 2 <= end; idx++)
+            {
+                int cbUpx = BitConverter.ToUInt16(table, pos);
+                pos += 2;
+                if (pos + cbUpx > end) break;
+
+                if (stk == 1 && idx == 0)
+                {
+                    // Paragraph style 의 PAPX UPX: istd(2 byte) + grpprl. istd 는 styleId 라 무시.
+                    if (cbUpx > 2)
+                    {
+                        int sprmLen = cbUpx - 2;
+                        papx = new byte[sprmLen];
+                        Buffer.BlockCopy(table, pos + 2, papx, 0, sprmLen);
+                    }
+                }
+                else if ((stk == 1 && idx == 1) || (stk == 2 && idx == 0))
+                {
+                    // CHPX UPX = grpprl 그대로.
+                    if (cbUpx > 0)
+                    {
+                        chpx = new byte[cbUpx];
+                        Buffer.BlockCopy(table, pos, chpx, 0, cbUpx);
+                    }
+                }
+                pos += cbUpx;
+                // LPUpx 는 2-byte 정렬 — STD 내부 offset 기준.
+                if (((pos - stdStart) & 1) != 0) pos++;
+            }
+            return (papx, chpx);
         }
 
         private readonly record struct BteEntry(int FcStart, int FcEnd, int PnFkp);
