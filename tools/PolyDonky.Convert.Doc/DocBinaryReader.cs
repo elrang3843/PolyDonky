@@ -424,6 +424,7 @@ public class DocBinaryReader
                     if (cp.Left   is not null) cell.BorderLeft   = cp.Left;
                     if (cp.Bottom is not null) cell.BorderBottom = cp.Bottom;
                     if (cp.Right  is not null) cell.BorderRight  = cp.Right;
+                    if (cp.BackgroundHex is not null) cell.BackgroundColor = cp.BackgroundHex;
                 }
             }
             if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
@@ -781,9 +782,29 @@ public class DocBinaryReader
                             ParseBrc80(operand, tcOff + 4),
                             ParseBrc80(operand, tcOff + 8),
                             ParseBrc80(operand, tcOff + 12),
-                            ParseBrc80(operand, tcOff + 16));
+                            ParseBrc80(operand, tcOff + 16),
+                            BackgroundHex: null);
                     }
                     localCp = tcs;
+                }
+                else if (sprm == 0xD612)
+                {
+                    // [MS-DOC] §2.9.297 sprmTSetShd — 셀 배경 음영.
+                    // operand: itcFirst(1) + itcLim(1) + Shd[New] (10 byte: cvFore(4)+cvBack(4)+ipat(2))
+                    // cvBack 의 byte 0~2 = R/G/B, byte 3 = cvType (0xFF=auto). ipat=1(solid) 일 때 적용.
+                    if (operand.Length < 12 || localCp is null) return;
+                    int itcFirst = operand[0];
+                    int itcLim   = operand[1];
+                    if (itcFirst < 0 || itcLim <= itcFirst || itcLim > localCp.Length) return;
+                    // cvBack @ operand[6..9]
+                    byte cvBackAuto = operand[9];
+                    if (cvBackAuto == 0xFF) return;  // auto — 적용 안 함
+                    // ipat @ operand[10..11], 0=clear/no fill, 1=solid, 그 외 패턴
+                    ushort ipat = BitConverter.ToUInt16(operand, 10);
+                    if (ipat == 0) return;  // clear — 배경 없음
+                    string hex = $"#{operand[6]:X2}{operand[7]:X2}{operand[8]:X2}";
+                    for (int j = itcFirst; j < itcLim; j++)
+                        localCp[j] = localCp[j] with { BackgroundHex = hex };
                 }
             });
             inTable   = localIn;
@@ -818,9 +839,11 @@ public class DocBinaryReader
 
         // 한 행의 셀별 테두리/배경 묶음. ScanTableProps 가 sprmTDefTable 의 rgTc 에서 채우고
         // FlushParagraph 의 TTP 처리에서 pendingRow.Cells 에 1:1 적용.
+        // Phase 2d — sprmTSetShd 가 cvBack 으로 BackgroundHex 추가.
         internal sealed record TableCellProps(
             CellBorderSide? Top, CellBorderSide? Left,
-            CellBorderSide? Bottom, CellBorderSide? Right);
+            CellBorderSide? Bottom, CellBorderSide? Right,
+            string? BackgroundHex);
 
         // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
         // 부모가 먼저 적용되고 자식이 덮어쓰는 순서. 순환 참조와 nil(0xFFF) 종료를 모두 처리.
