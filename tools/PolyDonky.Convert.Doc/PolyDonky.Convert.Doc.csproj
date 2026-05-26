@@ -16,5 +16,10 @@
     <ProjectReference Include="..\PolyDonky.Convert.Common\PolyDonky.Convert.Common.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- OLE2 Compound File Binary parser — Word 97-2003 .doc 가 OLE2 컨테이너이므로 필요.
+         RTF 경로(DocReader/DocWriter)는 쓰지 않지만, .doc → IWPF 의 DocBinaryReader 가 사용한다. -->
+    <PackageReference Include="OpenMcdf" />
+  </ItemGroup>
 
 </Project>

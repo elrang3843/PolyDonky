@@ -16,6 +16,10 @@ public class DocReader
 {
     private readonly List<string> _fontTable  = new();
     private readonly List<Color>  _colorTable = new();
+    // \ansicpg<N> 에서 추출한 byte→char 디코더. \'XX 와 본문 비-ASCII 바이트에 적용.
+    // 기본 1252 (Western). .NET 10 부터 CodePagesEncodingProvider 가 BCL 에 포함되어
+    // 별도 등록 없이도 949/932/936 등 Windows 코드페이지가 동작한다.
+    private Encoding _codepage = Encoding.GetEncoding(1252);
 
     private const double TwipsToMm = 1.0 / 56.692;
     private const double TwipsToPt = 1.0 / 20.0;
@@ -27,10 +31,28 @@ public class DocReader
         _fontTable.Clear();
         _colorTable.Clear();
 
-        string rtf;
-        using (var sr = new StreamReader(input, Encoding.Default,
-                   detectEncodingFromByteOrderMarks: true, leaveOpen: true))
-            rtf = sr.ReadToEnd();
+        // 원본 바이트를 보존한 채 디코딩하려면 손실 없는 ISO-8859-1 (28591) 로 임시 디코딩.
+        // 이후 \'XX 와 ANSI 한글 등은 _codepage 로 다시 변환한다.
+        byte[] bytes;
+        using (var ms = new MemoryStream())
+        {
+            input.CopyTo(ms);
+            bytes = ms.ToArray();
+        }
+        var iso = Encoding.GetEncoding(28591);
+        string rtf = iso.GetString(bytes);
+
+        // \ansicpg<N> 사전 탐지 — RTF 헤더는 ASCII 라 ISO-8859-1 위에서도 정확히 매칭.
+        var cpm = Regex.Match(rtf, @"\\ansicpg(\d+)");
+        if (cpm.Success && int.TryParse(cpm.Groups[1].Value, out int cpNum))
+        {
+            try { _codepage = Encoding.GetEncoding(cpNum); }
+            catch { _codepage = Encoding.GetEncoding(1252); }
+        }
+        else
+        {
+            _codepage = Encoding.GetEncoding(1252);
+        }
 
         ParseTables(rtf);
         var meta = ParseInfo(rtf);
@@ -117,7 +139,7 @@ public class DocReader
         public DateTimeOffset?  Modified { get; set; }
     }
 
-    private static MetaInfo ParseInfo(string rtf)
+    private MetaInfo ParseInfo(string rtf)
     {
         var meta = new MetaInfo();
         int idx  = rtf.IndexOf(@"\info", StringComparison.Ordinal);
@@ -130,26 +152,98 @@ public class DocReader
         meta.Author = ExtractInfoField(seg, "author");
 
         var ctm = Regex.Match(seg, @"\\creatim\\yr(\d+)\\mo(\d+)\\dy(\d+)\\hr(\d+)\\min(\d+)");
-        if (ctm.Success) meta.Created = ParseRtfDate(ctm);
+        if (ctm.Success) { var d = ParseRtfDate(ctm); if (d.HasValue) meta.Created = d.Value; }
         var rtm = Regex.Match(seg, @"\\revtim\\yr(\d+)\\mo(\d+)\\dy(\d+)\\hr(\d+)\\min(\d+)");
-        if (rtm.Success) meta.Modified = ParseRtfDate(rtm);
+        if (rtm.Success) { var d = ParseRtfDate(rtm); if (d.HasValue) meta.Modified = d.Value; }
 
         return meta;
     }
 
-    private static string? ExtractInfoField(string seg, string field)
+    private string? ExtractInfoField(string seg, string field)
     {
         var m = Regex.Match(seg, $@"\{{\\{field}\s(.+?)}}");
-        return m.Success ? m.Groups[1].Value.Trim() : null;
+        return m.Success ? DecodeInlineRtf(m.Groups[1].Value.Trim()) : null;
     }
 
-    private static DateTimeOffset ParseRtfDate(Match m)
+    // \info 내 \title/\author 같은 메타 필드의 값에 들어가는 RTF escape (\uN?, \'XX, \{ \} \\) 를 디코딩.
+    // 본문 파서를 재사용하기엔 상태 누적이 부담스러우므로 최소한의 인라인 디코더만 운영한다.
+    private string DecodeInlineRtf(string s)
     {
-        int yr = int.Parse(m.Groups[1].Value), mo = int.Parse(m.Groups[2].Value),
-            dy = int.Parse(m.Groups[3].Value), hr = int.Parse(m.Groups[4].Value),
-            mn = int.Parse(m.Groups[5].Value);
-        return new DateTimeOffset(yr, Math.Clamp(mo, 1, 12), Math.Clamp(dy, 1, 28),
-                                  hr, mn, 0, TimeSpan.Zero);
+        var sb = new StringBuilder(s.Length);
+        int i = 0, n = s.Length;
+        int uc = 1;
+        while (i < n)
+        {
+            char c = s[i];
+            if (c != '\\') { sb.Append(c); i++; continue; }
+            if (i + 1 >= n) break;
+            char nc = s[i + 1];
+            if (nc == '\\' || nc == '{' || nc == '}') { sb.Append(nc); i += 2; continue; }
+            if (nc == '\'' && i + 3 < n
+                && int.TryParse(s.Substring(i + 2, 2),
+                    System.Globalization.NumberStyles.HexNumber, null, out int hex))
+            {
+                try { sb.Append(_codepage.GetString(new[] { (byte)hex })); }
+                catch { sb.Append((char)hex); }
+                i += 4;
+                continue;
+            }
+            if (nc == 'u' && i + 2 < n && (char.IsDigit(s[i + 2]) || s[i + 2] == '-'))
+            {
+                i += 2;
+                bool neg = s[i] == '-'; if (neg) i++;
+                var nb = new StringBuilder();
+                while (i < n && char.IsDigit(s[i])) { nb.Append(s[i]); i++; }
+                if (nb.Length > 0 && int.TryParse(nb.ToString(), out int u))
+                {
+                    int code = neg ? -u : u;
+                    if (code < 0) code += 0x10000;
+                    sb.Append((char)(ushort)code);
+                }
+                // fallback skip (uc 개)
+                if (i < n && s[i] == ' ') i++;
+                for (int k = 0; k < uc && i < n && s[i] != '\\' && s[i] != '{' && s[i] != '}'; k++) i++;
+                continue;
+            }
+            // \word[-N] [space] — 제어 단어 (예: \uc1) 만 부분 인식
+            if (char.IsLetter(nc))
+            {
+                int wStart = i + 1;
+                int j = wStart;
+                while (j < n && char.IsLetter(s[j])) j++;
+                string w = s.Substring(wStart, j - wStart);
+                bool hasNum = false; int num = 0; bool neg = false;
+                if (j < n && s[j] == '-') { neg = true; j++; }
+                while (j < n && char.IsDigit(s[j])) { hasNum = true; num = num * 10 + (s[j] - '0'); j++; }
+                if (neg) num = -num;
+                if (j < n && s[j] == ' ') j++;
+                if (w == "uc" && hasNum) uc = Math.Max(0, num);
+                i = j;
+                continue;
+            }
+            i += 2;
+        }
+        return sb.ToString().Trim();
+    }
+
+    // \creatim / \revtim 의 yr=0, mo=0, dy=0, hr>23 같은 비정상 값에서도 던지지 않도록
+    // 안전한 클램프 후 try/catch 로 감싼다. 파싱 실패 시 null 반환해 캘러가 기본값 유지.
+    private static DateTimeOffset? ParseRtfDate(Match m)
+    {
+        if (!int.TryParse(m.Groups[1].Value, out int yr)) return null;
+        if (!int.TryParse(m.Groups[2].Value, out int mo)) return null;
+        if (!int.TryParse(m.Groups[3].Value, out int dy)) return null;
+        if (!int.TryParse(m.Groups[4].Value, out int hr)) return null;
+        if (!int.TryParse(m.Groups[5].Value, out int mn)) return null;
+        if (yr < 1) return null;  // yr=0 은 .NET DateTime 범위 밖.
+        yr = Math.Clamp(yr, 1, 9999);
+        mo = Math.Clamp(mo, 1, 12);
+        int daysInMonth = DateTime.DaysInMonth(yr, mo);
+        dy = Math.Clamp(dy, 1, daysInMonth);
+        hr = Math.Clamp(hr, 0, 23);
+        mn = Math.Clamp(mn, 0, 59);
+        try { return new DateTimeOffset(yr, mo, dy, hr, mn, 0, TimeSpan.Zero); }
+        catch { return null; }
     }
 
     // ────────────────────────── main content pass ───────────────────────────────
@@ -242,10 +336,33 @@ public class DocReader
                     if (pos + 1 < n && int.TryParse(rtf.Substring(pos, 2),
                             System.Globalization.NumberStyles.HexNumber, null, out int code))
                     {
-                        try { text.Append(Encoding.GetEncoding(1252).GetString(new[] { (byte)code })); }
-                        catch { text.Append((char)code); }
+                        // 멀티바이트 인코딩(CP949 등) 은 두 \'XX 시퀀스가 한 문자에 대응.
+                        // 다음 토큰이 \'YY 면 합쳐서 디코딩.
+                        pos += 2;
+                        byte b0 = (byte)code;
+                        if (_codepage.IsSingleByte || b0 < 0x80)
+                        {
+                            try { text.Append(_codepage.GetString(new[] { b0 })); }
+                            catch { text.Append((char)b0); }
+                        }
+                        else if (pos + 3 < n && rtf[pos] == '\\' && rtf[pos + 1] == '\''
+                                 && int.TryParse(rtf.Substring(pos + 2, 2),
+                                        System.Globalization.NumberStyles.HexNumber, null, out int code2))
+                        {
+                            try { text.Append(_codepage.GetString(new[] { b0, (byte)code2 })); }
+                            catch { text.Append((char)b0); text.Append((char)code2); }
+                            pos += 4;
+                        }
+                        else
+                        {
+                            try { text.Append(_codepage.GetString(new[] { b0 })); }
+                            catch { text.Append((char)b0); }
+                        }
                     }
-                    pos += 2;
+                    else
+                    {
+                        pos += 2;
+                    }
                 }
                 else if (nc == 'u' && pos + 1 < n && (char.IsDigit(rtf[pos + 1]) || rtf[pos + 1] == '-'))
                 {
@@ -253,9 +370,15 @@ public class DocReader
                     bool neg = pos < n && rtf[pos] == '-'; if (neg) pos++;
                     var nb = new StringBuilder();
                     while (pos < n && char.IsDigit(rtf[pos])) { nb.Append(rtf[pos]); pos++; }
-                    if (pos < n && rtf[pos] == '?') pos++;
-                    if (nb.Length > 0 && short.TryParse(nb.ToString(), out short uc))
-                        text.Append((char)(ushort)(neg ? -uc : uc));
+                    if (nb.Length > 0 && int.TryParse(nb.ToString(), out int uc))
+                    {
+                        // RTF spec: \u<N> 은 부호 있는 16-bit. 음수면 65536 더해 unsigned 변환.
+                        int code = neg ? -uc : uc;
+                        if (code < 0) code += 0x10000;
+                        text.Append((char)(ushort)code);
+                    }
+                    // \uc<N> (RtfState.UnicodeSkipCount) 만큼 ANSI fallback 을 소비.
+                    SkipUnicodeFallback(rtf, ref pos, cur.UnicodeSkipCount);
                 }
                 else if (char.IsLetter(nc))
                 {
@@ -275,11 +398,21 @@ public class DocReader
                     else if (negN) pos--;
                     if (pos < n && rtf[pos] == ' ') pos++;
 
-                    // 헤더 그룹
+                    // 헤더/메타 그룹 — 본문에 흘러들면 머리말/푸터 텍스트가 새므로 통째 스킵.
+                    // 머리말/꼬리말·필드 그룹은 별도 모델(섹션 헤더/푸터, 필드 코드)이 미구현이므로
+                    // v1.0.0 이후 단계에서 보존 캡슐로 옮기기 전까지는 본문 분리만 보장한다.
                     if (word is "fonttbl" or "colortbl" or "stylesheet" or "info"
                              or "listable" or "listtable" or "listoverridetable"
                              or "rsidtbl" or "generator" or "themedata"
-                             or "colorschememapping" or "latentstyles" or "xmlnstbl")
+                             or "colorschememapping" or "latentstyles" or "xmlnstbl"
+                             or "header"  or "headerl" or "headerr" or "headerf"
+                             or "footer"  or "footerl" or "footerr" or "footerf"
+                             or "pntext"  or "field"   or "fldinst" or "atrfstart" or "atrfend"
+                             or "bkmkstart" or "bkmkend"
+                             or "datafield" or "filetbl" or "revtbl" or "protusertbl"
+                             or "userprops" or "passwordhash" or "panose"
+                             or "background" or "shppict" or "nonshppict"
+                             or "mmathPr"   or "wgrffmtfilter")
                     { headerSkipDepth = 1; continue; }
 
                     // 이미지 그룹 시작
@@ -405,8 +538,46 @@ public class DocReader
             // ─ 단락 제어 ─
             case "par":
             case "line":
-                CommitPara(ref p, s, ref tbl, ref row, ref cell, section);
+                // 빈 단락(\par\par 같이 연속) 보존 — 사용자가 본 빈 줄을 그대로 살린다.
+                if (p.Runs.Count == 0 && !s.InTable)
+                    section.Blocks.Add(new Paragraph
+                    {
+                        Style = new ParagraphStyle
+                        {
+                            Alignment         = p.Alignment,
+                            SpaceBeforePt     = p.SpaceBefore,
+                            SpaceAfterPt      = p.SpaceAfter,
+                            LineHeightFactor  = p.LineHeight > 0 ? p.LineHeight : 0,
+                            IndentLeftMm      = p.IndentLeft,
+                            IndentRightMm     = p.IndentRight,
+                            IndentFirstLineMm = p.IndentFirst,
+                        }
+                    });
+                else
+                    CommitPara(ref p, s, ref tbl, ref row, ref cell, section);
                 p = NewPara(s);
+                break;
+
+            // ─ \uc<N> Unicode skip count ─
+            case "uc":
+                s.UnicodeSkipCount = hasN ? Math.Max(0, n) : 1;
+                break;
+
+            // ─ 특수 문자 (\bullet, \endash, \emdash, \lquote 등) ─
+            case "bullet":     textBuf.Append('•'); break;
+            case "endash":     textBuf.Append('–'); break;
+            case "emdash":     textBuf.Append('—'); break;
+            case "lquote":     textBuf.Append('‘'); break;
+            case "rquote":     textBuf.Append('’'); break;
+            case "ldblquote":  textBuf.Append('“'); break;
+            case "rdblquote":  textBuf.Append('”'); break;
+            case "emspace":    textBuf.Append(' '); break;
+            case "enspace":    textBuf.Append(' '); break;
+            case "zwnj":       textBuf.Append('‌'); break;
+            case "zwj":        textBuf.Append('‍'); break;
+            case "tab":
+                FlushTextToRun(textBuf.ToString(), s, p); textBuf.Clear();
+                FlushTextToRun("\t", s, p);
                 break;
 
             case "pard":
@@ -449,12 +620,6 @@ public class DocReader
             case "cf":         s.ForeIdx = hasN ? Math.Max(0, n) : 0; break;
             case "cb":
             case "highlight":  s.BackIdx = hasN ? Math.Max(0, n) : 0; break;
-
-            // ─ 탭 ─
-            case "tab":
-                FlushTextToRun(textBuf.ToString(), s, p); textBuf.Clear();
-                FlushTextToRun("\t", s, p);
-                break;
 
             // ─ 표 제어 ─
             case "trowd":
@@ -741,6 +906,48 @@ public class DocReader
         return (start, end);
     }
 
+    // \u<N> 뒤에 따라오는 ANSI fallback (보통 '?', 또는 \'XX 시퀀스) 을 N=skipCount 개 소비.
+    // 공백·중괄호 경계에서는 중단해 RTF 그룹 구조를 깨지 않는다.
+    private static void SkipUnicodeFallback(string rtf, ref int pos, int skipCount)
+    {
+        if (skipCount <= 0) return;
+        // \u 직후의 선행 공백은 control-word 구분자이므로 1회 소비하되 카운트 안 함.
+        if (pos < rtf.Length && rtf[pos] == ' ') pos++;
+        int n = rtf.Length;
+        int left = skipCount;
+        while (left > 0 && pos < n)
+        {
+            char c = rtf[pos];
+            if (c == '{' || c == '}') break;
+            if (c == '\\')
+            {
+                pos++;
+                if (pos >= n) break;
+                char nc = rtf[pos];
+                if (nc == '\'')
+                {
+                    // \'XX — 1 character
+                    pos++;
+                    if (pos + 1 < n) pos += 2;
+                    left--; continue;
+                }
+                if (char.IsLetter(nc))
+                {
+                    // \word[-N] [space] — 1 character (RTF 컨벤션상 fallback control word)
+                    while (pos < n && char.IsLetter(rtf[pos])) pos++;
+                    if (pos < n && rtf[pos] == '-') pos++;
+                    while (pos < n && char.IsDigit(rtf[pos])) pos++;
+                    if (pos < n && rtf[pos] == ' ') pos++;
+                    left--; continue;
+                }
+                // \X (single escaped char)
+                pos++; left--; continue;
+            }
+            // 일반 문자 1개 소비 (공백 포함)
+            pos++; left--;
+        }
+    }
+
     private static void SkipControlWord(string rtf, ref int pos)
     {
         if (pos >= rtf.Length) return;
@@ -787,6 +994,8 @@ public class DocReader
         public double     IndentRight   { get; set; }
         public double     IndentFirst   { get; set; }
         public bool       InTable       { get; set; }
+        // \uc<N> — \u<N> 뒤에 따라오는 ANSI fallback 글자/escape 의 개수. 보통 1.
+        public int        UnicodeSkipCount { get; set; } = 1;
 
         public RtfState Clone() => new()
         {
@@ -796,6 +1005,7 @@ public class DocReader
             Alignment = Alignment, SpaceBefore = SpaceBefore, SpaceAfter = SpaceAfter,
             LineHeight = LineHeight, IndentLeft = IndentLeft, IndentRight = IndentRight,
             IndentFirst = IndentFirst, InTable = InTable,
+            UnicodeSkipCount = UnicodeSkipCount,
         };
     }
 

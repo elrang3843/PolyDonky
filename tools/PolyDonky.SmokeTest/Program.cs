@@ -4,6 +4,7 @@ using PolyDonky.Codecs.Html;
 using PolyDonky.Codecs.Hwpx;
 using PolyDonky.Codecs.Markdown;
 using PolyDonky.Codecs.Text;
+using PolyDonky.Convert.Doc;
 using PolyDonky.Core;
 using PolyDonky.Iwpf;
 using PdXmlReader = PolyDonky.Codecs.Xml.XmlReader;
@@ -23,6 +24,12 @@ harness.Run("DOCX round-trip (headings + emphasis)", DocxRoundTrip);
 harness.Run("HWPX round-trip (KS X 6101 self interop)", HwpxRoundTrip);
 harness.Run("HTML round-trip (HTML5 + tables + links)", HtmlRoundTrip);
 harness.Run("XML/XHTML round-trip (well-formed XHTML5)", XmlRoundTrip);
+harness.Run("DOC (RTF) round-trip — encoding/escape/empty-para", DocRtfRoundTrip);
+harness.Run("DOC (RTF) read — CP949 한글 \\'XX + \\uc1 fallback", DocRtfKoreanAnsi);
+harness.Run("DOC (Word 97-2003 binary) — 합성 OLE2 → 텍스트·단락 추출", DocBinaryMinimalRead);
+harness.Run("DOC (Word 97-2003 binary) — MS-OFFCRYPTO 암호화 감지 후 거부", DocBinaryEncryptedRejected);
+harness.Run("DOC (Word 97-2003 binary) — 비-OLE2 입력은 친절한 한국어 에러로 거부", DocBinaryNonOleRejected);
+harness.Run("DOC (Word 97-2003 binary) — Phase 1b PAPX 단락 정렬 + CHPX 굵게·크기 적용", DocBinaryPapxChpxFormatting);
 
 return harness.Finish();
 
@@ -281,6 +288,349 @@ static void XmlRoundTrip()
     SmokeHarness.Equal(OutlineLevel.H1, rps[0].Style.Outline,        "round-trip H1");
     SmokeHarness.True(read.Sections[0].Blocks.OfType<ThematicBreakBlock>().Any(), "round-trip thematic break");
     SmokeHarness.True(rps.SelectMany(rp => rp.Runs).Any(r => r.Url == "https://x"), "round-trip link URL");
+}
+
+static void DocRtfRoundTrip()
+{
+    // DocWriter 가 RTF 로 직렬화한 결과를 DocReader 로 다시 읽어 의미가 보존되는지 검증.
+    var doc = new PolyDonkyument();
+    doc.Metadata.Title  = "DOC RTF 스모크";
+    doc.Metadata.Author = "Noh JinMoon";
+    var section = new Section();
+    doc.Sections.Add(section);
+
+    var heading = new Paragraph { Style = { Alignment = Alignment.Center } };
+    heading.AddText("RTF 라운드트립", new RunStyle { Bold = true, FontSizePt = 16 });
+    section.Blocks.Add(heading);
+
+    var body = new Paragraph();
+    body.AddText("본문 ");
+    body.AddText("굵게", new RunStyle { Bold = true });
+    body.AddText(" + ");
+    body.AddText("기울임", new RunStyle { Italic = true });
+    body.AddText(" — 한글 조판 테스트.");
+    section.Blocks.Add(body);
+
+    // 빈 단락 (사용자가 본 빈 줄) 이 보존되는지
+    section.Blocks.Add(new Paragraph());
+
+    var tail = new Paragraph();
+    tail.AddText("끝 단락.");
+    section.Blocks.Add(tail);
+
+    using var ms = new MemoryStream();
+    new DocWriter().Write(doc, ms);
+    SmokeHarness.True(ms.Length > 200, $"RTF size > 200 bytes (got {ms.Length})");
+
+    ms.Position = 0;
+    var read = new DocReader().Read(ms);
+    SmokeHarness.Equal("DOC RTF 스모크", read.Metadata.Title!, "RTF metadata.title");
+    SmokeHarness.Equal("Noh JinMoon",   read.Metadata.Author!, "RTF metadata.author");
+
+    var paragraphs = read.EnumerateParagraphs().ToList();
+    // 헤딩 + 본문 + 빈 단락 + 꼬리 = 4
+    SmokeHarness.Equal(4, paragraphs.Count, "RTF paragraph count (empty para preserved)");
+    SmokeHarness.Equal(Alignment.Center, paragraphs[0].Style.Alignment, "RTF heading alignment");
+    SmokeHarness.True(paragraphs[1].Runs.Any(r => r.Style.Bold   && r.Text.Contains("굵게")),   "RTF bold run preserved");
+    SmokeHarness.True(paragraphs[1].Runs.Any(r => r.Style.Italic && r.Text.Contains("기울임")), "RTF italic run preserved");
+    SmokeHarness.True(paragraphs[3].GetPlainText().Contains("끝 단락"), "RTF tail paragraph text");
+}
+
+static void DocRtfKoreanAnsi()
+{
+    // 한글 CP949 RTF 의 \'XX + \uc1 fallback 처리 검증.
+    // 워드패드/한글 등이 저장하는 실제 RTF 와 유사한 헤더로 합성.
+    // CP949: 안=BEC8 녕=B3E7 하=C7CF 세=BCBC 요=BFE4. '한' U+D55C = 54620.
+    const string rtf =
+        @"{\rtf1\ansi\ansicpg949\deff0" +
+        @"{\fonttbl{\f0\fnil\fcharset129 Malgun Gothic;}}" +
+        @"{\colortbl;\red0\green0\blue0;}" +
+        @"\viewkind4\uc1\pard\f0\fs22 " +
+        @"\'be\'c8\'b3\'e7\'c7\'cf\'bc\'bc\'bf\'e4" +     // '안녕하세요' (CP949 \'XX)
+        @"\par " +
+        // '한' (U+D55C = 54620) + ANSI fallback '?' (1글자) → 디코딩 결과 "한 END"
+        @"\" + "u54620 ? END" + @"\par}";
+
+    using var ms = new MemoryStream(Encoding.GetEncoding(28591).GetBytes(rtf));
+    var read = new DocReader().Read(ms);
+
+    var text = string.Join("\n", read.EnumerateParagraphs().Select(p => p.GetPlainText()));
+    SmokeHarness.True(text.Contains("안녕하세요"), $"CP949 \\'XX 디코딩 (got: {text})");
+    SmokeHarness.True(text.Contains("한"),         $"\\u54620 → '한' 디코딩 (got: {text})");
+    SmokeHarness.True(text.Contains("END"),
+        $"\\uc1 fallback '?' 소비 후 다음 텍스트 살아 있음 (got: {text})");
+    SmokeHarness.True(!text.Contains("?"),
+        $"fallback '?' 자체는 출력되지 않아야 함 (got: {text})");
+}
+
+static void DocBinaryMinimalRead()
+{
+    // Word 97-2003 binary 파일을 합성해 DocBinaryReader 가 텍스트·단락을 정확히 추출하는지 검증.
+    // 단락 마커 '\r' 기준 분리, UTF-16LE piece 디코딩, 한글 round-trip 까지 확인.
+    const string mainText = "Hello\rWorld\r한글 단락\r";  // 3 단락
+
+    byte[] wordDocBytes;
+    byte[] tableBytes;
+    BuildMinimalDocStreams(mainText, out wordDocBytes, out tableBytes);
+
+    // OLE2 컨테이너 생성 (임시 파일)
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var wd = root.CreateStream("WordDocument"))
+                wd.Write(wordDocBytes);
+            using (var tb = root.CreateStream("0Table"))
+                tb.Write(tableBytes);
+            // non-transacted 모드 — Commit 없이 Dispose 시 flush.
+        }
+
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        var paragraphs = doc.EnumerateParagraphs().ToList();
+        // mainText 의 마지막 '\r' 후 빈 단락을 BuildDocument 가 만들어내므로 단락 수는 4.
+        SmokeHarness.True(paragraphs.Count >= 3,
+            $"단락 수 >= 3 (got {paragraphs.Count})");
+        SmokeHarness.Equal("Hello",     paragraphs[0].GetPlainText(), "1st paragraph text");
+        SmokeHarness.Equal("World",     paragraphs[1].GetPlainText(), "2nd paragraph text");
+        SmokeHarness.Equal("한글 단락", paragraphs[2].GetPlainText(), "3rd paragraph text (Korean)");
+    }
+    finally
+    {
+        try { File.Delete(tmp); } catch { }
+    }
+}
+
+static void DocBinaryEncryptedRejected()
+{
+    // 같은 minimal 합성에 FIB flags 의 fEncrypted (bit 8 = 0x0100) 를 켜고 던지면
+    // 명세 [MS-OFFCRYPTO] 에 따라 본문 진입 전에 거부되어야 한다.
+    const string mainText = "ignored\r";
+    BuildMinimalDocStreams(mainText, out var wordDoc, out var table);
+    // FIB flags @ 0x000A 의 fEncrypted 비트 켜기
+    ushort flags = BitConverter.ToUInt16(wordDoc, 0x0A);
+    flags |= 0x0100;
+    BitConverter.TryWriteBytes(wordDoc.AsSpan(0x0A), flags);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    bool rejected = false;
+    string? msg = null;
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var wd = root.CreateStream("WordDocument")) wd.Write(wordDoc);
+            using (var tb = root.CreateStream("0Table"))       tb.Write(table);
+        }
+        using var fs = File.OpenRead(tmp);
+        try { new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs); }
+        catch (InvalidOperationException ex) { rejected = true; msg = ex.Message; }
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+
+    SmokeHarness.True(rejected, "fEncrypted 비트 켜진 .doc 는 거부되어야 함");
+    SmokeHarness.True(msg?.Contains("암호화") == true,
+        $"거부 메시지는 '암호화' 안내를 포함해야 함 (got: {msg})");
+}
+
+static void DocBinaryNonOleRejected()
+{
+    // OLE2 가 아닌 임의 byte 배열을 .doc 로 던지면 CFB 단계에서 친절한 한국어 에러로 거부되어야 한다.
+    var bogus = Encoding.UTF8.GetBytes("이건 그냥 텍스트 파일인데 누가 .doc 라고 우긴 경우.");
+    using var ms = new MemoryStream(bogus);
+    bool rejected = false;
+    string? msg = null;
+    try { new PolyDonky.Convert.Doc.DocBinaryReader().Read(ms); }
+    catch (InvalidOperationException ex) { rejected = true; msg = ex.Message; }
+    SmokeHarness.True(rejected, "OLE2 가 아닌 입력은 거부되어야 함");
+    SmokeHarness.True(msg?.Contains("Word 97-2003") == true || msg?.Contains("OLE2") == true,
+        $"거부 메시지는 형식 안내를 포함해야 함 (got: {msg})");
+}
+
+static void DocBinaryPapxChpxFormatting()
+{
+    // 두 단락의 합성 .doc:
+    //   - 단락 1: "Bold-X"  → PAPX 정렬 Center, CHPX 처음 4글자 굵게 + 14pt
+    //   - 단락 2: "Plain"   → PAPX 정렬 Right, CHPX 기본
+    // FKP 들을 직접 합성해 PAPX/CHPX 운영이 실제 sprm 을 읽어 Style 에 반영하는지 검증.
+    const string text = "Bold-X\rPlain\r";  // 13 chars; ccpText = 13
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText  = 0x200;
+    int fcEnd   = fcText + textBytes.Length;  // 0x21A
+    int pnPapx  = 4;  // FKP page 4 → byte 0x800
+    int pnChpx  = 5;  // FKP page 5 → byte 0xA00
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize    = fcChpxFkp + 512;  // 0xC00
+
+    var wd = new byte[wdSize];
+
+    // ── text ───────────────────────────────────────────────────
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // ── PAPX FKP ───────────────────────────────────────────────
+    // 단락 1 의 \r 은 CP 6 → fc = 0x200 + 6*2 = 0x20C
+    // 단락 2 의 \r 은 CP 12 → fc = 0x200 + 12*2 = 0x218
+    // PapxFkp rgfc 구간: [0x200, 0x20E) → 단락 1; [0x20E, 0x21A) → 단락 2
+    int cpara = 2;
+    // rgfc[3]
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 8),  (int)0x21A);
+    // BXPap[0] 첫 byte = bOffset (2-byte 단위), 나머지 12 byte PHE 는 0
+    int papx0Off = 256;            // FKP-local byte offset
+    int papx1Off = 280;
+    wd[fcPapxFkp + 12 + 0 * 13]    = (byte)(papx0Off / 2);  // bOffset 128
+    wd[fcPapxFkp + 12 + 1 * 13]    = (byte)(papx1Off / 2);  // bOffset 140
+    // PapxInFkp[0] @ FKP+256: cb=3 (size = 3*2 - 1 = 5), istd(2) + sprmPJc80(2) + op(1)
+    wd[fcPapxFkp + papx0Off + 0]   = 3;
+    wd[fcPapxFkp + papx0Off + 1]   = 0; wd[fcPapxFkp + papx0Off + 2] = 0;   // istd
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + papx0Off + 3), (ushort)0x2461);
+    wd[fcPapxFkp + papx0Off + 5]   = 1;  // center
+    // PapxInFkp[1] @ FKP+280
+    wd[fcPapxFkp + papx1Off + 0]   = 3;
+    wd[fcPapxFkp + papx1Off + 1]   = 0; wd[fcPapxFkp + papx1Off + 2] = 0;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + papx1Off + 3), (ushort)0x2461);
+    wd[fcPapxFkp + papx1Off + 5]   = 2;  // right
+    wd[fcPapxFkp + 511]            = (byte)cpara;
+
+    // ── CHPX FKP ───────────────────────────────────────────────
+    // run 0: fc [0x200, 0x208) — 4 chars "Bold" — Bold ON + 14pt (=28 halfPt)
+    // run 1: fc [0x208, 0x20A) — 1 char "-"    — Bold OFF, 기본 크기
+    // run 2: fc [0x20A, 0x21A) — 나머지 "X\rPlain\r" — 기본
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x208);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20A);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x21A);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);  // = 16
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);  // 32
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);  // 40
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);  // 48
+    // ChpxInFkp[0]: cb=7 (sprmCFBold 2+op 1 + sprmCHps 2+op 2 = 7 byte grpprl)
+    wd[fcChpxFkp + chpx0Off + 0] = 7;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + chpx0Off + 1), (ushort)0x0835);
+    wd[fcChpxFkp + chpx0Off + 3] = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + chpx0Off + 4), (ushort)0x4A43);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + chpx0Off + 6), (ushort)28);  // 14pt
+    // ChpxInFkp[1], [2]: cb=0 (no sprms)
+    wd[fcChpxFkp + chpx1Off + 0] = 0;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511]          = (byte)crun;
+
+    // ── Table stream: CLX + PlcBtePapx + PlcBteChpx ───────────
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    // CLX (PCDT 0x02 + lcb + PlcPcd, 1 piece)
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);   // aCP[0]
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);   // aCP[1]
+    tblMs.WriteByte(0); tblMs.WriteByte(0);                       // PCD flags
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);// PCD fc
+    tblMs.WriteByte(0); tblMs.WriteByte(0);                       // PCD prm
+    int clxEnd = (int)tblMs.Position;
+
+    // PlcBtePapx: aFC[2] + aPnFkp[1]
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300); tblMs.Write(b4);  // upper bound
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+
+    // PlcBteChpx: aFC[2] + aPnFkp[1]
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    var table = tblMs.ToArray();
+
+    // ── FIB ───────────────────────────────────────────────────
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);  // 0Table, no encryption
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);                  // fcClx
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);             // lcbClx
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);       // fcPlcfBteChpx
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);         // lcbPlcfBteChpx
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);       // fcPlcfBtePapx
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);         // lcbPlcfBtePapx
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(table);
+        }
+
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var paragraphs = doc.EnumerateParagraphs().ToList();
+
+        SmokeHarness.True(paragraphs.Count >= 2,
+            $"단락 수 >= 2 (got {paragraphs.Count})");
+        SmokeHarness.Equal(Alignment.Center, paragraphs[0].Style.Alignment, "단락 1 PAPX 정렬 Center");
+        SmokeHarness.Equal(Alignment.Right,  paragraphs[1].Style.Alignment, "단락 2 PAPX 정렬 Right");
+
+        // 단락 1 의 첫 번째 Run 은 "Bold" 이고 Bold + 14pt 여야 함.
+        var firstRun = paragraphs[0].Runs[0];
+        SmokeHarness.True(firstRun.Style.Bold,
+            $"단락 1 첫 Run 은 굵게 (got Bold={firstRun.Style.Bold}, text='{firstRun.Text}')");
+        SmokeHarness.Equal(14.0, firstRun.Style.FontSizePt, "단락 1 첫 Run 글자 크기 14pt");
+        SmokeHarness.Equal("Bold", firstRun.Text, "단락 1 첫 Run 텍스트 = 'Bold'");
+
+        // 단락 1 의 마지막 Run 은 "-X" 이고 굵지 않아야 함.
+        var lastRun1 = paragraphs[0].Runs[^1];
+        SmokeHarness.True(!lastRun1.Style.Bold,
+            $"단락 1 마지막 Run 은 일반 (got Bold={lastRun1.Style.Bold}, text='{lastRun1.Text}')");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// minimal Word 97-2003 WordDocument + 0Table stream bytes 합성.
+// FIB(0x200) + UTF-16LE text  /  0Table = CLX(PCDT only, single piece)
+static void BuildMinimalDocStreams(string mainText, out byte[] wordDoc, out byte[] table)
+{
+    byte[] textBytes = Encoding.Unicode.GetBytes(mainText);
+    int fcTextStart  = 0x200;
+    int ccpText      = mainText.Length;
+
+    // CLX: 0x02 + lcb(4) + PlcPcd { aCP[2] + aPcd[1] = 8+8 = 16 bytes payload, lcb=16 }
+    var clx = new MemoryStream();
+    clx.WriteByte(0x02);
+    Span<byte> buf4 = stackalloc byte[4];
+    BitConverter.TryWriteBytes(buf4, (uint)16); clx.Write(buf4);
+    BitConverter.TryWriteBytes(buf4, (uint)0);          clx.Write(buf4);   // aCP[0] = 0
+    BitConverter.TryWriteBytes(buf4, (uint)ccpText);    clx.Write(buf4);   // aCP[1] = ccpText
+    // PCD: flags(2) + fc(4) + prm(2). fc 의 bit 30=0 이면 unicode, fc = byte offset.
+    clx.WriteByte(0); clx.WriteByte(0);                                    // flags
+    BitConverter.TryWriteBytes(buf4, (uint)fcTextStart); clx.Write(buf4);  // fc = 0x200
+    clx.WriteByte(0); clx.WriteByte(0);                                    // prm
+    table = clx.ToArray();
+
+    // FIB
+    var fib = new byte[0x200];
+    BitConverter.TryWriteBytes(fib.AsSpan(0x00),   (ushort)0xA5EC);  // magic
+    BitConverter.TryWriteBytes(fib.AsSpan(0x02),   (ushort)193);     // nFib
+    BitConverter.TryWriteBytes(fib.AsSpan(0x0A),   (ushort)0x0000);  // flags — fWhichTblStm = 0 → "0Table"
+    BitConverter.TryWriteBytes(fib.AsSpan(0x18),   (uint)fcTextStart); // fcMin
+    BitConverter.TryWriteBytes(fib.AsSpan(0x4C),   (uint)ccpText);   // ccpText
+    BitConverter.TryWriteBytes(fib.AsSpan(0x01A2), (uint)0);         // fcClx (Table stream 시작)
+    BitConverter.TryWriteBytes(fib.AsSpan(0x01A6), (uint)table.Length); // lcbClx
+
+    wordDoc = new byte[fcTextStart + textBytes.Length];
+    Buffer.BlockCopy(fib,       0, wordDoc, 0,             fib.Length);
+    Buffer.BlockCopy(textBytes, 0, wordDoc, fcTextStart,   textBytes.Length);
 }
 
 static byte[] TamperDocumentJson(byte[] original)

@@ -1252,8 +1252,11 @@ public static class FlowDocumentBuilder
                     TextAlignment = para.TextAlignment,
                     Foreground = para.Foreground ?? System.Windows.Media.Brushes.Black,
                     Background = para.Background,
-                    Padding = para.Padding,
-                    Margin = para.Margin,
+                    // Wpf.Paragraph 의 Margin/Padding 은 NaN ("Auto") 을 허용하지만
+                    // TextBlock(FrameworkElement) 의 Margin 은 NaN 을 거부한다.
+                    // NaN → 0 으로 정규화하지 않으면 set_Margin 에서 ArgumentException 발생.
+                    Padding = SanitizeThickness(para.Padding),
+                    Margin = SanitizeThickness(para.Margin),
                     FontFamily = para.FontFamily,
                     FontSize = para.FontSize,
                     FontWeight = para.FontWeight,
@@ -1288,6 +1291,14 @@ public static class FlowDocumentBuilder
         // Grid 를 BlockUIContainer 로 감싸서 wcell.Blocks 에 추가
         wcell.Blocks.Add(new Wpf.BlockUIContainer(grid));
     }
+
+    // Block 계층(Paragraph/Section 등)은 NaN-Thickness 를 "Auto" 로 받지만 FrameworkElement
+    // (TextBlock/Grid 등) 의 Margin/Padding setter 는 NaN 을 거부한다. 변환 시 0 으로 정규화.
+    private static Thickness SanitizeThickness(Thickness t) => new(
+        double.IsFinite(t.Left)   ? t.Left   : 0,
+        double.IsFinite(t.Top)    ? t.Top    : 0,
+        double.IsFinite(t.Right)  ? t.Right  : 0,
+        double.IsFinite(t.Bottom) ? t.Bottom : 0);
 
     /// <summary>WPF Inline 을 복사한다. (Tag, 스타일 포함)</summary>
     private static Wpf.Inline CopyInline(Wpf.Inline inline)
