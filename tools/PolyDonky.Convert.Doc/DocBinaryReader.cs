@@ -667,6 +667,12 @@ public class DocBinaryReader
             "TIME"     => (FieldType.Time,     (string?)null),
             "AUTHOR"   => (FieldType.Author,   (string?)null),
             "TITLE"    => (FieldType.Title,    (string?)null),
+            // Phase 3a-3 — 문서 메타데이터 / 통계 계열 필드.
+            "NUMCHARS" => (FieldType.NumChars, (string?)null),
+            "FILENAME" => (FieldType.FileName, (string?)null),
+            "SUBJECT"  => (FieldType.Subject,  (string?)null),
+            "KEYWORDS" => (FieldType.Keywords, (string?)null),
+            "COMMENTS" => (FieldType.Comments, (string?)null),
             _          => ((FieldType?)null,   (string?)null),
         };
     }
