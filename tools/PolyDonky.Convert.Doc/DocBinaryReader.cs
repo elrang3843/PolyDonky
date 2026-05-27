@@ -51,6 +51,20 @@ public class DocBinaryReader
     public IReadOnlyList<(string MediaType, byte[] Data)> BStoreImages { get; private set; }
         = Array.Empty<(string, byte[])>();
 
+    /// <summary>
+    /// Phase 3f-4 — PlcSpaMom (Plex of FSPA in Main document) 에서 추출한 floating shape anchor 목록.
+    /// 각 entry 는 본문 CP (0x08 drawing char 위치) + shape ID + 앵커 사각형 (twips).
+    /// </summary>
+    public IReadOnlyList<FspaEntry> FspaEntries { get; private set; } = Array.Empty<FspaEntry>();
+
+    /// <summary>
+    /// Phase 3f-5 — DggContainer 의 OfficeArtSpContainer 들을 walk 해서 만든 spid → BStore 1-based index 맵.
+    /// FspaEntry.Spid 와 결합하면 floating shape 의 위치 + 이미지를 결정 가능:
+    ///   image = BStoreImages[ShapeImageIndex[fspa.Spid] - 1] at (fspa.XaLeft, fspa.YaTop).
+    /// </summary>
+    public IReadOnlyDictionary<int, int> ShapeImageIndex { get; private set; }
+        = new Dictionary<int, int>();
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -104,7 +118,14 @@ public class DocBinaryReader
             // (Data stream 도 함께 넘겨 FBSE.foDelay 가 Data stream 안의 BLIP 을 가리키는 케이스 지원).
             fmt.BStoreImages = ParseBStoreImages(table, fib, fmt.DataStream);
             BStoreImages = fmt.BStoreImages;
+            // Phase 3f-4 — PlcSpaMom 에서 floating shape anchor 목록 추출.
+            FspaEntries  = ParseFspaEntries(table, fib);
+            // Phase 3f-5 — DggContainer 의 SpContainer 들에서 spid → pib (BStore index) 맵 추출.
+            ShapeImageIndex = ParseShapeImageIndex(table, fib);
             var doc = BuildDocument(text, fcs, fmt);
+
+            // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
+            ApplyFloatingShapeImages(doc);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc);
@@ -160,6 +181,10 @@ public class DocBinaryReader
         //            Table stream 의 이 영역이 OfficeArtBStoreContainer 를 포함해 문서 전역 BLIP store 를 담는다.
         uint   FcDggInfo,
         uint   LcbDggInfo,
+        // Phase 3f-4 — PlcSpaMom (main doc floating shape anchors). FibRgFcLcb97 pair 16:
+        //   fcPlcSpaMom  @ 0x011A, lcbPlcSpaMom @ 0x011E.
+        uint   FcPlcSpaMom,
+        uint   LcbPlcSpaMom,
         // Phase 3g — Footnote / Endnote sub-document.
         //   FibRgLw97: ccpAtn @ 0x005C, ccpEdn @ 0x0060.
         //   FibRgFcLcb97 pair 3: fcPlcffndTxt @ 0x00B2, lcbPlcffndTxt @ 0x00B6.
@@ -236,6 +261,10 @@ public class DocBinaryReader
         uint fcDggInfo  = wd.Length >= 0x0316 ? BitConverter.ToUInt32(wd, 0x0312) : 0u;
         uint lcbDggInfo = wd.Length >= 0x031A ? BitConverter.ToUInt32(wd, 0x0316) : 0u;
 
+        // Phase 3f-4 — PlcSpaMom (FibRgFcLcb97 pair 16). fcPlcSpaMom @ 0x011A, lcbPlcSpaMom @ 0x011E.
+        uint fcPlcSpaMom  = wd.Length >= 0x011E ? BitConverter.ToUInt32(wd, 0x011A) : 0u;
+        uint lcbPlcSpaMom = wd.Length >= 0x0122 ? BitConverter.ToUInt32(wd, 0x011E) : 0u;
+
         // Phase 3g — Footnote / Endnote sub-document fields.
         //   FibRgLw97: ccpAtn @ 0x005C, ccpEdn @ 0x0060.
         //   FibRgFcLcb97 pair 3: fcPlcffndTxt @ 0x00B2, lcbPlcffndTxt @ 0x00B6.
@@ -252,6 +281,7 @@ public class DocBinaryReader
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
                        ccpFtn, ccpHdd, fcPlcfHdd, lcbPlcfHdd,
                        fcDggInfo, lcbDggInfo,
+                       fcPlcSpaMom, lcbPlcSpaMom,
                        ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt);
     }
 
@@ -1182,6 +1212,170 @@ public class DocBinaryReader
             }
             pos = dataEnd;
         }
+    }
+
+    // Phase 3f-4 — PlcSpaMom (Plex of FSPA) 파싱. [MS-DOC] §2.8.32.
+    //   aCP[N+1] (각 4 byte) + aSpa[N] (각 26 byte). lcb = 4*(N+1) + 26*N = 4 + 30N.
+    //   각 FSPA: spid(4) + xaLeft(4) + yaTop(4) + xaRight(4) + yaBottom(4) + flags(6 byte).
+    //   aCP[i] = 본문 안 0x08 (drawing char) 의 CP 위치 — 도형이 anchor 되는 지점.
+    private static IReadOnlyList<FspaEntry> ParseFspaEntries(byte[] table, Fib fib)
+    {
+        if (fib.LcbPlcSpaMom < 4 + 30) return Array.Empty<FspaEntry>();
+        int start = (int)fib.FcPlcSpaMom;
+        long endL  = (long)start + fib.LcbPlcSpaMom;
+        if (start < 0 || endL > table.Length) return Array.Empty<FspaEntry>();
+
+        int lcb = (int)fib.LcbPlcSpaMom;
+        int n = (lcb - 4) / 30;
+        if (n <= 0) return Array.Empty<FspaEntry>();
+
+        var list = new List<FspaEntry>(n);
+        int cpsBase = start;
+        int spaBase = start + 4 * (n + 1);
+        for (int i = 0; i < n; i++)
+        {
+            int cp        = BitConverter.ToInt32(table, cpsBase + i * 4);
+            int spaOff    = spaBase + i * 26;
+            int spid      = BitConverter.ToInt32(table, spaOff + 0);
+            int xaLeft    = BitConverter.ToInt32(table, spaOff + 4);
+            int yaTop     = BitConverter.ToInt32(table, spaOff + 8);
+            int xaRight   = BitConverter.ToInt32(table, spaOff + 12);
+            int yaBottom  = BitConverter.ToInt32(table, spaOff + 16);
+            list.Add(new FspaEntry(cp, spid, xaLeft, yaTop, xaRight, yaBottom));
+        }
+        return list;
+    }
+
+    // Phase 3f-6 — FspaEntries 의 각 항목을 ShapeImageIndex → BStoreImages 로 resolve 해
+    //   floating ImageBlock 을 doc.Sections[0].Blocks 에 추가.
+    //   좌표는 twips → mm 변환 (1 inch = 1440 twips = 25.4 mm → / 56.692).
+    //   AnchorPageIndex 는 0 (페이지 단위 분배는 메인 앱의 페이지네이션 단계에서 처리).
+    private void ApplyFloatingShapeImages(PolyDonkyument doc)
+    {
+        if (FspaEntries.Count == 0 || ShapeImageIndex.Count == 0
+            || BStoreImages.Count == 0 || doc.Sections.Count == 0)
+            return;
+
+        var section = doc.Sections[0];
+        foreach (var fspa in FspaEntries)
+        {
+            if (!ShapeImageIndex.TryGetValue(fspa.Spid, out int pib)) continue;
+            if (pib < 1 || pib > BStoreImages.Count) continue;
+            var (mime, data) = BStoreImages[pib - 1];
+
+            double widthMm  = (fspa.XaRightTwips  - fspa.XaLeftTwips) / 56.692;
+            double heightMm = (fspa.YaBottomTwips - fspa.YaTopTwips)  / 56.692;
+            if (widthMm  < 0) widthMm  = 0;
+            if (heightMm < 0) heightMm = 0;
+
+            section.Blocks.Add(new ImageBlock
+            {
+                MediaType       = mime,
+                Data            = data,
+                WrapMode        = ImageWrapMode.InFrontOfText,
+                AnchorPageIndex = 0,
+                OverlayXMm      = fspa.XaLeftTwips / 56.692,
+                OverlayYMm      = fspa.YaTopTwips  / 56.692,
+                WidthMm         = widthMm,
+                HeightMm        = heightMm,
+                Description     = $"[floating shape spid={fspa.Spid}]",
+            });
+        }
+    }
+
+    // Phase 3f-5 — DggContainer 안의 OfficeArtSpContainer (0xF004) 들을 walk 해 spid → pib 맵 작성.
+    //   각 SpContainer:
+    //     - Sp atom (0xF009, body 8 byte: spid(4) + flags(4)) — shape ID
+    //     - OPT atom (0xF00B, body = N 개 property × 6 byte) — pib (id=260, fBid=1) 가 BLIP 인덱스
+    //   spid != 0 이고 pib > 0 일 때만 맵에 등록.
+    private static IReadOnlyDictionary<int, int> ParseShapeImageIndex(byte[] table, Fib fib)
+    {
+        var map = new Dictionary<int, int>();
+        if (fib.LcbDggInfo == 0) return map;
+        int start = (int)fib.FcDggInfo;
+        long endL  = (long)start + fib.LcbDggInfo;
+        if (start < 0 || endL > table.Length) return map;
+        WalkSpContainers(table, start, (int)endL, map, depth: 0);
+        return map;
+    }
+
+    private static void WalkSpContainers(byte[] data, int start, int end, Dictionary<int, int> map, int depth)
+    {
+        if (depth > 12) return;  // 손상된 입력 안전
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort verInst = BitConverter.ToUInt16(data, pos);
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint   recLen  = BitConverter.ToUInt32(data, pos + 4);
+            int dataStart  = pos + 8;
+            long dataEnd64 = (long)dataStart + recLen;
+            if (dataEnd64 > end || dataEnd64 < dataStart) return;
+            int dataEnd = (int)dataEnd64;
+            int recVer = verInst & 0x000F;
+
+            if (recType == 0xF004)
+            {
+                // SpContainer — 자식들에서 spid + pib 추출.
+                int spid = ExtractSpid(data, dataStart, dataEnd);
+                int pib  = ExtractPib(data, dataStart, dataEnd);
+                if (spid != 0 && pib > 0) map[spid] = pib;
+            }
+            if (recVer == 0xF) WalkSpContainers(data, dataStart, dataEnd, map, depth + 1);
+            pos = dataEnd;
+        }
+    }
+
+    // SpContainer 의 자식 중 Sp atom (0xF009) 을 찾아 spid (body[0..3]) 반환. 없으면 0.
+    private static int ExtractSpid(byte[] data, int start, int end)
+    {
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint   recLen  = BitConverter.ToUInt32(data, pos + 4);
+            int dataStart  = pos + 8;
+            long dataEnd64 = (long)dataStart + recLen;
+            if (dataEnd64 > end) return 0;
+            if (recType == 0xF009 && dataStart + 4 <= dataEnd64)
+                return BitConverter.ToInt32(data, dataStart);
+            pos = (int)dataEnd64;
+        }
+        return 0;
+    }
+
+    // SpContainer 의 자식 중 OPT atom (0xF00B) 의 properties 에서 pib (propId=260, fBid=1) 값 추출.
+    private static int ExtractPib(byte[] data, int start, int end)
+    {
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort verInst = BitConverter.ToUInt16(data, pos);
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint   recLen  = BitConverter.ToUInt32(data, pos + 4);
+            int dataStart  = pos + 8;
+            long dataEnd64 = (long)dataStart + recLen;
+            if (dataEnd64 > end) return 0;
+            int dataEnd = (int)dataEnd64;
+
+            if (recType == 0xF00B)
+            {
+                int propCount = (verInst >> 4) & 0x0FFF;
+                int avail = (dataEnd - dataStart) / 6;
+                if (propCount > avail) propCount = avail;
+                for (int i = 0; i < propCount; i++)
+                {
+                    int off = dataStart + i * 6;
+                    ushort opid = BitConverter.ToUInt16(data, off);
+                    uint   op   = BitConverter.ToUInt32(data, off + 2);
+                    int propId = opid & 0x3FFF;
+                    bool fBid  = (opid & 0x4000) != 0;
+                    if (propId == 260 && fBid) return (int)op;
+                }
+            }
+            pos = dataEnd;
+        }
+        return 0;
     }
 
     // Phase 3c-2 — SEPX (Section Properties Exception) 의 sprm 들을 Section.Page 에 매핑.
@@ -2411,3 +2605,22 @@ public class DocBinaryReader
         }
     }
 }
+
+/// <summary>
+/// Phase 3f-4 — FSPA (Floating Shape Anchor) entry. PlcSpaMom 의 한 entry 는
+/// 본문 CP (0x08 drawing char 위치) + shape ID (spid) + 앵커 사각형 (twips) 으로 구성된다.
+/// 후속 단계에서 OfficeArtSpContainer 와 매칭해 floating shape 의 위치·이미지·도형 등을 복원한다.
+/// </summary>
+/// <param name="Cp">본문 안 0x08 char 의 CP 위치.</param>
+/// <param name="Spid">OfficeArtSpContainer 의 sp.spid 와 매칭되는 shape ID.</param>
+/// <param name="XaLeftTwips">앵커 좌측 (twips, 페이지 좌측 또는 단락 기준).</param>
+/// <param name="YaTopTwips">앵커 상단 (twips).</param>
+/// <param name="XaRightTwips">앵커 우측 (twips).</param>
+/// <param name="YaBottomTwips">앵커 하단 (twips).</param>
+public sealed record FspaEntry(
+    int Cp,
+    int Spid,
+    int XaLeftTwips,
+    int YaTopTwips,
+    int XaRightTwips,
+    int YaBottomTwips);
