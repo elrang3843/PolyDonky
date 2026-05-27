@@ -46,6 +46,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 2h 중첩 표 (sprmPItap)", Doc
 harness.Run("DOC (Word 97-2003 binary) — Phase 3a 필드 결과 보존 (0x13/0x14/0x15)", DocBinaryPhase3aFieldResult);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3b 페이지 break (sprmPFPageBreakBefore)", DocBinaryPhase3bPageBreak);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3c 섹션 분할 (PlcfSed)", DocBinaryPhase3cSections);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3d 헤더·푸터 (PlcfHdd + subdoc text)", DocBinaryPhase3dHeaderFooter);
 
 return harness.Finish();
 
@@ -2754,6 +2755,121 @@ static void DocBinaryPhase3cSections()
         SmokeHarness.Equal("CD",
             ((Paragraph)doc.Sections[1].Blocks[0]).GetPlainText(),
             "섹션 1 단락 0 텍스트 'CD'");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3dHeaderFooter()
+{
+    // 본문 "Body\r" + 헤더/푸터 영역 "Hdr\rFtr\r" (총 13 chars piece).
+    //   ccpText = 5, ccpFtn = 0, ccpHdd = 8.
+    //   PlcfHdd aCP[3] = [0, 4, 8] — 영역 내 offset.
+    //     sub-story 0 (CP 5..9, 절대) = "Hdr\r" → Section[0].Page.Header.Center.Paragraphs[0]
+    //     sub-story 1 (CP 9..13, 절대) = "Ftr\r" → Section[0].Page.Footer.Center.Paragraphs[0]
+    const string text = "Body\rHdr\rFtr\r";  // 13 chars
+    int ccpText = 5;
+    int ccpHdd  = 8;
+    int totalCcp = text.Length;  // 13
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — main 단락 1 개만 인식 (헤더/푸터 단락은 ApplyHeaderFooter 가 별도 처리)
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + totalCcp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 비어 있음
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)(0x200 + totalCcp * 2));
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream: CLX (piece covers all chars 0..totalCcp) + PAPX/CHPX BTE + PlcfHdd
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)totalCcp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // PlcfHdd aCP[3] = [0, 4, 8] — 영역 내 offset
+    int plcfHddStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)4); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)8); tblMs.Write(b4);
+    int plcfHddLen = (int)tblMs.Position - plcfHddStart;
+
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccpText);    // main text 길이 = 5
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0050), (uint)0);          // ccpFtn = 0
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0054), (uint)ccpHdd);     // ccpHdd = 8
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00F2), (uint)plcfHddStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00F6), (uint)plcfHddLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        // 본문 단락: "Body"
+        SmokeHarness.Equal("Body",
+            doc.EnumerateParagraphs().First().GetPlainText(),
+            "본문 단락 = 'Body'");
+
+        var header = doc.Sections[0].Page.Header.Center;
+        SmokeHarness.True(header.Paragraphs.Count >= 1, "Header.Center 단락 >= 1");
+        SmokeHarness.Equal("Hdr", header.Paragraphs[0].GetPlainText(),
+            "Header.Center.Paragraphs[0] = 'Hdr'");
+
+        var footer = doc.Sections[0].Page.Footer.Center;
+        SmokeHarness.True(footer.Paragraphs.Count >= 1, "Footer.Center 단락 >= 1");
+        SmokeHarness.Equal("Ftr", footer.Paragraphs[0].GetPlainText(),
+            "Footer.Center.Paragraphs[0] = 'Ftr'");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }

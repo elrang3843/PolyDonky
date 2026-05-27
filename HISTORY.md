@@ -45,6 +45,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **DOC (Word 97-2003 binary) ingest — Phase 3d 헤더·푸터**: header/footer subdocument 영역 (main text + footnote 다음에 위치, FIB.ccpHdd 길이) 의 텍스트를 별도 영역에서 추출. PlcfHdd (`[MS-DOC]` §2.8.7, FibRgFcLcb97 `fcPlcfHdd` @ 0x00F2 / `lcbPlcfHdd` @ 0x00F6) 의 `aCP` 배열로 sub-story 경계 인식. 첫 두 sub-story 를 `doc.Sections[0].Page.Header.Center` / `Page.Footer.Center` 에 단순 매핑 (홀/짝/첫페이지 구분은 후속 SEPX 단계). `ExtractSubdocText` 가 임의 CP 범위를 piece table 따라 추출하는 일반화된 헬퍼. `CleanSubdocText` 가 `\r` → `\n` + 제어 문자 폐기.
 - **DOC (Word 97-2003 binary) ingest — Phase 3c 섹션 분할**: PlcfSed (`[MS-DOC]` §2.8.31, FibRgFcLcb97 `fcPlcfSed` @ 0x00CA / `lcbPlcfSed` @ 0x00CE) 의 `aCP[n+1]` 배열을 추출해 본문 CP 경계를 인식. `BuildDocument` 가 단락 flush 직후 현재 CP 가 다음 boundary 를 넘으면 진행 중인 표를 마감 후 새 `Section` 을 만들어 `doc.Sections` 에 추가. SED 의 SEPX 내용 (페이지 크기·여백·머리말 등) 은 후속.
 - **DOC (Word 97-2003 binary) ingest — Phase 3b 페이지 break**: PAPX `sprmPFPageBreakBefore` (0x2407, 1-byte) → `ParagraphStyle.ForcePageBreakBefore`. `ApplyParagraphSprm` 의 단일 case 추가로 단락 앞 강제 페이지 분할 매핑.
 - **DOC (Word 97-2003 binary) ingest — Phase 3a 필드 결과 보존**: 본문 내 `0x13` (field begin) / `0x14` (field separator) / `0x15` (field end) 제어 문자를 인식해 단순 폐기 대신 모드 기반 처리. field code (0x13~0x14 사이) 는 폐기하고 field result (0x14~0x15 사이) 만 본문에 보존. 단락 경계(`\r`/`\f`)에서 `fieldMode` 를 강제 reset 해 손상된 (0x15 누락) 파일에서도 다음 단락 텍스트가 폐기되지 않도록 안전성 강화. `[MS-DOC]` §2.8.25 단순화 (1-level 중첩만 지원).
