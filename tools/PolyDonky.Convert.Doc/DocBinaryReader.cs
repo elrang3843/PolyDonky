@@ -194,7 +194,14 @@ public class DocBinaryReader
         uint   FcPlcffndTxt,
         uint   LcbPlcffndTxt,
         uint   FcPlcfendTxt,
-        uint   LcbPlcfendTxt);
+        uint   LcbPlcfendTxt,
+        // Phase 3g-2 — Footnote / Endnote 본문 참조 plex.
+        //   FibRgFcLcb97 pair 2:  fcPlcffndRef @ 0x00AA, lcbPlcffndRef @ 0x00AE.
+        //   FibRgFcLcb97 pair 22: fcPlcfendRef @ 0x014A, lcbPlcfendRef @ 0x014E.
+        uint   FcPlcffndRef,
+        uint   LcbPlcffndRef,
+        uint   FcPlcfendRef,
+        uint   LcbPlcfendRef);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -276,13 +283,22 @@ public class DocBinaryReader
         uint fcPlcfendTxt  = wd.Length >= 0x0156 ? BitConverter.ToUInt32(wd, 0x0152) : 0u;
         uint lcbPlcfendTxt = wd.Length >= 0x015A ? BitConverter.ToUInt32(wd, 0x0156) : 0u;
 
+        // Phase 3g-2 — Footnote / Endnote ref PLC offsets.
+        //   FibRgFcLcb97 pair 2:  fcPlcffndRef @ 0x00AA, lcbPlcffndRef @ 0x00AE.
+        //   FibRgFcLcb97 pair 22: fcPlcfendRef @ 0x014A, lcbPlcfendRef @ 0x014E.
+        uint fcPlcffndRef  = wd.Length >= 0x00AE ? BitConverter.ToUInt32(wd, 0x00AA) : 0u;
+        uint lcbPlcffndRef = wd.Length >= 0x00B2 ? BitConverter.ToUInt32(wd, 0x00AE) : 0u;
+        uint fcPlcfendRef  = wd.Length >= 0x014E ? BitConverter.ToUInt32(wd, 0x014A) : 0u;
+        uint lcbPlcfendRef = wd.Length >= 0x0152 ? BitConverter.ToUInt32(wd, 0x014E) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
                        ccpFtn, ccpHdd, fcPlcfHdd, lcbPlcfHdd,
                        fcDggInfo, lcbDggInfo,
                        fcPlcSpaMom, lcbPlcSpaMom,
-                       ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt);
+                       ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt,
+                       fcPlcffndRef, lcbPlcffndRef, fcPlcfendRef, lcbPlcfendRef);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -568,7 +584,27 @@ public class DocBinaryReader
                             section.Blocks.Add(img);
                     }
                     break;
-                case '\u0002':  // footnote ref
+                case '\u0002':  // Phase 3g-2 — footnote / endnote 참조 char.
+                    if (fieldMode != 1)
+                    {
+                        string? fnId = null, enId = null;
+                        int fnIdx = fmt.FindFootnoteRefIndex(i);
+                        if (fnIdx >= 0) fnId = $"fn{fnIdx + 1}";
+                        else
+                        {
+                            int enIdx = fmt.FindEndnoteRefIndex(i);
+                            if (enIdx >= 0) enId = $"en{enIdx + 1}";
+                        }
+                        if (fnId is not null || enId is not null)
+                        {
+                            fmt.RegisterRefFc(fc, fnId, enId);
+                            // OBJECT REPLACEMENT CHARACTER (U+FFFC) 를 placeholder 로 박는다.
+                            // BuildParaFromChars 가 만나면 fc lookup 으로 ref Run 생성.
+                            paraChars.Add('\uFFFC');
+                            paraFcs.Add(fc);
+                        }
+                    }
+                    break;
                 case '\u0005':  // comment ref
                 case '\u0008':  // drawing
                     break;
@@ -771,8 +807,30 @@ public class DocBinaryReader
 
         for (int i = 0; i < chars.Count; i++)
         {
-            var rs = fmt.GetRunStyle(fcs[i], paraIstd) ?? new RunStyle();
-            var (url, field, arg) = fmt.GetFieldAtFc(fcs[i]);
+            char c = chars[i];
+            int fc = fcs[i];
+
+            // Phase 3g-2 — OBJECT REPLACEMENT CHARACTER (U+FFFC) 는 footnote/endnote ref marker.
+            //   별도 Run 으로 (Text="", FootnoteId/EndnoteId 설정) emit 후 다음 chars 계속.
+            if (c == '￼')
+            {
+                var (fnId, enId) = fmt.GetRefAtFc(fc);
+                if (fnId is not null || enId is not null)
+                {
+                    Flush();
+                    para.Runs.Add(new Run
+                    {
+                        Text       = "",
+                        Style      = curStyle ?? new RunStyle(),
+                        FootnoteId = fnId,
+                        EndnoteId  = enId,
+                    });
+                    continue;
+                }
+            }
+
+            var rs = fmt.GetRunStyle(fc, paraIstd) ?? new RunStyle();
+            var (url, field, arg) = fmt.GetFieldAtFc(fc);
             bool styleBreak = curStyle is null || !RunStyleEquals(curStyle, rs);
             bool fieldBreak = !string.Equals(curUrl, url, StringComparison.Ordinal)
                             || curField != field
@@ -785,7 +843,7 @@ public class DocBinaryReader
                 curField = field;
                 curArg   = arg;
             }
-            curText.Append(chars[i]);
+            curText.Append(c);
         }
         Flush();
         return para;
@@ -1812,14 +1870,38 @@ public class DocBinaryReader
         private readonly Dictionary<(int Pn, int RgIdx), (int Istd, byte[] Sprms)?> _papxCache = new();
         private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxCache = new();
 
+        // Phase 3g-2 — Footnote/Endnote ref CP 배열 (sorted, ascending).
+        //   PlcfFndRef/PlcfendRef 의 aCP[0..N-1] — aCP[N] 은 sentinel 이라 제외.
+        //   char-walk 에서 0x02 만났을 때 CP lookup 으로 footnote/endnote 인덱스 결정.
+        private int[] _footnoteRefCps = Array.Empty<int>();
+        private int[] _endnoteRefCps  = Array.Empty<int>();
+        // 본문 char-walk 가 0x02 를 발견하면 fc → (fnId, enId) 를 등록.
+        // BuildParaFromChars 가 '￼' 마커 만났을 때 lookup.
+        private readonly Dictionary<int, (string? FnId, string? EnId)> _refsByFc = new();
+
+        public int FindFootnoteRefIndex(int cp) => Array.IndexOf(_footnoteRefCps, cp);
+        public int FindEndnoteRefIndex(int cp)  => Array.IndexOf(_endnoteRefCps,  cp);
+
+        public void RegisterRefFc(int fc, string? fnId, string? enId)
+        {
+            if (fnId is not null || enId is not null)
+                _refsByFc[fc] = (fnId, enId);
+        }
+
+        public (string? FnId, string? EnId) GetRefAtFc(int fc)
+            => _refsByFc.TryGetValue(fc, out var v) ? v : (null, null);
+
         private FormatStyles(byte[] wd, byte[] table, List<BteEntry> papx, List<BteEntry> chpx,
                              IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles,
-                             IReadOnlyList<int> sectionCps, IReadOnlyList<int> sectionFcSepx)
+                             IReadOnlyList<int> sectionCps, IReadOnlyList<int> sectionFcSepx,
+                             int[] footnoteRefCps, int[] endnoteRefCps)
         {
             _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts; _styles = styles;
             SectionBoundaryCps = sectionCps;
             SectionFcSepx = sectionFcSepx;
             TableBytes = table;
+            _footnoteRefCps = footnoteRefCps;
+            _endnoteRefCps  = endnoteRefCps;
         }
 
         public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
@@ -1829,7 +1911,23 @@ public class DocBinaryReader
             var fonts  = ReadSttbfFfn(table, (int)fib.FcSttbfFfn, (int)fib.LcbSttbfFfn);
             var styles = ReadStsh(table, (int)fib.FcStshf, (int)fib.LcbStshf);
             var (sectionCps, sectionFcSepx) = ReadPlcfSed(table, (int)fib.FcPlcfSed, (int)fib.LcbPlcfSed);
-            return new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx);
+            // Phase 3g-2 — PlcfFndRef / PlcfendRef. Plc element = aCP(4) + FRD(2) = 6 byte.
+            //   lcb = 4*(N+1) + 2*N = 4 + 6*N. N = (lcb - 4) / 6.
+            var fnRefCps = ReadPlcCps(table, (int)fib.FcPlcffndRef, (int)fib.LcbPlcffndRef, frdSize: 2);
+            var enRefCps = ReadPlcCps(table, (int)fib.FcPlcfendRef, (int)fib.LcbPlcfendRef, frdSize: 2);
+            return new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx,
+                                    fnRefCps, enRefCps);
+        }
+
+        private static int[] ReadPlcCps(byte[] table, int fc, int lcb, int frdSize)
+        {
+            if (lcb < 4 || fc < 0 || fc + lcb > table.Length) return Array.Empty<int>();
+            int element = 4 + frdSize;
+            int n = (lcb - 4) / element;
+            if (n <= 0) return Array.Empty<int>();
+            var arr = new int[n];
+            for (int i = 0; i < n; i++) arr[i] = BitConverter.ToInt32(table, fc + i * 4);
+            return arr;
         }
 
         // [MS-DOC] §2.8.31 PlcfSed — aCP[n+1] (각 4 byte CP) + aSed[n] (각 12 byte SED).

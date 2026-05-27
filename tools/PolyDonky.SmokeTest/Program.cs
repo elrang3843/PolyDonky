@@ -70,6 +70,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3f-3 FBSE foDelay → Data stre
 harness.Run("DOC (Word 97-2003 binary) — Phase 3f-4 PlcSpaMom (FSPA) 파싱", DocBinaryPhase3f4PlcSpaMom);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3f-5 SpContainer spid → pib (BStore index) 맵", DocBinaryPhase3f5SpidPibMap);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3f-6 Floating shape ImageBlock 합성", DocBinaryPhase3f6FloatingShapeImages);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3g-2 0x02 footnote/endnote ref 자동 연결", DocBinaryPhase3g2FootnoteRefAutoLink);
 
 return harness.Finish();
 
@@ -5428,6 +5429,162 @@ static void DocBinaryPhase3f6FloatingShapeImages()
             "ImageBlock #2 bytes = 11 22 33 44");
         SmokeHarness.True(Math.Abs(iB.OverlayXMm - 50.8) < 0.05,
             $"ImageBlock #2 OverlayXMm ≈ 50.8 (got {iB.OverlayXMm:F2})");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3g-2 — 본문 0x02 (footnote/endnote ref) → Run.FootnoteId / EndnoteId 자동 연결.
+//   main "A<0x02>B<0x02>C\r" — CP 1 의 0x02 는 footnote ref, CP 3 의 0x02 는 endnote ref.
+//   PlcfFndRef aCP = [1, 6] (sentinel=ccpText). PlcfendRef aCP = [3, 6].
+//   결과: Paragraph 의 Runs = [A, "" FootnoteId=fn1, B, "" EndnoteId=en1, C].
+static void DocBinaryPhase3g2FootnoteRefAutoLink()
+{
+    // main(6) + footnote(15) + header(0) + comment(0) + endnote(14) = 35 chars
+    const string text = "ABC\r \rFootnoteText\r \rEndnoteText\r";
+    int ccpMain = 6;
+    int ccpFtn  = 15;
+    int ccpEdn  = 14;
+    int totalCcp = ccpMain + ccpFtn + ccpEdn;  // = 35
+    SmokeHarness.Equal(totalCcp, text.Length, "text 길이 검증");
+
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락 (main 영역만).
+    int cpara = 1;
+    int paraEndFc = fcText + ccpMain * 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)paraEndFc);
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)paraEndFc);
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    Span<byte> b2 = stackalloc byte[2];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);        tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)totalCcp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)fcText);      tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)(fcText + totalCcp * 2 + 0x100)); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx);      tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)fcText);      tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)(fcText + totalCcp * 2 + 0x100)); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx);      tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // PlcfFndTxt: aCP = [0, 2, 15] (separator + 1 footnote). lcb = 12.
+    int fndTxtStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)2);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)15); tblMs.Write(b4);
+    int fndTxtLen = (int)tblMs.Position - fndTxtStart;
+
+    // PlcfendTxt: aCP = [0, 2, 14] (separator + 1 endnote). lcb = 12.
+    int ednTxtStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)2);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)14); tblMs.Write(b4);
+    int ednTxtLen = (int)tblMs.Position - ednTxtStart;
+
+    // PlcfFndRef: aCP = [1 (ref CP in main), 6 (sentinel = ccpText)].
+    //   FRD = 2 byte placeholder. element = 6 byte. lcb = 4*2 + 2*1 = 10.
+    int fndRefStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)1);  tblMs.Write(b4);   // aCP[0]
+    BitConverter.TryWriteBytes(b4, (int)6);  tblMs.Write(b4);   // aCP[1]
+    BitConverter.TryWriteBytes(b2, (ushort)0); tblMs.Write(b2); // FRD[0]
+    int fndRefLen = (int)tblMs.Position - fndRefStart;
+
+    // PlcfendRef: aCP = [3, 6].
+    int ednRefStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)3);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)6);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b2, (ushort)0); tblMs.Write(b2);
+    int ednRefLen = (int)tblMs.Position - ednRefStart;
+
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccpMain);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x50),   (uint)ccpFtn);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x54),   (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x5C),   (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x60),   (uint)ccpEdn);
+    BitConverter.TryWriteBytes(wd.AsSpan(0xAA),   (uint)fndRefStart);  // fcPlcffndRef
+    BitConverter.TryWriteBytes(wd.AsSpan(0xAE),   (uint)fndRefLen);    // lcbPlcffndRef
+    BitConverter.TryWriteBytes(wd.AsSpan(0xB2),   (uint)fndTxtStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0xB6),   (uint)fndTxtLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x14A),  (uint)ednRefStart);  // fcPlcfendRef
+    BitConverter.TryWriteBytes(wd.AsSpan(0x14E),  (uint)ednRefLen);    // lcbPlcfendRef
+    BitConverter.TryWriteBytes(wd.AsSpan(0x152),  (uint)ednTxtStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x156),  (uint)ednTxtLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        // Footnote / Endnote 영역도 확인.
+        SmokeHarness.Equal(1, doc.Footnotes.Count, "Footnotes.Count");
+        SmokeHarness.Equal("fn1", doc.Footnotes[0].Id, "Footnote Id");
+        SmokeHarness.Equal(1, doc.Endnotes.Count, "Endnotes.Count");
+        SmokeHarness.Equal("en1", doc.Endnotes[0].Id, "Endnote Id");
+
+        var para = (Paragraph)doc.Sections[0].Blocks[0];
+        SmokeHarness.Equal("ABC", para.GetPlainText(), "plain text = ABC (ref marker 는 Text 없음)");
+        SmokeHarness.Equal(5, para.Runs.Count, $"Runs.Count = 5 (got {para.Runs.Count})");
+
+        SmokeHarness.Equal("A", para.Runs[0].Text, "Run[0].Text = A");
+        SmokeHarness.True(para.Runs[0].FootnoteId is null && para.Runs[0].EndnoteId is null,
+            "Run[0] 일반 텍스트");
+
+        SmokeHarness.Equal("",      para.Runs[1].Text, "Run[1].Text 빈문자");
+        SmokeHarness.Equal("fn1",   para.Runs[1].FootnoteId, "Run[1].FootnoteId = fn1");
+
+        SmokeHarness.Equal("B", para.Runs[2].Text, "Run[2].Text = B");
+
+        SmokeHarness.Equal("",      para.Runs[3].Text, "Run[3].Text 빈문자");
+        SmokeHarness.Equal("en1",   para.Runs[3].EndnoteId, "Run[3].EndnoteId = en1");
+
+        SmokeHarness.Equal("C", para.Runs[4].Text, "Run[4].Text = C");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
