@@ -2753,12 +2753,18 @@ public partial class MainWindow : Window
         }
     }
 
+    // Toolbar 글자 서식 핸들러 — Services.SelectionFormatApplier 가 ApplyPropertyValue + Tag.Style 동기화 +
+    // Span/IUC rebuild 를 일관 처리하므로 per-char IUC (글상자·자간/글자폭) 텍스트에서도 정상 동작.
+
     private void OnToolbarBold(object sender, RoutedEventArgs e)
     {
         var rtb = GetActiveTextEditor();
         bool bold = TbBold.IsChecked == true;
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.TextElement.FontWeightProperty,
-            bold ? FontWeights.Bold : FontWeights.Normal);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.TextElement.FontWeightProperty,
+            bold ? FontWeights.Bold : FontWeights.Normal,
+            s => s.Bold = bold);
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
@@ -2767,8 +2773,11 @@ public partial class MainWindow : Window
     {
         var rtb = GetActiveTextEditor();
         bool italic = TbItalic.IsChecked == true;
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.TextElement.FontStyleProperty,
-            italic ? FontStyles.Italic : FontStyles.Normal);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.TextElement.FontStyleProperty,
+            italic ? FontStyles.Italic : FontStyles.Normal,
+            s => s.Italic = italic);
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
@@ -2799,7 +2808,11 @@ public partial class MainWindow : Window
         var decos = new System.Windows.TextDecorationCollection();
         if (underline)     foreach (var d in System.Windows.TextDecorations.Underline)     decos.Add(d);
         if (strikethrough) foreach (var d in System.Windows.TextDecorations.Strikethrough) decos.Add(d);
-        sel.ApplyPropertyValue(System.Windows.Documents.Inline.TextDecorationsProperty, decos);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            sel,
+            System.Windows.Documents.Inline.TextDecorationsProperty,
+            decos,
+            s => { s.Underline = underline; s.Strikethrough = strikethrough; });
     }
 
     private void OnToolbarSuperscript(object sender, RoutedEventArgs e)
@@ -2807,8 +2820,11 @@ public partial class MainWindow : Window
         var rtb = GetActiveTextEditor();
         bool sup = TbSuperscript.IsChecked == true;
         if (sup) TbSubscript.IsChecked = false;
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.Inline.BaselineAlignmentProperty,
-            sup ? BaselineAlignment.Superscript : BaselineAlignment.Baseline);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.Inline.BaselineAlignmentProperty,
+            sup ? BaselineAlignment.Superscript : BaselineAlignment.Baseline,
+            s => { s.Superscript = sup; if (sup) s.Subscript = false; });
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
@@ -2818,8 +2834,11 @@ public partial class MainWindow : Window
         var rtb = GetActiveTextEditor();
         bool sub = TbSubscript.IsChecked == true;
         if (sub) TbSuperscript.IsChecked = false;
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.Inline.BaselineAlignmentProperty,
-            sub ? BaselineAlignment.Subscript : BaselineAlignment.Baseline);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.Inline.BaselineAlignmentProperty,
+            sub ? BaselineAlignment.Subscript : BaselineAlignment.Baseline,
+            s => { s.Subscript = sub; if (sub) s.Superscript = false; });
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
@@ -2880,8 +2899,11 @@ public partial class MainWindow : Window
         if (CboToolbarFont.SelectedItem is not string fontName) return;
         if (string.IsNullOrWhiteSpace(fontName)) return;
         var rtb = GetActiveTextEditor();
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.TextElement.FontFamilyProperty,
-            new System.Windows.Media.FontFamily(fontName));
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.TextElement.FontFamilyProperty,
+            new System.Windows.Media.FontFamily(fontName),
+            s => s.FontFamily = fontName);
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
@@ -2892,8 +2914,11 @@ public partial class MainWindow : Window
         var fontName = CboToolbarFont.Text?.Trim();
         if (string.IsNullOrEmpty(fontName)) return;
         var rtb = GetActiveTextEditor();
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.TextElement.FontFamilyProperty,
-            new System.Windows.Media.FontFamily(fontName));
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.TextElement.FontFamilyProperty,
+            new System.Windows.Media.FontFamily(fontName),
+            s => s.FontFamily = fontName);
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
@@ -2912,7 +2937,11 @@ public partial class MainWindow : Window
                 || pt < 1 || pt > 999) return;
             var dip = Services.FlowDocumentBuilder.PtToDip(pt);
 
-            rtb.Selection.ApplyPropertyValue(System.Windows.Documents.TextElement.FontSizeProperty, dip);
+            Services.SelectionFormatApplier.ApplyRunStyleChange(
+                rtb.Selection,
+                System.Windows.Documents.TextElement.FontSizeProperty,
+                dip,
+                s => s.FontSizePt = pt);
             _viewModel?.MarkDirty();
             rtb.Focus();
         });
@@ -2929,7 +2958,11 @@ public partial class MainWindow : Window
             || pt < 1 || pt > 999) return;
         var dip = Services.FlowDocumentBuilder.PtToDip(pt);
 
-        rtb.Selection.ApplyPropertyValue(System.Windows.Documents.TextElement.FontSizeProperty, dip);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            rtb.Selection,
+            System.Windows.Documents.TextElement.FontSizeProperty,
+            dip,
+            s => s.FontSizePt = pt);
         _viewModel?.MarkDirty();
         rtb.Focus();
     }
