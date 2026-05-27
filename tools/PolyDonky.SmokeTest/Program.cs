@@ -72,6 +72,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3f-5 SpContainer spid → pib (
 harness.Run("DOC (Word 97-2003 binary) — Phase 3f-6 Floating shape ImageBlock 합성", DocBinaryPhase3f6FloatingShapeImages);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3g-2 0x02 footnote/endnote ref 자동 연결", DocBinaryPhase3g2FootnoteRefAutoLink);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3h 변경추적 (sprmCFRMarkIns/Del)", DocBinaryPhase3hRevisionMarks);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3h-2 변경추적 메타 (Author + DTTM)", DocBinaryPhase3h2RevisionMeta);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3h-3 단락 마크 변경추적", DocBinaryPhase3h3ParagraphRevision);
 
 return harness.Finish();
 
@@ -5709,6 +5711,252 @@ static void DocBinaryPhase3hRevisionMarks()
         SmokeHarness.Equal("EF", para.Runs[2].Text, "Run[2].Text = EF");
         SmokeHarness.True(para.Runs[2].IsDeletedRevision, "Run[2].IsDeletedRevision = true");
         SmokeHarness.True(!para.Runs[2].IsInsertedRevision, "Run[2].IsInsertedRevision = false");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3h-2 — revision 작성자 + 타임스탬프. SttbfRMark (FIB 0x142/0x146) 에 작성자 배열,
+// sprmCIbstRMark (0x4804) 가 인덱스, sprmCDttmRMark (0x6805) 가 packed DTTM.
+//   본문 "INS\r" — 전체 한 run, Ins + author=Alice + DTTM=2024-01-15 10:30.
+//   결과: Run.IsInsertedRevision=true, RevisionAuthor="Alice", RevisionDate=2024-01-15T10:30Z.
+static void DocBinaryPhase3h2RevisionMeta()
+{
+    const string text = "INS\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    int cpara = 1;
+    int paraEndFc = fcText + ccp * 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)paraEndFc);
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 1 run with sprmCFRMarkIns + sprmCIbstRMark(0) + sprmCDttmRMark(DTTM).
+    // 2024-01-15 10:30 → DTTM = 0x07C17A9E.
+    uint dttm = ((uint)(2024 - 1900) << 20) | (1u << 16) | (15u << 11) | (10u << 6) | 30u;
+    SmokeHarness.Equal(0x07C17A9Eu, dttm, "DTTM 계산 검증");
+
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)paraEndFc);
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    int c = fcChpxFkp + chpx0Off;
+    // cb = (2+1) + (2+2) + (2+4) = 13
+    wd[c++] = 13;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x0801); c += 2;
+    wd[c++] = 1;                                                       // Ins=true
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x4804); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0);  c += 2;       // author idx = 0
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6805); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), dttm); c += 4;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream: CLX + BTE + SttbfRMark ["Alice"].
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    Span<byte> b2 = stackalloc byte[2];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);     tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)paraEndFc); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx);    tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);     tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)paraEndFc); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx);    tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // SttbfRMark extended Sttb: fExtend(0xFFFF) + cData(1) + cbExtra(0) + [cch(5) + "Alice"(10)]
+    int rmarkStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b2, (ushort)0xFFFF); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)1);      tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)0);      tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)5);      tblMs.Write(b2);
+    var aliceBytes = Encoding.Unicode.GetBytes("Alice");
+    tblMs.Write(aliceBytes, 0, aliceBytes.Length);
+    int rmarkLen = (int)tblMs.Position - rmarkStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x142),  (uint)rmarkStart);  // fcSttbfRMark
+    BitConverter.TryWriteBytes(wd.AsSpan(0x146),  (uint)rmarkLen);    // lcbSttbfRMark
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var para = (Paragraph)doc.Sections[0].Blocks[0];
+
+        SmokeHarness.Equal("INS", para.GetPlainText(), "plain text = INS");
+        SmokeHarness.Equal(1, para.Runs.Count, "Runs.Count = 1");
+        var run = para.Runs[0];
+        SmokeHarness.True(run.IsInsertedRevision, "Run.IsInsertedRevision");
+        SmokeHarness.Equal("Alice", run.RevisionAuthor, "Run.RevisionAuthor");
+        SmokeHarness.True(run.RevisionDate.HasValue, "Run.RevisionDate.HasValue");
+        var d = run.RevisionDate!.Value;
+        SmokeHarness.Equal(2024, d.Year,   "year");
+        SmokeHarness.Equal(1,    d.Month,  "month");
+        SmokeHarness.Equal(15,   d.Day,    "day");
+        SmokeHarness.Equal(10,   d.Hour,   "hour");
+        SmokeHarness.Equal(30,   d.Minute, "minute");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3h-3 — Paragraph-level revision marks. 단락 마크(\r) 의 CHPX 에 sprmCFRMarkIns/Del 가
+// 있으면 Paragraph.IsInsertedRevision/IsDeletedRevision 으로 표시.
+//   text "A\rB\r" — 첫 \r 만 sprmCFRMarkIns. 결과:
+//     Paragraph 0 ("A") — IsInsertedRevision=true (Run 자체에는 rev 없음 — \r 만 marked)
+//     Paragraph 1 ("B") — no rev
+static void DocBinaryPhase3h3ParagraphRevision()
+{
+    const string text = "A\rB\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 2 paragraphs.
+    int cpara = 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)0x204);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 8), (int)0x208);
+    int papx0Off = 200, papx1Off = 220;
+    wd[fcPapxFkp + 12 + 0 * 13] = (byte)(papx0Off / 2);
+    wd[fcPapxFkp + 12 + 1 * 13] = (byte)(papx1Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    p = fcPapxFkp + papx1Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 4 runs:
+    //   Run 0: fc [0x200, 0x202) "A" — empty
+    //   Run 1: fc [0x202, 0x204) first \r — sprmCFRMarkIns(=1)
+    //   Run 2: fc [0x204, 0x206) "B" — empty
+    //   Run 3: fc [0x206, 0x208) second \r — empty
+    int crun = 4;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x202);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x204);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x206);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 16), (int)0x208);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96, chpx3Off = 112;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + rgbBase + 3] = (byte)(chpx3Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    // Run 1: cb=3, sprmCFRMarkIns
+    int c1 = fcChpxFkp + chpx1Off;
+    wd[c1++] = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(c1), (ushort)0x0801); c1 += 2;
+    wd[c1] = 1;
+    wd[fcChpxFkp + chpx2Off] = 0;
+    wd[fcChpxFkp + chpx3Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+        SmokeHarness.True(blocks.Count >= 2, $"blocks.Count >= 2 (got {blocks.Count})");
+
+        var para0 = (Paragraph)blocks[0];
+        SmokeHarness.Equal("A", para0.GetPlainText(), "para0 text");
+        SmokeHarness.True(para0.IsInsertedRevision, "para0.IsInsertedRevision = true (\\r 마킹)");
+        SmokeHarness.True(!para0.IsDeletedRevision, "para0.IsDeletedRevision = false");
+        // Run 자체에는 rev 없음 — Run 0 의 CHPX 는 empty.
+        SmokeHarness.True(para0.Runs.Count >= 1, "para0.Runs >= 1");
+        SmokeHarness.True(!para0.Runs[0].IsInsertedRevision,
+            "para0.Runs[0].IsInsertedRevision = false (Run 자체에는 rev 없음)");
+
+        var para1 = (Paragraph)blocks[1];
+        SmokeHarness.Equal("B", para1.GetPlainText(), "para1 text");
+        SmokeHarness.True(!para1.IsInsertedRevision, "para1.IsInsertedRevision = false");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }

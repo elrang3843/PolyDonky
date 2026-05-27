@@ -49,6 +49,14 @@ public sealed class Run
     /// 렌더링 측에서 보통 strikethrough + 색상 강조로 표시. DOCX <c>w:del</c> / Word sprmCFRMarkDel 와 매핑.</summary>
     public bool IsDeletedRevision { get; set; }
 
+    /// <summary>변경추적 — revision 작성자 이름 (Word SttbfRMark + sprmCIbstRMark/Del 로 매핑).
+    /// null 이면 기록 없음. DOCX <c>w:ins/w:del</c> 의 <c>w:author</c> 속성.</summary>
+    public string? RevisionAuthor { get; set; }
+
+    /// <summary>변경추적 — revision 타임스탬프 (Word DTTM 패킹 포맷 unpack 후 UTC 로 저장).
+    /// null 이면 기록 없음. DOCX <c>w:ins/w:del</c> 의 <c>w:date</c> 속성.</summary>
+    public System.DateTimeOffset? RevisionDate { get; set; }
+
     /// <summary>루비 주석 텍스트 (한자 위 후리가나 등). null 이면 루비 없음.
     /// HTML <c>&lt;ruby&gt;&lt;rb&gt;base&lt;/rb&gt;&lt;rt&gt;annotation&lt;/rt&gt;&lt;/ruby&gt;</c>
     /// 에서 rt 콘텐츠를 여기에 저장, 베이스 텍스트는 Text 에 저장.</summary>
@@ -70,6 +78,8 @@ public sealed class Run
         FieldArg          = FieldArg,
         IsInsertedRevision = IsInsertedRevision,
         IsDeletedRevision  = IsDeletedRevision,
+        RevisionAuthor     = RevisionAuthor,
+        RevisionDate       = RevisionDate,
         RubyText          = RubyText,
     };
 }
