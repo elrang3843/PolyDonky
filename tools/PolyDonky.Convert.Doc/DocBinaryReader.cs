@@ -1012,6 +1012,10 @@ public class DocBinaryReader
                         return true;
                     }
                     return false;
+                case 0x2407:  // sprmPFPageBreakBefore — 단락 앞 강제 페이지 분할
+                    if (operand.Length >= 1)
+                    { style.ForcePageBreakBefore = operand[0] != 0; return true; }
+                    return false;
                 case 0x845D:
                     if (operand.Length >= 2)
                     { style.IndentLeftMm  = BitConverter.ToInt16(operand, 0) * TwipsToMm; return true; }
