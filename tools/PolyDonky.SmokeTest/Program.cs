@@ -56,6 +56,9 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3e-4 표 셀 안 inline 이미�
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-5 EMF EMR_HEADER 인식", DocBinaryPhase3e5EmfImage);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-6 OfficeArt BLIP_PNG (SpContainer)", DocBinaryPhase3e6BlipPng);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-6 OfficeArt BLIP_JPEG (atom)", DocBinaryPhase3e6BlipJpeg);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_DIB (atom)", DocBinaryPhase3e7BlipDib);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_WMF (uncompressed)", DocBinaryPhase3e7BlipWmfUncompressed);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_EMF (zlib deflate)", DocBinaryPhase3e7BlipEmfDeflate);
 
 return harness.Finish();
 
@@ -3866,6 +3869,99 @@ static void DocBinaryRunOfficeArtPicCase(
             SmokeHarness.Equal(expectedBytes[i], img.Data[i], $"[{label}] Data[{i}]");
     }
     finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3e-7 — WMF/EMF/DIB BLIP. Bitmap (DIB) 은 PNG/JPEG 와 같은 레이아웃, Metafile
+// (WMF/EMF) 은 UID 다음에 34-byte OfficeArtMetafileHeader 가 추가됨. compression=0xFE
+// 는 raw, 0x00 은 zlib — ZLibStream 으로 풀어 원본 복원.
+
+static void DocBinaryPhase3e7BlipDib()
+{
+    // BLIP_DIB (0xF01F) atom — bitmap BLIP, layout = UID(16) + tag(1) + image bytes.
+    //   image data = 99 88 77 66 (DIB BITMAPINFOHEADER signature 아님).
+    DocBinaryRunOfficeArtPicCase(BuildBlipDibStream(), "image/x-dib",
+        new byte[] { 0x99, 0x88, 0x77, 0x66 }, "BLIP_DIB atom");
+}
+
+static void DocBinaryPhase3e7BlipWmfUncompressed()
+{
+    // BLIP_WMF (0xF01B) atom, compression=0xFE (raw).
+    //   image data = 55 44 33 22 (WMF placeable signature 아님).
+    DocBinaryRunOfficeArtPicCase(BuildBlipWmfRawStream(), "image/wmf",
+        new byte[] { 0x55, 0x44, 0x33, 0x22 }, "BLIP_WMF uncompressed");
+}
+
+static void DocBinaryPhase3e7BlipEmfDeflate()
+{
+    // BLIP_EMF (0xF01A) atom, compression=0x00 (zlib).
+    //   uncompressed payload = "EMF_RAW!" (8 byte) — extractor 가 ZLibStream 으로 풀어야 일치.
+    byte[] payload = { 0x45, 0x4D, 0x46, 0x5F, 0x52, 0x41, 0x57, 0x21 };
+    DocBinaryRunOfficeArtPicCase(BuildBlipEmfDeflateStream(payload), "image/emf",
+        payload, "BLIP_EMF deflate");
+}
+
+static byte[] BuildBlipDibStream()
+{
+    // 33 byte: lcb(4) + BLIP header(8) + UID(16) + tag(1) + image(4)
+    var d = new byte[33];
+    BitConverter.TryWriteBytes(d.AsSpan(0),  (int)33);
+    BitConverter.TryWriteBytes(d.AsSpan(4),  (ushort)0x7A80);   // recInst=0x7A8, recVer=0
+    BitConverter.TryWriteBytes(d.AsSpan(6),  (ushort)0xF01F);   // BLIP_DIB
+    BitConverter.TryWriteBytes(d.AsSpan(8),  (uint)21);         // recLen = 16 + 1 + 4
+    d[28] = 0xFF;
+    d[29] = 0x99; d[30] = 0x88; d[31] = 0x77; d[32] = 0x66;
+    return d;
+}
+
+static byte[] BuildBlipWmfRawStream()
+{
+    // 66 byte: lcb(4) + BLIP header(8) + UID(16) + MetafileHeader(34) + image(4)
+    var d = new byte[66];
+    BitConverter.TryWriteBytes(d.AsSpan(0),  (int)66);
+    BitConverter.TryWriteBytes(d.AsSpan(4),  (ushort)0x2160);   // recInst=0x216, recVer=0
+    BitConverter.TryWriteBytes(d.AsSpan(6),  (ushort)0xF01B);   // BLIP_WMF
+    BitConverter.TryWriteBytes(d.AsSpan(8),  (uint)54);         // recLen = 16 + 34 + 4
+    // [12..27] UID = zeros
+    // [28..61] OfficeArtMetafileHeader (34 byte)
+    BitConverter.TryWriteBytes(d.AsSpan(28), (uint)4);          // cbSize = 4 (uncompressed)
+    // [32..47] rcBounds = zeros (16)
+    // [48..55] ptSize  = zeros (8)
+    BitConverter.TryWriteBytes(d.AsSpan(56), (uint)4);          // cbSave = 4
+    d[60] = 0xFE;                                                // compression = none
+    d[61] = 0xFE;                                                // filter
+    // [62..65] image data
+    d[62] = 0x55; d[63] = 0x44; d[64] = 0x33; d[65] = 0x22;
+    return d;
+}
+
+static byte[] BuildBlipEmfDeflateStream(byte[] payload)
+{
+    // payload 를 zlib 으로 압축한 뒤 BLIP_EMF body 안에 넣는다.
+    byte[] compressed;
+    using (var msComp = new MemoryStream())
+    {
+        using (var zs = new System.IO.Compression.ZLibStream(
+            msComp, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        {
+            zs.Write(payload, 0, payload.Length);
+        }
+        compressed = msComp.ToArray();
+    }
+
+    // lcb(4) + BLIP header(8) + UID(16) + MetafileHeader(34) + compressed(N)
+    int total = 4 + 8 + 16 + 34 + compressed.Length;
+    var d = new byte[total];
+    BitConverter.TryWriteBytes(d.AsSpan(0),  (int)total);
+    BitConverter.TryWriteBytes(d.AsSpan(4),  (ushort)0x3D40);   // recInst=0x3D4, recVer=0
+    BitConverter.TryWriteBytes(d.AsSpan(6),  (ushort)0xF01A);   // BLIP_EMF
+    BitConverter.TryWriteBytes(d.AsSpan(8),  (uint)(16 + 34 + compressed.Length));
+    // [12..27] UID = zeros
+    BitConverter.TryWriteBytes(d.AsSpan(28), (uint)payload.Length);     // cbSize
+    BitConverter.TryWriteBytes(d.AsSpan(56), (uint)compressed.Length);  // cbSave
+    d[60] = 0x00;  // compression = DEFLATE
+    d[61] = 0xFE;  // filter
+    Buffer.BlockCopy(compressed, 0, d, 62, compressed.Length);
+    return d;
 }
 
 // minimal Word 97-2003 WordDocument + 0Table stream bytes 합성.
