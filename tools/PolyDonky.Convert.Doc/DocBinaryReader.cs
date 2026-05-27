@@ -416,6 +416,7 @@ public class DocBinaryReader
             if (pendingRow is not null && cellProps is not null)
             {
                 int n = Math.Min(pendingRow.Cells.Count, cellProps.Length);
+                // 1) 테두리·배경 1:1 적용.
                 for (int i = 0; i < n; i++)
                 {
                     var cell = pendingRow.Cells[i];
@@ -426,6 +427,18 @@ public class DocBinaryReader
                     if (cp.Right  is not null) cell.BorderRight  = cp.Right;
                     if (cp.BackgroundHex is not null) cell.BackgroundColor = cp.BackgroundHex;
                 }
+
+                // 2) Phase 2e — 가로 병합. fMerged && !fFirstMerged 셀은 직전 셀에 흡수.
+                //   IWPF sparse 모델: 흡수 셀을 row.Cells 에서 제거하고 시작 셀의 ColumnSpan 만 증가.
+                var merged = new List<TableCell>();
+                for (int i = 0; i < pendingRow.Cells.Count; i++)
+                {
+                    bool absorb = i < n && cellProps[i].IsMerged && !cellProps[i].IsFirstMerged
+                                  && merged.Count > 0;
+                    if (absorb) merged[^1].ColumnSpan++;
+                    else        merged.Add(pendingRow.Cells[i]);
+                }
+                pendingRow.Cells = merged;
             }
             if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
             pendingRow = null;
@@ -774,16 +787,20 @@ public class DocBinaryReader
                         dxa[j] = BitConverter.ToInt16(operand, dxaBase + j * 2);
                     localDxa = dxa;
                     // TC97[itcMac] — 각 20 byte: bf(2)+wUnused(2)+brcTop(4)+brcLeft(4)+brcBottom(4)+brcRight(4)
+                    // bf bit 0 = fFirstMerged, bit 1 = fMerged (가로 병합).
                     var tcs = new TableCellProps[itcMac];
                     for (int j = 0; j < itcMac; j++)
                     {
                         int tcOff = tcBase + j * 20;
+                        ushort bf = BitConverter.ToUInt16(operand, tcOff);
                         tcs[j] = new TableCellProps(
                             ParseBrc80(operand, tcOff + 4),
                             ParseBrc80(operand, tcOff + 8),
                             ParseBrc80(operand, tcOff + 12),
                             ParseBrc80(operand, tcOff + 16),
-                            BackgroundHex: null);
+                            BackgroundHex: null,
+                            IsFirstMerged: (bf & 0x0001) != 0,
+                            IsMerged:      (bf & 0x0002) != 0);
                     }
                     localCp = tcs;
                 }
@@ -840,10 +857,13 @@ public class DocBinaryReader
         // 한 행의 셀별 테두리/배경 묶음. ScanTableProps 가 sprmTDefTable 의 rgTc 에서 채우고
         // FlushParagraph 의 TTP 처리에서 pendingRow.Cells 에 1:1 적용.
         // Phase 2d — sprmTSetShd 가 cvBack 으로 BackgroundHex 추가.
+        // Phase 2e — TC97 의 bf 에서 fFirstMerged(가로 병합 시작) / fMerged(가로 병합 흡수) 추출.
+        //           IWPF sparse 모델에선 흡수 셀이 사라지고 시작 셀의 ColumnSpan 만 늘어남.
         internal sealed record TableCellProps(
             CellBorderSide? Top, CellBorderSide? Left,
             CellBorderSide? Bottom, CellBorderSide? Right,
-            string? BackgroundHex);
+            string? BackgroundHex,
+            bool IsFirstMerged, bool IsMerged);
 
         // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
         // 부모가 먼저 적용되고 자식이 덮어쓰는 순서. 순환 참조와 nil(0xFFF) 종료를 모두 처리.
