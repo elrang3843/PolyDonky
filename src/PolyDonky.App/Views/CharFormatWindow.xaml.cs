@@ -169,6 +169,14 @@ public partial class CharFormatWindow : Window
                         TxtWidthPercent.Text = taggedRun.Style.WidthPercent.ToString("0.#");
                     if (Math.Abs(taggedRun.Style.LetterSpacingPx) > 0.01)
                         TxtLetterSpacing.Text = taggedRun.Style.LetterSpacingPx.ToString("0.##");
+
+                    // 글자폭·자간이 적용된 텍스트는 per-char IUC (BuildScaledContainer) 로 렌더링되는데
+                    // 이 경우 Span 자체에는 FontWeight/FontStyle/Foreground 등이 박혀 있지 않고
+                    // 자식 TextBlock 의 속성으로만 존재한다. 그래서 `sel.GetPropertyValue` 가 부모 단락의
+                    // 기본값(Normal)을 돌려줘 대화상자에 "현재 서식과 무관한 기본값" 이 표시되는 회귀가
+                    // 있었다. firstInline 이 Span/IUC 면 Tag 의 RunStyle 을 신뢰값으로 다시 채워 넣는다.
+                    if (firstInline is Span or InlineUIContainer)
+                        OverlayDialogFromRunStyle(taggedRun.Style);
                 }
             }
         }
@@ -179,6 +187,32 @@ public partial class CharFormatWindow : Window
 
         UpdatePreview();
         CboFont.Focus();
+    }
+
+    /// <summary>per-char IUC 텍스트(글자폭/자간/글상자 등) 의 경우 WPF 선택의 GetPropertyValue 가 부모 단락의
+    /// 기본값을 반환하므로, Tag 의 RunStyle 을 권위 있는 값으로 다시 덮어 채운다. 단독 모드의 LoadCurrentFormatting
+    /// 분기와 동일한 매핑이지만 대화상자에 이미 일부 값이 채워져 있을 수 있으므로 항상 덮어쓴다.</summary>
+    private void OverlayDialogFromRunStyle(PolyDonky.Core.RunStyle s)
+    {
+        if (!string.IsNullOrEmpty(s.FontFamily)) CboFont.Text = s.FontFamily;
+        if (s.FontSizePt > 0)                    TxtSize.Text = s.FontSizePt.ToString("0.#");
+        ChkBold.IsChecked          = s.Bold;
+        ChkItalic.IsChecked        = s.Italic;
+        ChkUnderline.IsChecked     = s.Underline;
+        ChkStrikethrough.IsChecked = s.Strikethrough;
+        ChkOverline.IsChecked      = s.Overline;
+        ChkSuperscript.IsChecked   = s.Superscript;
+        ChkSubscript.IsChecked     = s.Subscript;
+        if (s.Foreground is { } fg)
+        {
+            TxtFgColor.Text     = $"#{fg.R:X2}{fg.G:X2}{fg.B:X2}";
+            FgSwatch.Background = new SolidColorBrush(Color.FromArgb(fg.A, fg.R, fg.G, fg.B));
+        }
+        if (s.Background is { } bg)
+        {
+            TxtBgColor.Text     = $"#{bg.R:X2}{bg.G:X2}{bg.B:X2}";
+            BgSwatch.Background = new SolidColorBrush(Color.FromArgb(bg.A, bg.R, bg.G, bg.B));
+        }
     }
 
     // ── 이벤트 핸들러 ────────────────────────────────────────────
@@ -398,23 +432,82 @@ public partial class CharFormatWindow : Window
         // 글자폭 / 자간: InlineUIContainer 재구성
         double widthPct = double.TryParse(TxtWidthPercent.Text, out var wp) && wp >= 1 ? wp : 100;
         double lsPx     = double.TryParse(TxtLetterSpacing.Text, out var ls) ? ls : 0;
+
+        // ApplyPropertyValue 가 영향을 준 inlines 의 Tag.Style 도 dialog 의 의도 값으로 동기화.
+        //   stale 한 Tag.Style 이 남아 있으면 (1) per-char IUC 경로의 파서가 Tag 를 verbatim 복원해
+        //   서식 변경이 다음 파스에서 사라지고 (2) ApplyTypographicProps 의 rebuild 가 stale Tag 로
+        //   다시 빌드해 색·폰트·볼드 등을 잃는다.
+        SyncSelectedRunTagsFromDialog(sel);
+
         ApplyTypographicProps(widthPct, lsPx);
+    }
+
+    /// <summary>선택 영역에 포함된 모든 inline 의 <c>Tag</c> (PolyDonky.Core.Run) 의 RunStyle 을 대화상자
+    /// 입력값으로 갱신. 체크박스가 tristate null (혼합) 이면 해당 필드는 건드리지 않아 부분 변경 시
+    /// 다른 inline 들의 고유 값이 보존된다.</summary>
+    private void SyncSelectedRunTagsFromDialog(TextSelection sel)
+    {
+        var inlines = CollectLeafInlines(sel);
+        foreach (var inline in inlines)
+        {
+            var tagRun = inline switch
+            {
+                Run r                 => r.Tag as PolyDonky.Core.Run,
+                Span sp               => sp.Tag as PolyDonky.Core.Run,
+                InlineUIContainer iuc => iuc.Tag as PolyDonky.Core.Run,
+                _                     => null,
+            };
+            if (tagRun is null) continue;
+
+            var s = tagRun.Style;
+            var fontName = CboFont.Text?.Trim();
+            if (!string.IsNullOrEmpty(fontName)) s.FontFamily = fontName;
+
+            if (double.TryParse(TxtSize.Text, out var sizePt) && sizePt >= 1)
+                s.FontSizePt = sizePt;
+
+            if (ChkBold.IsChecked          is bool b)  s.Bold          = b;
+            if (ChkItalic.IsChecked        is bool i)  s.Italic        = i;
+            if (ChkUnderline.IsChecked     is bool u)  s.Underline     = u;
+            if (ChkStrikethrough.IsChecked is bool st) s.Strikethrough = st;
+            if (ChkOverline.IsChecked      is bool ov) s.Overline      = ov;
+            if (ChkSuperscript.IsChecked   is bool sp2) s.Superscript  = sp2;
+            if (ChkSubscript.IsChecked     is bool sb)  s.Subscript    = sb;
+
+            if (TryParseColor(TxtFgColor.Text, out var fg))
+                s.Foreground = new PolyDonky.Core.Color(fg.R, fg.G, fg.B, fg.A);
+
+            if (string.IsNullOrWhiteSpace(TxtBgColor.Text))
+                s.Background = null;
+            else if (TryParseColor(TxtBgColor.Text, out var bg))
+                s.Background = new PolyDonky.Core.Color(bg.R, bg.G, bg.B, bg.A);
+
+            if (double.TryParse(TxtWidthPercent.Text, out var wp2) && wp2 >= 1) s.WidthPercent = wp2;
+            if (double.TryParse(TxtLetterSpacing.Text, out var ls2)) s.LetterSpacingPx = ls2;
+        }
     }
 
     // ── 글자폭·자간 적용 (Run ↔ InlineUIContainer 재구성) ────────
 
+    /// <summary>글자폭/자간 적용 — InlineUIContainer/Span 을 새 RunStyle 로 재빌드.
+    ///
+    /// 정책:
+    /// <list type="bullet">
+    /// <item><b>Wpf.Run</b> + width/spacing 모두 기본값 : ApplyPropertyValue 가 시각·Tag 모두 처리하므로 skip.</item>
+    /// <item><b>Wpf.Run</b> + width/spacing 중 하나라도 적용 : Span (per-char IUC) 로 변환해야 하므로 rebuild.</item>
+    /// <item><b>Span / IUC</b> : <b>항상 rebuild</b>. per-char IUC 의 자식 TextBlock 들은 ApplyPropertyValue 의
+    ///   영향을 안정적으로 받지 않으므로 (FontWeight 등이 Span 에 박혀도 TextBlock 의 explicit value 가 우선),
+    ///   <see cref="SyncSelectedRunTagsFromDialog"/> 가 미리 갱신한 Tag.Style 로 통째 재빌드해야 시각이 갱신된다.</item>
+    /// </list>
+    /// 이전 회귀: 모든 변경에서 일괄 skip → IUC 텍스트 시각 갱신 누락 + 파서가 verbatim Tag 복원으로 다음 사이클에 변경 손실.
+    /// </summary>
     private void ApplyTypographicProps(double widthPercent, double letterSpacingPx)
     {
         var sel = _editor!.Selection;
         if (sel.IsEmpty) return;
 
-        // 글자폭/자간이 모두 기본값(100%, 0px) 이면 ReplaceInline 으로 인라인을 교체할
-        // 이유가 없다. 직전 ApplyPropertyValue 가 Wpf.Run 에 적용한 색·폰트·볼드 결과를
-        // Tag 기반 stale RunStyle 로 다시 빌드해 덮어쓰는 회귀를 방지 (글상자 로드/복사
-        // 케이스에서 모든 글자속성 변경이 시각적으로 반영되지 않던 원인).
         bool widthChanged   = Math.Abs(widthPercent - 100) > 0.5;
         bool spacingChanged = Math.Abs(letterSpacingPx)    > 0.01;
-        if (!widthChanged && !spacingChanged) return;
 
         var inlines = CollectLeafInlines(sel);
 
@@ -426,16 +519,19 @@ public partial class CharFormatWindow : Window
             if (inline is InlineUIContainer { Tag: PolyDonky.Core.Run { EmojiKey: { Length: > 0 } } })
                 continue;
 
-            // PolyDonky Run 추출. Wpf.Run 의 경우 Tag 가 있어도 항상 현재 Wpf 속성에서
-            // 새로 추출한다 — 직전 ApplyPropertyValue 결과가 stale Tag.Style 로 덮이지 않도록.
-            // Span / IUC 는 per-char 구조라 Tag.pr 을 그대로 사용 (자체 형식이 의미 있음).
+            bool isContainer    = inline is Span || inline is InlineUIContainer;
+            bool needsRebuild   = isContainer || widthChanged || spacingChanged;
+            if (!needsRebuild) continue;   // Wpf.Run + 기본 width/spacing — ApplyPropertyValue 가 처리
+
+            // PolyDonky Run 추출. Wpf.Run 은 현재 WPF 속성에서, Span/IUC 는 (방금 SyncSelectedRunTagsFromDialog 가
+            // 갱신한) Tag.Style 에서 가져온다.
             PolyDonky.Core.Run polyRun = inline switch
             {
-                Run r                                   => ExtractPolyRun(r),
-                Span sp when sp.Tag is PolyDonky.Core.Run pr => pr,
+                Run r                                            => ExtractPolyRun(r),
+                Span sp when sp.Tag is PolyDonky.Core.Run pr     => pr,
                 InlineUIContainer { Tag: PolyDonky.Core.Run pr } => pr,
-                InlineUIContainer iuc                   => ExtractPolyRunFromContainer(iuc),
-                _                                       => null!,
+                InlineUIContainer iuc                            => ExtractPolyRunFromContainer(iuc),
+                _                                                => null!,
             };
             if (polyRun is null) continue;
 
