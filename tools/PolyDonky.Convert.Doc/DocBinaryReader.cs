@@ -712,6 +712,10 @@ public class DocBinaryReader
     // Phase 3e-2 — PICF 영역 안에서 PNG/JPEG/GIF signature 검색 후 raw byte 추출.
     // Phase 3e-3 — WMF placeable header + DIB BITMAPINFOHEADER 추가.
     // Phase 3e-5 — EMF EMR_HEADER (iType=1 + " EMF" dSignature@40) 추가.
+    // Phase 3e-6 — OfficeArt 컨테이너 정식 파싱. recVer=0xF 컨테이너 재귀, BLIP_PNG(0xF01E)/
+    //              BLIP_JPEG(0xF01D, 0xF02A) atom 검출 시 UID + tag 건너뛰고 정확한 image data 추출.
+    //              올바른 OfficeArt 구조면 signature heuristic 보다 정확하며 image 경계도 정확.
+    //              실패 시 (raw inline embed) 기존 signature 스캔으로 fallback.
     // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
     // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw byte 가 인라인. signature 위치부터
     // PICF 끝까지를 image data 로 본다.
@@ -722,7 +726,13 @@ public class DocBinaryReader
         if (lcb <= 8 || fcPic + lcb > data.Length) return null;
 
         int start = fcPic + 4;                 // lcb 이후
-        int end   = Math.Min(fcPic + lcb, data.Length) - 8;  // signature 최소 8 byte 여유
+        int picEnd = Math.Min(fcPic + lcb, data.Length);
+
+        // Phase 3e-6 — OfficeArt 컨테이너 우선 시도.
+        var fromOa = TryExtractFromOfficeArt(data, start, picEnd, depth: 0);
+        if (fromOa.HasValue) return fromOa;
+
+        int end = picEnd - 8;  // signature 최소 8 byte 여유
 
         for (int i = start; i < end; i++)
         {
@@ -769,6 +779,65 @@ public class DocBinaryReader
             Buffer.BlockCopy(src, from, dst, 0, len);
             return dst;
         }
+    }
+
+    // Phase 3e-6 — OfficeArt 레코드 walker. PICF 안의 OfficeArt blob 을 진짜 record tree 로 해석.
+    //   각 레코드 헤더 8 byte:
+    //     recVerAndInstance (ushort LE): low 4 bits = recVer, high 12 bits = recInstance.
+    //     recType           (ushort LE): 0xF000 대역.
+    //     recLen            (uint   LE): 헤더 다음 데이터 길이.
+    //   recVer == 0xF → container, 자식 레코드 재귀.
+    //   BLIP atom:
+    //     0xF01D BLIP_JPEG, 0xF01E BLIP_PNG, 0xF02A BLIP_JPEGCMYK.
+    //     body = UID(16) [+ UID2(16) if (recInstance & 1) == 1] + tag(1) + image bytes.
+    //   (WMF/EMF/DIB BLIP 은 추가 metafile header 가 있어 후속 단계에서 처리; 현재는 PNG/JPEG 만.)
+    private static (string MediaType, byte[] Data)? TryExtractFromOfficeArt(
+        byte[] data, int start, int end, int depth)
+    {
+        if (depth > 8) return null;  // 손상된 입력에서 무한 재귀 방지
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort verInst = BitConverter.ToUInt16(data, pos);
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint   recLen  = BitConverter.ToUInt32(data, pos + 4);
+            int dataStart  = pos + 8;
+            long dataEnd64 = (long)dataStart + recLen;
+            if (dataEnd64 > end || dataEnd64 < dataStart) return null;
+            int dataEnd = (int)dataEnd64;
+
+            int recVer  = verInst & 0x000F;
+            int recInst = (verInst >> 4) & 0x0FFF;
+
+            if (recVer == 0xF)
+            {
+                var child = TryExtractFromOfficeArt(data, dataStart, dataEnd, depth + 1);
+                if (child.HasValue) return child;
+            }
+            else
+            {
+                string? mime = recType switch
+                {
+                    0xF01D => "image/jpeg",  // BLIP_JPEG (RGB)
+                    0xF01E => "image/png",   // BLIP_PNG
+                    0xF02A => "image/jpeg",  // BLIP_JPEGCMYK — image/jpeg 로 통합
+                    _      => null,
+                };
+                if (mime is not null)
+                {
+                    int hdrExtra = 16 + 1;                          // primary UID + tag
+                    if ((recInst & 1) == 1) hdrExtra += 16;         // secondary UID
+                    int imgStart = dataStart + hdrExtra;
+                    if (imgStart >= dataEnd) return null;
+                    int imgLen = dataEnd - imgStart;
+                    var img = new byte[imgLen];
+                    Buffer.BlockCopy(data, imgStart, img, 0, imgLen);
+                    return (mime, img);
+                }
+            }
+            pos = dataEnd;
+        }
+        return null;
     }
 
     // Phase 3c-2 — SEPX (Section Properties Exception) 의 sprm 들을 Section.Page 에 매핑.
