@@ -40,6 +40,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 2b 셀 너비 (sprmTDefTable rg
 harness.Run("DOC (Word 97-2003 binary) — Phase 2c 셀 테두리 (TC97 BRC)", DocBinaryPhase2cCellBorders);
 harness.Run("DOC (Word 97-2003 binary) — Phase 2d 셀 배경 (sprmTSetShd cvBack)", DocBinaryPhase2dCellShading);
 harness.Run("DOC (Word 97-2003 binary) — Phase 2e 가로 셀 병합 (TC97 fFirstMerged/fMerged)", DocBinaryPhase2eHorizontalMerge);
+harness.Run("DOC (Word 97-2003 binary) — Phase 2f 세로 셀 병합 (TC97 fVertMerge/fVertRestart)", DocBinaryPhase2fVerticalMerge);
 
 return harness.Finish();
 
@@ -1961,6 +1962,159 @@ static void DocBinaryPhase2eHorizontalMerge()
             "Cells[0].ColumnSpan = 2 (TC0+TC1 흡수)");
         SmokeHarness.Equal(1, tbl.Rows[0].Cells[1].ColumnSpan,
             "Cells[1].ColumnSpan = 1 (TC2 일반)");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase2fVerticalMerge()
+{
+    // 2행 2셀 표, col 0 만 세로 병합 (TC97 bf bit 5=fVertMerge, bit 6=fVertRestart).
+    //   행 1 TC0: bf=0x60 (VertMerge+VertRestart) → 병합 시작
+    //   행 1 TC1: 일반
+    //   행 2 TC0: bf=0x20 (VertMerge only) → 흡수
+    //   행 2 TC1: 일반
+    // 결과: Rows[0].Cells = [A(RowSpan=2), B], Rows[1].Cells = [D] (col 0 흡수됨, col 1 살아남음).
+    const string text = "AB\r\rCD\r\rEnd\r";  // A 0x07 B 0x07 \r \r C 0x07 D 0x07 \r \r E n d \r = 16 chars
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 5 단락
+    // rgfc[6]: 단락별 시작 fc + 끝
+    int cpara = 5;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4),  (int)0x20A);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 8),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 12), (int)0x216);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 16), (int)0x218);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 20), (int)0x220);
+
+    int papx0Off = 100, papx1Off = 110, papx2Off = 200, papx3Off = 210, papx4Off = 300;
+    wd[fcPapxFkp + 24 + 0 * 13] = (byte)(papx0Off / 2);
+    wd[fcPapxFkp + 24 + 1 * 13] = (byte)(papx1Off / 2);
+    wd[fcPapxFkp + 24 + 2 * 13] = (byte)(papx2Off / 2);
+    wd[fcPapxFkp + 24 + 3 * 13] = (byte)(papx3Off / 2);
+    wd[fcPapxFkp + 24 + 4 * 13] = (byte)(papx4Off / 2);
+
+    // Helper for writing PAPX[1] / PAPX[3] (sprmPFInTable + sprmPFTtp + sprmTDefTable)
+    void WriteTtpPapx(int off, ushort tc0bf)
+    {
+        int q = fcPapxFkp + off;
+        wd[q++] = 30;  // cb=30 → grpprl 59 byte
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (ushort)0); q += 2;          // istd
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (ushort)0x2416); q += 2; wd[q++] = 1;
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (ushort)0x2417); q += 2; wd[q++] = 1;
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (ushort)0xD608); q += 2;
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (ushort)47);     q += 2;
+        wd[q++] = 2;                                                          // itcMac=2
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (short)0);    q += 2;
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (short)1440); q += 2;
+        BitConverter.TryWriteBytes(wd.AsSpan(q), (short)2880); q += 2;
+        // TC0: bf = tc0bf, 나머지 0
+        BitConverter.TryWriteBytes(wd.AsSpan(q), tc0bf); q += 2;
+        q += 2;  // wUnused
+        for (int k = 0; k < 4; k++) { q += 4; }  // 4 BRC zeros (already 0)
+        // TC1: bf=0, 나머지 0
+        q += 20;
+    }
+
+    // PapxInFkp[0]: sprmPFInTable=1 (3 byte sprm + istd 2 byte → cb=3 → grpprl 5 byte)
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0); p += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0x2416); p += 2;
+    wd[p++] = 1;
+
+    // PapxInFkp[1]: TTP, TC0 bf = 0x60 (VertMerge + VertRestart)
+    WriteTtpPapx(papx1Off, 0x0060);
+
+    // PapxInFkp[2]: 같은 sprmPFInTable=1
+    p = fcPapxFkp + papx2Off;
+    wd[p++] = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0); p += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0x2416); p += 2;
+    wd[p++] = 1;
+
+    // PapxInFkp[3]: TTP, TC0 bf = 0x20 (VertMerge only — 흡수)
+    WriteTtpPapx(papx3Off, 0x0020);
+
+    // PapxInFkp[4]: 빈 sprm
+    p = fcPapxFkp + papx4Off;
+    wd[p++] = 0;
+    wd[p++] = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 비어 있음
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)0x220);
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var tbl = (PolyDonky.Core.Table)doc.Sections[0].Blocks[0];
+
+        SmokeHarness.Equal(2, tbl.Rows.Count, "행 수 = 2");
+        SmokeHarness.Equal(2, tbl.Rows[0].Cells.Count, "Rows[0].Cells.Count = 2");
+        SmokeHarness.Equal(2, tbl.Rows[0].Cells[0].RowSpan,
+            "Rows[0].Cells[0].RowSpan = 2 (세로 병합 시작)");
+        SmokeHarness.Equal(1, tbl.Rows[1].Cells.Count,
+            "Rows[1].Cells.Count = 1 (col 0 흡수, col 1 살아남음)");
+        SmokeHarness.Equal("D", ((Paragraph)tbl.Rows[1].Cells[0].Blocks[0]).GetPlainText(),
+            "Rows[1].Cells[0] = 'D' (col 1 의 셀)");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
