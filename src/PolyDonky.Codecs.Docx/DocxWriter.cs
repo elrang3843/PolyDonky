@@ -28,34 +28,73 @@ public sealed class DocxWriter : IDocumentWriter
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(output);
 
-        using var package = WordprocessingDocument.Create(output, WordprocessingDocumentType.Document);
-        var mainPart = package.AddMainDocumentPart();
-        mainPart.Document = new W.Document();
-        var body = new W.Body();
-        mainPart.Document.AppendChild(body);
+        // FidelityCapsules 복원을 위해 일단 MemoryStream 에 OOXML 패키지를 쓰고,
+        // 사후 ZipArchive(Update) 로 ooxml/* 캡슐을 주입한 다음 output 으로 복사한다.
+        // (WordprocessingDocument 가 패키지를 닫는 시점에 ZIP 가 sealed 되기 때문에
+        // 같은 스트림을 OpenXml 단계에서 직접 확장할 수 없다.)
+        var hasCapsules = document.FidelityCapsules.Any(kv => kv.Key.StartsWith("ooxml/", StringComparison.Ordinal));
+        var buffer = hasCapsules ? new MemoryStream() : null;
+        var target = buffer ?? output;
 
-        // 표준 Heading 스타일 정의 (그렇지 않으면 Word 가 기본 스타일을 적용한다).
-        var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
-        stylesPart.Styles = BuildStyles();
-
-        var ctx = new WriteContext(mainPart);
-
-        foreach (var section in document.Sections)
+        using (var package = WordprocessingDocument.Create(target, WordprocessingDocumentType.Document))
         {
-            foreach (var block in section.Blocks)
+            var mainPart = package.AddMainDocumentPart();
+            mainPart.Document = new W.Document();
+            var body = new W.Body();
+            mainPart.Document.AppendChild(body);
+
+            // 표준 Heading 스타일 정의 (그렇지 않으면 Word 가 기본 스타일을 적용한다).
+            var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
+            stylesPart.Styles = BuildStyles();
+
+            var ctx = new WriteContext(mainPart);
+
+            foreach (var section in document.Sections)
             {
-                AppendBlock(body, block, ctx);
+                foreach (var block in section.Blocks)
+                {
+                    AppendBlock(body, block, ctx);
+                }
             }
+
+            // 섹션 속성 (페이지 설정) + 머리말/꼬리말 파트.
+            var firstSection = document.Sections.FirstOrDefault();
+            var sectPr = BuildSectionProperties(firstSection?.Page ?? new PageSettings());
+            WriteHeaderFooterParts(mainPart, firstSection?.Page ?? new PageSettings(), sectPr, ctx);
+            body.AppendChild(sectPr);
+
+            WriteFootnotesAndEndnotes(mainPart, document, ctx);
+            WriteCoreProperties(package, document.Metadata);
         }
 
-        // 섹션 속성 (페이지 설정) + 머리말/꼬리말 파트.
-        var firstSection = document.Sections.FirstOrDefault();
-        var sectPr = BuildSectionProperties(firstSection?.Page ?? new PageSettings());
-        WriteHeaderFooterParts(mainPart, firstSection?.Page ?? new PageSettings(), sectPr, ctx);
-        body.AppendChild(sectPr);
+        if (buffer is not null)
+        {
+            RestoreFidelityCapsules(buffer, document);
+            buffer.Position = 0;
+            buffer.CopyTo(output);
+        }
+    }
 
-        WriteFootnotesAndEndnotes(mainPart, document, ctx);
-        WriteCoreProperties(package, document.Metadata);
+    // FidelityCapsules 안 "ooxml/<path>" 키 → ZIP entry "<path>" 로 복원.
+    // 이미 같은 path 가 OpenXml 패키지에 있으면 skip (현재 writer 가 생성한 part 가 우선).
+    // 다른 prefix 항목은 다른 코덱 소관이므로 무시.
+    private static void RestoreFidelityCapsules(MemoryStream packageBuffer, PolyDonkyument document)
+    {
+        const string prefix = "ooxml/";
+        packageBuffer.Position = 0;
+        using var archive = new System.IO.Compression.ZipArchive(
+            packageBuffer, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true);
+        var existing = new HashSet<string>(archive.Entries.Select(e => e.FullName), StringComparer.Ordinal);
+        foreach (var kv in document.FidelityCapsules)
+        {
+            if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var path = kv.Key.Substring(prefix.Length);
+            if (path.Length == 0 || existing.Contains(path)) continue;
+            var entry = archive.CreateEntry(path, System.IO.Compression.CompressionLevel.Optimal);
+            using var s = entry.Open();
+            s.Write(kv.Value, 0, kv.Value.Length);
+            existing.Add(path);
+        }
     }
 
     private static void WriteFootnotesAndEndnotes(MainDocumentPart mainPart, PolyDonkyument document, WriteContext ctx)

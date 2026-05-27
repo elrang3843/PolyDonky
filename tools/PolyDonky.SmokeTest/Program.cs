@@ -93,6 +93,10 @@ harness.Run("IWPF — FidelityCapsules ZIP 보존 round-trip", IwpfFidelityCapsu
 harness.Run("DOCX codec — unknown 파트 → ooxml/* FidelityCapsules 매핑", DocxFidelityCapsulesUnknownParts);
 harness.Run("HWPX codec — unknown 파트 → hwpx/* FidelityCapsules 매핑", HwpxFidelityCapsulesUnknownParts);
 harness.Run("HWP codec — unknown root storage → hancom/* FidelityCapsules 매핑", HwpFidelityCapsulesUnknownStorages);
+harness.Run("DOCX writer — ooxml/* FidelityCapsules → ZIP 파트 복원", DocxWriterRestoresOoxmlCapsules);
+harness.Run("HWPX writer — hwpx/* FidelityCapsules → ZIP 파트 복원", HwpxWriterRestoresHwpxCapsules);
+harness.Run("DOCX 라운드트립 — Reader → Writer 캡슐 보존", DocxRoundTripPreservesCapsules);
+harness.Run("HWPX 라운드트립 — Reader → Writer 캡슐 보존", HwpxRoundTripPreservesCapsules);
 
 return harness.Finish();
 
@@ -7229,6 +7233,147 @@ static void HwpxFidelityCapsulesUnknownParts()
         && sc.SequenceEqual(scriptBytes), "Scripts/macro.xml capsule 보존");
     SmokeHarness.True(!rt.FidelityCapsules.ContainsKey("hwpx/Contents/header.xml"),
         "Contents/header.xml 은 capsule 에 없음 (known)");
+}
+
+// DOCX writer — PolyDonkyument.FidelityCapsules 에 들어있는 ooxml/* 키가 출력 ZIP 의 파트로 복원되는지.
+//   현재 writer 가 생성한 표준 파트(word/document.xml 등) 와 충돌하면 표준 파트 우선.
+static void DocxWriterRestoresOoxmlCapsules()
+{
+    var doc = new PolyDonkyument();
+    doc.Sections.Add(new Section { Blocks = { Paragraph.Of("Round-trip") } });
+    byte[] vbaBytes  = { 0xAA, 0xBB, 0xCC, 0xDD };
+    byte[] cxBytes   = Encoding.UTF8.GetBytes("<cx>preserved</cx>");
+    doc.FidelityCapsules["ooxml/word/vbaProject.bin"]   = vbaBytes;
+    doc.FidelityCapsules["ooxml/customXml/item1.xml"]   = cxBytes;
+    // 표준 파트와 충돌하면 무시되어야 함.
+    doc.FidelityCapsules["ooxml/word/document.xml"]     = Encoding.UTF8.GetBytes("OVERWRITE");
+
+    using var ms = new MemoryStream();
+    new PolyDonky.Codecs.Docx.DocxWriter().Write(doc, ms);
+    ms.Position = 0;
+
+    using var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read);
+    var vbaEntry = archive.GetEntry("word/vbaProject.bin");
+    SmokeHarness.True(vbaEntry is not null, "DOCX writer: word/vbaProject.bin 복원됨");
+    using (var s = vbaEntry!.Open())
+    using (var mem = new MemoryStream())
+    {
+        s.CopyTo(mem);
+        SmokeHarness.True(mem.ToArray().SequenceEqual(vbaBytes), "DOCX writer: vbaProject.bin 바이트 일치");
+    }
+    var cxEntry = archive.GetEntry("customXml/item1.xml");
+    SmokeHarness.True(cxEntry is not null, "DOCX writer: customXml/item1.xml 복원됨");
+
+    // 표준 파트 우선 — 캡슐의 word/document.xml 가 덮어쓰지 않아야 함.
+    var docEntry = archive.GetEntry("word/document.xml");
+    SmokeHarness.True(docEntry is not null, "DOCX writer: word/document.xml 존재");
+    using (var s = docEntry!.Open())
+    using (var sr = new StreamReader(s))
+    {
+        var content = sr.ReadToEnd();
+        SmokeHarness.True(!content.Contains("OVERWRITE"), "DOCX writer: 표준 word/document.xml 가 capsule 로 덮어써지지 않음");
+    }
+}
+
+// HWPX writer — PolyDonkyument.FidelityCapsules 에 들어있는 hwpx/* 키가 출력 ZIP 의 파트로 복원되는지.
+static void HwpxWriterRestoresHwpxCapsules()
+{
+    var doc = new PolyDonkyument();
+    doc.Sections.Add(new Section { Blocks = { Paragraph.Of("라운드트립") } });
+    byte[] scriptBytes = Encoding.UTF8.GetBytes("<Script>note</Script>");
+    doc.FidelityCapsules["hwpx/Scripts/macro.xml"] = scriptBytes;
+    // 표준 파트와 충돌하면 무시되어야 함 (mimetype).
+    doc.FidelityCapsules["hwpx/mimetype"] = Encoding.UTF8.GetBytes("OVERWRITE");
+
+    using var ms = new MemoryStream();
+    new PolyDonky.Codecs.Hwpx.HwpxWriter().Write(doc, ms);
+    ms.Position = 0;
+
+    using var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read);
+    var scriptEntry = archive.GetEntry("Scripts/macro.xml");
+    SmokeHarness.True(scriptEntry is not null, "HWPX writer: Scripts/macro.xml 복원됨");
+    using (var s = scriptEntry!.Open())
+    using (var mem = new MemoryStream())
+    {
+        s.CopyTo(mem);
+        SmokeHarness.True(mem.ToArray().SequenceEqual(scriptBytes), "HWPX writer: Scripts/macro.xml 바이트 일치");
+    }
+
+    var mimeEntry = archive.GetEntry("mimetype");
+    SmokeHarness.True(mimeEntry is not null, "HWPX writer: mimetype 존재");
+    using (var s = mimeEntry!.Open())
+    using (var sr = new StreamReader(s))
+    {
+        var content = sr.ReadToEnd();
+        SmokeHarness.True(!content.Contains("OVERWRITE"), "HWPX writer: 표준 mimetype 가 capsule 로 덮어써지지 않음");
+    }
+}
+
+// DOCX 라운드트립 — unknown 파트 주입된 DOCX → DocxReader → DocxWriter 사이클 후 동일 파트가 살아남는지.
+static void DocxRoundTripPreservesCapsules()
+{
+    var seed = new PolyDonkyument();
+    seed.Sections.Add(new Section { Blocks = { Paragraph.Of("seed") } });
+
+    using var ms = new MemoryStream();
+    new PolyDonky.Codecs.Docx.DocxWriter().Write(seed, ms);
+
+    byte[] vbaBytes = { 0x12, 0x34, 0x56, 0x78 };
+    using (var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+    {
+        var e = archive.CreateEntry("word/vbaProject.bin");
+        using (var es = e.Open()) es.Write(vbaBytes);
+    }
+    ms.Position = 0;
+
+    var doc = new PolyDonky.Codecs.Docx.DocxReader().Read(ms);
+    SmokeHarness.True(doc.HasMacroCapsule, "DOCX 라운드트립: 1차 read 후 매크로 캡슐 감지");
+
+    using var ms2 = new MemoryStream();
+    new PolyDonky.Codecs.Docx.DocxWriter().Write(doc, ms2);
+    ms2.Position = 0;
+
+    using var rt = new System.IO.Compression.ZipArchive(ms2, System.IO.Compression.ZipArchiveMode.Read);
+    var vba = rt.GetEntry("word/vbaProject.bin");
+    SmokeHarness.True(vba is not null, "DOCX 라운드트립: writer 가 vbaProject.bin 복원");
+    using var s = vba!.Open();
+    using var mem = new MemoryStream();
+    s.CopyTo(mem);
+    SmokeHarness.True(mem.ToArray().SequenceEqual(vbaBytes), "DOCX 라운드트립: vbaProject.bin 바이트 일치");
+}
+
+// HWPX 라운드트립 — Scripts/macro.xml 주입된 HWPX → Reader → Writer 후 같은 파트가 남는지.
+static void HwpxRoundTripPreservesCapsules()
+{
+    var seed = new PolyDonkyument();
+    seed.Sections.Add(new Section { Blocks = { Paragraph.Of("씨드") } });
+
+    using var ms = new MemoryStream();
+    new PolyDonky.Codecs.Hwpx.HwpxWriter().Write(seed, ms);
+
+    byte[] scriptBytes = Encoding.UTF8.GetBytes("<Script>round</Script>");
+    using (var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+    {
+        var e = archive.CreateEntry("Scripts/macro.xml");
+        using (var es = e.Open()) es.Write(scriptBytes);
+    }
+    ms.Position = 0;
+
+    var doc = new PolyDonky.Codecs.Hwpx.HwpxReader().Read(ms);
+    SmokeHarness.True(doc.FidelityCapsules.ContainsKey("hwpx/Scripts/macro.xml"),
+        "HWPX 라운드트립: 1차 read 후 캡슐 감지");
+
+    using var ms2 = new MemoryStream();
+    new PolyDonky.Codecs.Hwpx.HwpxWriter().Write(doc, ms2);
+    ms2.Position = 0;
+
+    using var rt = new System.IO.Compression.ZipArchive(ms2, System.IO.Compression.ZipArchiveMode.Read);
+    var entry = rt.GetEntry("Scripts/macro.xml");
+    SmokeHarness.True(entry is not null, "HWPX 라운드트립: writer 가 Scripts/macro.xml 복원");
+    using var s = entry!.Open();
+    using var mem = new MemoryStream();
+    s.CopyTo(mem);
+    SmokeHarness.True(mem.ToArray().SequenceEqual(scriptBytes), "HWPX 라운드트립: Scripts/macro.xml 바이트 일치");
 }
 
 // HWP codec — HWP 는 OLE2 컨테이너. unknown root storage 가 fidelity capsule 로 매핑되는지 합성으로 검증.
