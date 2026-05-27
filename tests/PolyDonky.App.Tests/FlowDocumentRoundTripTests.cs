@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Threading;
 using System.Windows;
 using PolyDonky.App.Services;
 using PolyDonky.Core;
@@ -74,7 +75,9 @@ public class FlowDocumentRoundTripTests
         var wpfPara = (Wpf.Paragraph)fd.Blocks.First();
 
         Assert.True(wpfPara.FontSize > FlowDocumentBuilder.PtToDip(12));
-        Assert.Equal(FontWeights.SemiBold, wpfPara.FontWeight);
+        // FlowDocumentBuilder:3207 의 매핑 — charStyle.Bold ? Bold : SemiBold.
+        // OutlineStyleSet.DefaultForLevel(H1).Char.Bold = true 이므로 Bold 가 정상.
+        Assert.Equal(FontWeights.Bold, wpfPara.FontWeight);
     }
 
     [Fact]
@@ -163,16 +166,38 @@ public class FlowDocumentRoundTripTests
     {
         // FlowDocument 가 표현 못 하는 한글 조판 속성(WidthPercent, LetterSpacingPx)은
         // originalForMerge 를 통해 비파괴 보존되어야 한다.
-        var p = new Paragraph();
-        p.AddText("장평 90", new RunStyle { WidthPercent = 90, LetterSpacingPx = 1.5 });
-        var doc = WrapInDocument(p);
+        // WidthPercent != 100 / LetterSpacingPx != 0 인 Run 은 BuildScaledContainer → per-char
+        // TextBlock 생성 경로를 거치는데 WPF FrameworkElement 는 STA 스레드에서만 만들 수 있다.
+        RunOnSta(() =>
+        {
+            var p = new Paragraph();
+            p.AddText("장평 90", new RunStyle { WidthPercent = 90, LetterSpacingPx = 1.5 });
+            var doc = WrapInDocument(p);
 
-        var fd = FlowDocumentBuilder.Build(doc);
-        var rebuilt = FlowDocumentParser.Parse(fd, originalForMerge: doc);
+            var fd = FlowDocumentBuilder.Build(doc);
+            var rebuilt = FlowDocumentParser.Parse(fd, originalForMerge: doc);
 
-        var run = rebuilt.EnumerateParagraphs().Single().Runs.Single();
-        Assert.Equal(90, run.Style.WidthPercent);
-        Assert.Equal(1.5, run.Style.LetterSpacingPx);
+            var run = rebuilt.EnumerateParagraphs().Single().Runs.Single();
+            Assert.Equal(90, run.Style.WidthPercent);
+            Assert.Equal(1.5, run.Style.LetterSpacingPx);
+        });
+    }
+
+    /// <summary>WPF FrameworkElement (TextBlock 등) 가 등장하는 테스트 본문을 STA 스레드에서 실행.
+    /// PaginationTests.RunOnSta 와 동일 패턴 — 향후 공통 헬퍼로 통합 가능.</summary>
+    private static void RunOnSta(System.Action action)
+    {
+        System.Exception? caught = null;
+        var t = new Thread(() =>
+        {
+            try { action(); }
+            catch (System.Exception ex) { caught = ex; }
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+        t.Join();
+        if (caught is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(caught).Throw();
     }
 
     private static PolyDonkyument SingleParagraph(string text, RunStyle style)
