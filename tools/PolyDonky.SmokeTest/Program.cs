@@ -87,6 +87,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3n VBA 매크로 프로젝트 �
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n 매크로 없음 (HasMacros=false)", DocBinaryPhase3nNoMacros);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n-2 디지털 서명 격리 저장", DocBinaryPhase3n2DigitalSignature);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n-2 서명 없음 (HasDigitalSignature=false)", DocBinaryPhase3n2NoDigitalSignature);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3n-3 알려지지 않은 root storage catch-all", DocBinaryPhase3n3PreservedRootStorages);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3n-3 알려진 카테고리만 (PreservedRootStorages empty)", DocBinaryPhase3n3OnlyKnownStorages);
 
 return harness.Finish();
 
@@ -7094,6 +7096,73 @@ static void DocBinaryPhase3n2NoDigitalSignature()
         reader.Read(fs);
         SmokeHarness.True(!reader.HasDigitalSignature, "HasDigitalSignature = false");
         SmokeHarness.True(reader.DigitalSignature is null, "DigitalSignature is null");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3n-3 — 알려지지 않은 root storage (catch-all) 보존.
+//   합성: MsoDataStore/Properties + WebPubStg/Layout (두 unknown storage, 각자 단순 stream 포함)
+//   결과: reader.PreservedRootStorages 가 두 storage 모두 path-keyed bytes 로 보존.
+static void DocBinaryPhase3n3PreservedRootStorages()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+    byte[] props  = Encoding.UTF8.GetBytes("<props/>");
+    byte[] layout = { 0x01, 0x02, 0x03 };
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            var ds  = root.CreateStorage("MsoDataStore");
+            using (var s = ds.CreateStream("Properties")) s.Write(props);
+            var wp  = root.CreateStorage("WebPubStg");
+            using (var s = wp.CreateStream("Layout")) s.Write(layout);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.Equal(2, reader.PreservedRootStorages.Count,
+            $"PreservedRootStorages.Count = 2 (got {reader.PreservedRootStorages.Count})");
+
+        var dsEntry = reader.PreservedRootStorages.FirstOrDefault(e => e.Name == "MsoDataStore");
+        SmokeHarness.True(dsEntry is not null, "MsoDataStore preserved");
+        SmokeHarness.True(dsEntry!.Streams.TryGetValue("Properties", out var dsProps)
+            && dsProps.SequenceEqual(props), "MsoDataStore/Properties bytes 일치");
+
+        var wpEntry = reader.PreservedRootStorages.FirstOrDefault(e => e.Name == "WebPubStg");
+        SmokeHarness.True(wpEntry is not null, "WebPubStg preserved");
+        SmokeHarness.True(wpEntry!.Streams.TryGetValue("Layout", out var wpLayout)
+            && wpLayout.SequenceEqual(layout), "WebPubStg/Layout bytes 일치");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// 알려진 카테고리만 있는 문서 → PreservedRootStorages 가 비어 있어야 함 (중복 X).
+static void DocBinaryPhase3n3OnlyKnownStorages()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            // 알려진 storage 만 — Macros (이미 Phase 3n 이 흡수).
+            var macros = root.CreateStorage("Macros");
+            using (var s = macros.CreateStream("PROJECT")) s.Write(new byte[] { 1 });
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.True(reader.HasMacros, "Phase 3n: Macros captured");
+        SmokeHarness.Equal(0, reader.PreservedRootStorages.Count,
+            "PreservedRootStorages empty (알려진 카테고리만 — 중복 보존 X)");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
