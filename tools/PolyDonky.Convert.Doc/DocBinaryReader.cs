@@ -136,7 +136,7 @@ public class DocBinaryReader
             ApplyFloatingShapeImages(doc);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
-            ApplyHeaderFooter(wd, table, fib, doc);
+            ApplyHeaderFooter(wd, table, fib, doc, fmt);
 
             // Phase 3g — 각주/미주 sub-document 텍스트 추출 후 doc.Footnotes / doc.Endnotes 에 매핑.
             ApplyFootnotesAndEndnotes(wd, table, fib, doc);
@@ -1678,7 +1678,10 @@ public class DocBinaryReader
     // Word 의 본문 다음에 footnote, 그 다음 header/footer subdocument 가 위치.
     // PlcfHdd 의 aCP[n+1] 이 영역 내 sub-story 들의 경계. 본 단계는 첫 두 sub-story 만
     // Header.Center / Footer.Center 로 매핑 (홀/짝/첫페이지 구분은 후속 SEPX 단계).
-    private static void ApplyHeaderFooter(byte[] wd, byte[] table, Fib fib, PolyDonkyument doc)
+    // Phase 3d / 3m — 헤더/푸터 sub-document 텍스트 추출 후 doc.Sections[0] 의 Page.Header/Footer 에 매핑.
+    //   Phase 3m: CleanSubdocText (plain text) 대신 BuildSubdocParagraphs (Run-rich) 로 처리해
+    //   하이퍼링크 / 책갈피 / 굵게·이탤릭 등 서식 보존.
+    private static void ApplyHeaderFooter(byte[] wd, byte[] table, Fib fib, PolyDonkyument doc, FormatStyles fmt)
     {
         if (fib.CcpHdd == 0 || fib.LcbPlcfHdd < 4 || doc.Sections.Count == 0) return;
         int hddBase = (int)(fib.CcpText + fib.CcpFtn);
@@ -1707,20 +1710,20 @@ public class DocBinaryReader
             int cpStart = hddBase + subCps[i];
             int cpEnd   = hddBase + subCps[i + 1];
             if (cpEnd <= cpStart || cpEnd > hddEnd) continue;
-            var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
-            var cleaned = CleanSubdocText(raw);
-            if (string.IsNullOrEmpty(cleaned)) continue;
+            // Phase 3m — Run-rich 단락 추출.
+            var paras = BuildSubdocParagraphs(wd, table, fib, cpStart, cpEnd, fmt);
+            if (paras.Count == 0) continue;
 
             var page = doc.Sections[0].Page;
             switch (i)
             {
                 case 1: case 0: case 4:  // odd footer (1) / even (0) / first (4) — odd 우선, 비어 있으면 fallback
                     if (page.Footer.Center.IsEmpty)
-                        page.Footer.Center.Paragraphs.Add(Paragraph.Of(cleaned));
+                        foreach (var pa in paras) page.Footer.Center.Paragraphs.Add(pa);
                     break;
                 case 3: case 2: case 5:  // odd header (3) / even (2) / first (5)
                     if (page.Header.Center.IsEmpty)
-                        page.Header.Center.Paragraphs.Add(Paragraph.Of(cleaned));
+                        foreach (var pa in paras) page.Header.Center.Paragraphs.Add(pa);
                     break;
             }
         }
@@ -1905,6 +1908,158 @@ public class DocBinaryReader
             }
         }
         return sb.ToString();
+    }
+
+    // Phase 3m — ExtractSubdocText 의 fcs 동행 버전. 각 char 의 file character position 도 함께 반환,
+    //   FormatStyles.GetRunStyle 등 fc-기반 lookup 이 가능해진다.
+    private static (string Text, int[] Fcs) ExtractSubdocTextWithFcs(
+        byte[] wd, byte[] table, Fib fib, int cpStart, int cpEnd)
+    {
+        if (fib.LcbClx == 0 || cpEnd <= cpStart) return (string.Empty, Array.Empty<int>());
+        var pcds = ParsePieceTable(table, (int)fib.FcClx, (int)fib.LcbClx, out int[] cps);
+        var sb  = new StringBuilder();
+        var fcs = new List<int>();
+        for (int i = 0; i < pcds.Count; i++)
+        {
+            int pcStart = cps[i];
+            int pcEnd   = cps[i + 1];
+            int effStart = Math.Max(pcStart, cpStart);
+            int effEnd   = Math.Min(pcEnd, cpEnd);
+            if (effEnd <= effStart) continue;
+            int len = effEnd - effStart;
+            int offsetInPiece = effStart - pcStart;
+
+            uint fcRaw = pcds[i].Fc;
+            bool compressed = (fcRaw & 0x40000000u) != 0;
+            int  fc   = (int)(fcRaw & 0x3FFFFFFFu);
+            if (compressed)
+            {
+                fc /= 2;
+                int absFc = fc + offsetInPiece;
+                if (absFc < 0 || absFc + len > wd.Length) continue;
+                var piece = DecodeAnsi(wd, absFc, len);
+                for (int j = 0; j < piece.Length; j++) { sb.Append(piece[j]); fcs.Add(absFc + j); }
+            }
+            else
+            {
+                int absFc = fc + offsetInPiece * 2;
+                int byteLen = len * 2;
+                if (absFc < 0 || absFc + byteLen > wd.Length) continue;
+                var piece = Encoding.Unicode.GetString(wd, absFc, byteLen);
+                for (int j = 0; j < piece.Length; j++) { sb.Append(piece[j]); fcs.Add(absFc + j * 2); }
+            }
+        }
+        return (sb.ToString(), fcs.ToArray());
+    }
+
+    // Phase 3m — 머리말/꼬리말 같은 sub-document 영역 [cpStart, cpEnd) 을 BuildParaFromChars 기반 풀
+    //   Run 빌더로 처리. \r → 단락 경계, 0x13/0x14/0x15 → 필드, bookmark event → marker.
+    //   각주/미주/픽처 (0x01/0x02/0x05/0x08) 는 sub-doc 에서 보통 안 쓰여 skip.
+    //   각 Paragraph 는 fc 기반 CHPX/STSH 적용 → 헤더/푸터의 굵게·이탤릭·하이퍼링크 등 보존.
+    private static IList<Paragraph> BuildSubdocParagraphs(
+        byte[] wd, byte[] table, Fib fib, int cpStart, int cpEnd, FormatStyles fmt)
+    {
+        var (text, fcs) = ExtractSubdocTextWithFcs(wd, table, fib, cpStart, cpEnd);
+        var result = new List<Paragraph>();
+        if (text.Length == 0) return result;
+
+        var paraChars = new List<char>();
+        var paraFcs   = new List<int>();
+        int lastFc    = 0;
+
+        // 필드 추적 (Phase 3a-2/3a-5 와 같은 흐름).
+        StringBuilder? fieldInstr = null;
+        int fieldMode = 0;
+        int resultStartFc  = -1;
+        string?    activeUrl       = null;
+        FieldType? activeFieldType = null;
+        string?    activeFieldArg  = null;
+
+        void FlushPara(int paraEndFc)
+        {
+            var (paraIstd, ps, _, _, _, _, _) = fmt.GetParagraphInfo(paraEndFc);
+            var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
+            // 빈 단락이라도 \r 만으로 emit (헤더에 연속 \r 있는 케이스 보존).
+            // Phase 3h-3 — paragraph mark 의 rev flag 도 적용.
+            var (_, paraRev) = fmt.GetRunStyle(paraEndFc, paraIstd);
+            if (paraRev.Inserted) para.IsInsertedRevision = true;
+            if (paraRev.Deleted)  para.IsDeletedRevision  = true;
+            result.Add(para);
+            paraChars.Clear();
+            paraFcs.Clear();
+        }
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c  = text[i];
+            int  fc = fcs[i];
+            lastFc = fc;
+            int absCp = cpStart + i;
+
+            // Phase 3i-2 — bookmark events at this CP (whole-doc CP space).
+            var bkEnds = fmt.GetBookmarkEndsAtCp(absCp);
+            if (bkEnds is not null) foreach (var name in bkEnds)
+            {
+                fmt.EnqueueBookmarkEvent(fc, isStart: false, name);
+                paraChars.Add('￼'); paraFcs.Add(fc);
+            }
+            var bkStarts = fmt.GetBookmarkStartsAtCp(absCp);
+            if (bkStarts is not null) foreach (var name in bkStarts)
+            {
+                fmt.EnqueueBookmarkEvent(fc, isStart: true, name);
+                paraChars.Add('￼'); paraFcs.Add(fc);
+            }
+
+            switch (c)
+            {
+                case '\r':
+                case '\f':
+                    fieldMode = 0;
+                    FlushPara(fc);
+                    break;
+                case '':
+                    fieldMode = 1; fieldInstr = new StringBuilder();
+                    resultStartFc = -1; activeUrl = null; activeFieldType = null; activeFieldArg = null;
+                    break;
+                case '':
+                    fieldMode = 2;
+                    if (fieldInstr is not null)
+                    {
+                        var (t, u, a) = ParseFieldInstr(fieldInstr.ToString());
+                        activeFieldType = t; activeUrl = u; activeFieldArg = a;
+                    }
+                    resultStartFc = fc;
+                    break;
+                case '':
+                    if (resultStartFc >= 0)
+                        fmt.AddFieldRange(resultStartFc, fc, activeUrl, activeFieldType, activeFieldArg);
+                    fieldMode = 0; fieldInstr = null;
+                    resultStartFc = -1; activeUrl = null; activeFieldType = null; activeFieldArg = null;
+                    break;
+                case '': case '': case '': case '': case '':
+                    // 픽처/footnote/comment/cell-mark/drawing — 헤더에선 보통 무시.
+                    break;
+                case '\t':
+                case '\n':
+                    if (fieldMode == 1) fieldInstr?.Append(c);
+                    else { paraChars.Add(c); paraFcs.Add(fc); }
+                    break;
+                case '\v':
+                    paraChars.Add('\n'); paraFcs.Add(fc);
+                    break;
+                default:
+                    if (c < 0x20) break;
+                    if (fieldMode == 1) fieldInstr?.Append(c);
+                    else { paraChars.Add(c); paraFcs.Add(fc); }
+                    break;
+            }
+        }
+        // 남은 chars 가 있으면 한 단락으로 flush — 종료 \r 없는 sub-doc 안전 처리.
+        if (paraChars.Count > 0) FlushPara(lastFc);
+        // 빈 trailing 단락 (전부 separator) 제거.
+        while (result.Count > 0 && result[^1].Runs.Count == 0)
+            result.RemoveAt(result.Count - 1);
+        return result;
     }
 
     // 헤더/푸터 sub-story 의 raw 텍스트에서 \r → \n, 그 외 제어 문자 (필드/cell mark 등) 폐기.
