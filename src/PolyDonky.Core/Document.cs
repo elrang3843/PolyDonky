@@ -37,6 +37,37 @@ public sealed class PolyDonkyument
     /// </summary>
     public IDictionary<string, byte[]> FidelityCapsules { get; set; } = new Dictionary<string, byte[]>();
 
+    /// <summary>매크로 (VBA / Scripts) 가 capsule 에 보존되어 있는지 — UI 보안 경고용.</summary>
+    public bool HasMacroCapsule
+    {
+        get
+        {
+            foreach (var k in FidelityCapsules.Keys)
+            {
+                if (k.StartsWith("msdoc/macros/",  StringComparison.Ordinal)) return true;
+                if (k.StartsWith("ooxml/word/vbaProject.bin", StringComparison.Ordinal)) return true;
+                if (k.StartsWith("ooxml/word/vbaData.xml",    StringComparison.Ordinal)) return true;
+                if (k.StartsWith("hwpx/Scripts/",  StringComparison.Ordinal)) return true;
+                if (k.StartsWith("hancom/Scripts/", StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+    }
+
+    /// <summary>디지털 서명이 capsule 에 보존되어 있는지 — UI 서명 표시용.</summary>
+    public bool HasDigitalSignatureCapsule
+    {
+        get
+        {
+            foreach (var k in FidelityCapsules.Keys)
+            {
+                if (k.StartsWith("msdoc/signatures/",  StringComparison.Ordinal)) return true;
+                if (k.StartsWith("ooxml/_xmlsignatures/", StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+    }
+
     /// <summary>비어 있지 않은 단일 섹션 단일 문단을 가진 최소 문서를 생성한다.</summary>
     public static PolyDonkyument Empty()
     {

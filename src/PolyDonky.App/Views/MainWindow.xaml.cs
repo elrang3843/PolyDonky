@@ -2575,6 +2575,37 @@ public partial class MainWindow : Window
         dlg.ShowDialog();
     }
 
+    // 파일 메뉴 → 문서 정보. 보존된 fidelity capsule 목록과 매크로/서명 경고를 표시.
+    //   capsule 키는 코덱별 prefix (msdoc/ ooxml/ hwpx/ hancom/) 로 그룹화한 줄 단위 요약.
+    private void OnShowDocumentInfoClick(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        var doc = _viewModel.Document;
+        var sb = new System.Text.StringBuilder();
+        if (!string.IsNullOrEmpty(_viewModel.CurrentFilePath))
+            sb.AppendLine($"파일: {_viewModel.CurrentFilePath}").AppendLine();
+
+        sb.AppendLine($"매크로 포함 여부: {(doc.HasMacroCapsule ? "예 ⚠" : "아니오")}");
+        sb.AppendLine($"디지털 서명 보존: {(doc.HasDigitalSignatureCapsule ? "예 🔏" : "아니오")}");
+        sb.AppendLine($"보존된 fidelity capsule 항목 수: {doc.FidelityCapsules.Count}");
+
+        if (doc.FidelityCapsules.Count > 0)
+        {
+            sb.AppendLine().AppendLine("보존된 데이터 (round-trip 충실도):");
+            int max = 30;  // 너무 길어지지 않게 상한
+            int i = 0;
+            foreach (var kv in doc.FidelityCapsules)
+            {
+                if (i++ >= max) { sb.AppendLine($"  … (외 {doc.FidelityCapsules.Count - max} 항목)"); break; }
+                sb.AppendLine($"  {kv.Key} ({kv.Value.Length:N0} bytes)");
+            }
+            sb.AppendLine().AppendLine("주의: 이 데이터는 PolyDonky 가 파싱·실행하지 않고 원본 그대로 보존만 합니다.");
+        }
+
+        System.Windows.MessageBox.Show(this, sb.ToString(), "문서 정보",
+            System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+    }
+
     private void OnPreviewClick(object sender, System.Windows.RoutedEventArgs e)
     {
         if (_viewModel is null) return;
