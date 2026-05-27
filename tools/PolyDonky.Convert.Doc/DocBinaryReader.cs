@@ -706,9 +706,10 @@ public class DocBinaryReader
     //             0x08 LastSavedBy · 0x09 RevisionNumber · 0x0C CreateTime · 0x0D LastSavedTime ·
     //             0x12 AppName.
     // Phase 3e-2 — PICF 영역 안에서 PNG/JPEG/GIF signature 검색 후 raw byte 추출.
+    // Phase 3e-3 — WMF placeable header + DIB BITMAPINFOHEADER 추가.
     // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
-    // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw PNG/JPEG 가 인라인. signature 위치부터
-    // PICF 끝까지를 image data 로 본다 (legacy WMF/DIB 는 후속 단계).
+    // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw byte 가 인라인. signature 위치부터
+    // PICF 끝까지를 image data 로 본다.
     private static (string MediaType, byte[] Data)? TryExtractImage(byte[] data, int fcPic)
     {
         if (fcPic < 0 || fcPic + 4 > data.Length) return null;
@@ -730,6 +731,22 @@ public class DocBinaryReader
             // GIF: 47 49 46 38 (GIF87a/89a)
             if (data[i] == 0x47 && data[i + 1] == 0x49 && data[i + 2] == 0x46 && data[i + 3] == 0x38)
                 return ("image/gif", SliceTo(data, i, fcPic + lcb));
+            // Phase 3e-3 — Placeable WMF header: D7 CD C6 9A 00 00 (§Placeable Metafile)
+            if (data[i] == 0xD7 && data[i + 1] == 0xCD && data[i + 2] == 0xC6 && data[i + 3] == 0x9A)
+                return ("image/wmf", SliceTo(data, i, fcPic + lcb));
+            // Phase 3e-3 — DIB BITMAPINFOHEADER heuristic:
+            //   byte 0..3 = 0x28 0x00 0x00 0x00 (biSize=40)
+            //   byte 12..13 = biPlanes (LE) = 1
+            //   byte 14..15 = biBitCount in {1,4,8,16,24,32}
+            //   biSize=40 만으로는 false-positive 가 흔해 추가 검사가 필요.
+            if (i + 16 < data.Length &&
+                data[i] == 0x28 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 0 &&
+                data[i + 12] == 0x01 && data[i + 13] == 0x00)
+            {
+                ushort bitCount = BitConverter.ToUInt16(data, i + 14);
+                if (bitCount is 1 or 4 or 8 or 16 or 24 or 32)
+                    return ("image/x-dib", SliceTo(data, i, fcPic + lcb));
+            }
         }
         return null;
 

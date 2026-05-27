@@ -50,6 +50,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3d 헤더·푸터 (PlcfHdd + su
 harness.Run("DOC (Word 97-2003 binary) — Phase 3c-2 SEPX 페이지 크기·여백", DocBinaryPhase3c2SepxPageProps);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e 이미지 placeholder (0x01)", DocBinaryPhase3eImagePlaceholder);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-2 이미지 PNG 데이터 추출 (PICF + Data stream)", DocBinaryPhase3e2ImageData);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-3 WMF placeable header 인식", DocBinaryPhase3e3WmfImage);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-3 DIB BITMAPINFOHEADER 인식", DocBinaryPhase3e3DibImage);
 
 return harness.Finish();
 
@@ -3225,6 +3227,232 @@ static void DocBinaryPhase3e2ImageData()
         SmokeHarness.True(
             img.Data[0] == 0x89 && img.Data[1] == 0x50 && img.Data[2] == 0x4E && img.Data[3] == 0x47,
             $"Data 의 처음 4 byte = PNG signature (got {img.Data[0]:X2}{img.Data[1]:X2}{img.Data[2]:X2}{img.Data[3]:X2})");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3e3WmfImage()
+{
+    // Phase 3e-2 와 동일 구조 — Data stream 의 PICF 안에 PNG 대신 WMF placeable header(D7 CD C6 9A) 박는다.
+    //   결과: ImageBlock.MediaType = "image/wmf", Data 의 처음 4 byte = D7 CD C6 9A.
+    const string text = "BeforeAfter\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 3 runs (Phase 3e-2 와 동일).
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x218);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Data stream: PICF (lcb=32 + 32 byte body). offset 4 부터 WMF placeable header.
+    var dataStream = new byte[36];
+    BitConverter.TryWriteBytes(dataStream.AsSpan(0), (int)32);
+    byte[] wmfSig = { 0xD7, 0xCD, 0xC6, 0x9A };
+    Buffer.BlockCopy(wmfSig, 0, dataStream, 4, 4);
+    // 나머지 8..31 = 0 (dummy placeable header bytes)
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 3, $"blocks.Count >= 3 (got {blocks.Count})");
+        SmokeHarness.True(blocks[1] is ImageBlock, "blocks[1] = ImageBlock");
+        var img = (ImageBlock)blocks[1];
+        SmokeHarness.Equal("image/wmf", img.MediaType, "MediaType = image/wmf");
+        SmokeHarness.True(img.Data.Length >= 4, $"Data.Length >= 4 (got {img.Data.Length})");
+        SmokeHarness.True(
+            img.Data[0] == 0xD7 && img.Data[1] == 0xCD && img.Data[2] == 0xC6 && img.Data[3] == 0x9A,
+            $"Data 의 처음 4 byte = WMF placeable signature (got {img.Data[0]:X2}{img.Data[1]:X2}{img.Data[2]:X2}{img.Data[3]:X2})");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3e3DibImage()
+{
+    // Phase 3e-2 와 동일 구조 — Data stream 의 PICF 안에 DIB BITMAPINFOHEADER 박는다.
+    //   biSize=40, biPlanes=1, biBitCount=24.
+    //   결과: ImageBlock.MediaType = "image/x-dib", Data[0] = 0x28.
+    const string text = "BeforeAfter\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x218);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Data stream: lcb=48 + 48 byte body, offset 4 부터 BITMAPINFOHEADER 박는다.
+    //   bytes 4..7 = 0x28 0 0 0 (biSize=40)
+    //   bytes 8..11 = biWidth = 10
+    //   bytes 12..15 = biHeight = 10
+    //   bytes 16..17 = biPlanes = 1
+    //   bytes 18..19 = biBitCount = 24
+    var dataStream = new byte[52];
+    BitConverter.TryWriteBytes(dataStream.AsSpan(0), (int)48);
+    dataStream[4] = 0x28;
+    BitConverter.TryWriteBytes(dataStream.AsSpan(8),  (int)10);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(12), (int)10);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(16), (ushort)1);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(18), (ushort)24);
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 3, $"blocks.Count >= 3 (got {blocks.Count})");
+        SmokeHarness.True(blocks[1] is ImageBlock, "blocks[1] = ImageBlock");
+        var img = (ImageBlock)blocks[1];
+        SmokeHarness.Equal("image/x-dib", img.MediaType, "MediaType = image/x-dib");
+        SmokeHarness.True(img.Data.Length >= 16, $"Data.Length >= 16 (got {img.Data.Length})");
+        SmokeHarness.True(
+            img.Data[0] == 0x28 && img.Data[1] == 0x00 && img.Data[2] == 0x00 && img.Data[3] == 0x00,
+            $"Data 의 처음 4 byte = BITMAPINFOHEADER biSize=40 (got {img.Data[0]:X2}{img.Data[1]:X2}{img.Data[2]:X2}{img.Data[3]:X2})");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
