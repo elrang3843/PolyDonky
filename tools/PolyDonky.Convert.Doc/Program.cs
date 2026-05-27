@@ -10,10 +10,9 @@ using PolyDonky.Iwpf;
 //
 // 변환 파이프라인:
 //   *.rtf  → *.iwpf : DocReader       → IwpfWriter
-//   *.doc  → *.iwpf : DocBinaryReader → IwpfWriter   (Phase 1a — 텍스트·단락; 서식은 향후 PR)
+//   *.doc  → *.iwpf : DocBinaryReader → IwpfWriter
 //   *.iwpf → *.rtf  : IwpfReader      → DocWriter
-//
-// 참고: .doc → .rtf 또는 .doc 쓰기는 미구현. DOC export 는 호환성 비용이 커서 보류.
+//   *.iwpf → *.doc  : IwpfReader      → DocBinaryWriter (Phase F1-W2a — 본문 텍스트 골격)
 //
 // 사용법:
 //   PolyDonky.Convert.Doc <input> <output>
@@ -54,8 +53,9 @@ if (positional.Length != 2)
 {
     Console.Error.WriteLine("Usage: PolyDonky.Convert.Doc <input> <output> [--debug]");
     Console.Error.WriteLine("  Supported: .rtf → .iwpf  (import)");
-    Console.Error.WriteLine("             .doc → .iwpf  (import, Word 97-2003 OLE2 binary, Phase 1a — 텍스트·단락)");
+    Console.Error.WriteLine("             .doc → .iwpf  (import, Word 97-2003 OLE2 binary)");
     Console.Error.WriteLine("             .iwpf → .rtf  (export)");
+    Console.Error.WriteLine("             .iwpf → .doc  (export, Phase F1-W2a — 본문 텍스트 골격)");
     return ConverterExitCodes.BadArgs;
 }
 
@@ -81,16 +81,19 @@ if (string.Equals(inPath, outPath, StringComparison.OrdinalIgnoreCase))
     return ConverterExitCodes.BadArgs;
 }
 
-bool isRtfImport = inExt == "rtf" && outExt == "iwpf";
-bool isDocImport = inExt == "doc" && outExt == "iwpf";
-bool isExport    = inExt == "iwpf" && outExt == "rtf";
+bool isRtfImport = inExt == "rtf"  && outExt == "iwpf";
+bool isDocImport = inExt == "doc"  && outExt == "iwpf";
+bool isRtfExport = inExt == "iwpf" && outExt == "rtf";
+bool isDocExport = inExt == "iwpf" && outExt == "doc";
 bool isImport    = isRtfImport || isDocImport;
+bool isExport    = isRtfExport || isDocExport;
 if (!isImport && !isExport)
 {
     Console.Error.WriteLine($"지원하지 않는 변환: .{inExt} → .{outExt}");
     Console.Error.WriteLine("  지원: .rtf → .iwpf  (import)");
     Console.Error.WriteLine("        .doc → .iwpf  (import)");
     Console.Error.WriteLine("        .iwpf → .rtf  (export)");
+    Console.Error.WriteLine("        .iwpf → .doc  (export)");
     return ConverterExitCodes.UnsupportedOp;
 }
 
@@ -145,7 +148,7 @@ try
         using (var ofs = File.Create(outPath))
             new IwpfWriter().Write(doc, ofs);
     }
-    else
+    else if (isRtfExport)
     {
         ConverterProgress.Write(0, "IWPF 읽는 중");
         using (var fs = File.OpenRead(inPath))
@@ -154,6 +157,16 @@ try
         ConverterProgress.Write(50, "RTF 로 변환 중");
         using (var ofs = File.Create(outPath))
             new DocWriter().Write(doc, ofs);
+    }
+    else // isDocExport
+    {
+        ConverterProgress.Write(0, "IWPF 읽는 중");
+        using (var fs = File.OpenRead(inPath))
+            doc = new IwpfReader().Read(fs);
+
+        ConverterProgress.Write(50, "DOC (Word 97-2003 binary) 로 변환 중");
+        using (var ofs = File.Create(outPath))
+            new DocBinaryWriter().Write(doc, ofs);
     }
 
     ConverterProgress.Write(100, "완료");
@@ -197,13 +210,13 @@ static void PrintHelp()
     Console.WriteLine();
     Console.WriteLine("변환 쌍:");
     Console.WriteLine("  *.rtf  → *.iwpf : import (텍스트·서식 지원)");
-    Console.WriteLine("  *.doc  → *.iwpf : import (Word 97-2003 OLE2 binary; Phase 1a — 텍스트·단락)");
-    Console.WriteLine("  *.iwpf → *.rtf  : export (텍스트·서식·배경색 지원)");
+    Console.WriteLine("  *.doc  → *.iwpf : import (Word 97-2003 OLE2 binary, 매크로/서명 fidelity 보존)");
+    Console.WriteLine("  *.iwpf → *.rtf  : export (텍스트·서식·각주·필드·헤더/푸터 등 지원)");
+    Console.WriteLine("  *.iwpf → *.doc  : export (Word 97-2003 binary; Phase F1-W2a — 본문 텍스트 골격)");
     Console.WriteLine();
     Console.WriteLine("향후 단계:");
-    Console.WriteLine("  *.doc  → *.iwpf : Phase 1b — 단락 정렬·굵게/이탤릭/밑줄/폰트크기");
-    Console.WriteLine("  *.doc  → *.iwpf : Phase 2  — 표·이미지·필드·헤더/푸터·섹션");
-    Console.WriteLine("  *.iwpf → *.doc  : export (보류 — 호환성 비용 큼)");
+    Console.WriteLine("  *.iwpf → *.doc  : Phase F1-W2b — 글자/단락 서식 (CHPX/PAPX)");
+    Console.WriteLine("  *.iwpf → *.doc  : Phase F1-W2c~e — 표·이미지·각주/주석·fidelity capsule 복원");
     Console.WriteLine();
     Console.WriteLine("종료 코드:");
     Console.WriteLine("  0  성공");

@@ -51,6 +51,7 @@ PolyDonky.Convert.Doc --help    | -h | /?
 | `*.rtf` | `*.iwpf` | **import** — RTF 를 IWPF 로 변환 |
 | `*.doc` | `*.iwpf` | **import** — Word 97-2003 OLE2 바이너리를 IWPF 로 변환 (VBA 매크로·디지털 서명·OLE 임베드는 fidelity capsule 로 격리 저장) |
 | `*.iwpf` | `*.rtf` | **export** — IWPF 를 RTF 로 변환 |
+| `*.iwpf` | `*.doc` | **export** — Word 97-2003 OLE2 바이너리 (Phase F1-W2a — 현재 본문 텍스트 골격만, 서식·표·이미지는 후속 단계) |
 
 ---
 
@@ -156,7 +157,7 @@ PolyDonky.Convert.Doc 문서.rtf 문서.iwpf --debug
 |------|------|
 | RTF import / export | ✅ 현재 지원 |
 | `.doc` (Word 97-2003 OLE2 바이너리) import | ✅ 현재 지원 — VBA 매크로·디지털 서명·OLE 임베드·미인식 root storage 는 IWPF fidelity capsule 로 격리 저장 |
-| `.iwpf → .doc` (OLE2 바이너리 export) | ⏳ v1.0.0 이후 — `OpenMcdf` 기반 자체 writer 로 추가 예정 |
+| `.iwpf → .doc` (OLE2 바이너리 export) | ⚠️ Phase F1-W2a 진행 중 — `OpenMcdf` 기반 자체 writer. 현재는 본문 평문만 직렬화 (CFB + FIB + CLX 단일 piece). 글자/단락 서식 (F1-W2b), 표/이미지 (F1-W2c~d), fidelity capsule 복원 (F1-W2e) 은 후속 단계 |
 | 수식 (`\equation` 표기) | ⏳ v1.0.0 이후 |
 | `\shp` 그림자·3D·꼭짓점 경로 등 고급 도형 속성 | ⏳ v1.0.0 이후 |
 
