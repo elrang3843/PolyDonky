@@ -96,6 +96,14 @@ public class DocBinaryReader
     /// <summary>Phase 3n-2 — 디지털 서명 존재 여부. UI 에서 "이 문서는 서명되었습니다" 표시에 사용.</summary>
     public bool HasDigitalSignature => DigitalSignature is not null;
 
+    /// <summary>
+    /// Phase 3n-3 — 알려진 (handled) 카테고리에 속하지 않는 root storage 들의 catch-all 보존 목록.
+    /// MsoDataStore (custom XML 데이터), WebPubStg (웹 출판), 기타 미인식 사용자 데이터 storage 등을
+    /// 모두 path-keyed raw bytes 로 격리 저장 → round-trip 충실도 보장.
+    /// </summary>
+    public IReadOnlyList<OpaqueStorageInfo> PreservedRootStorages { get; private set; }
+        = Array.Empty<OpaqueStorageInfo>();
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -162,6 +170,8 @@ public class DocBinaryReader
             MacroProject = ParseMacroProject(root);
             // Phase 3n-2 — 디지털 서명 격리 저장 (절대 검증·수정 X, 보존 증적용).
             DigitalSignature = ParseDigitalSignature(root);
+            // Phase 3n-3 — 그 외 알려지지 않은 root storage 들 catch-all 보존 (MsoDataStore 등).
+            PreservedRootStorages = ParsePreservedRootStorages(root);
             var doc = BuildDocument(text, fcs, fmt, OleEmbeds);
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
@@ -3428,6 +3438,41 @@ public class DocBinaryReader
         return null;
     }
 
+    // Phase 3n-3 — 다른 단계가 이미 처리한 root entry 이름들. PreservedRootStorages 에서 제외.
+    private static readonly HashSet<string> KnownRootEntries = new(StringComparer.Ordinal)
+    {
+        // main streams
+        "WordDocument", "0Table", "1Table", "Data",
+        // metadata property sets (Phase 1+)
+        "\x05SummaryInformation", "\x05DocumentSummaryInformation",
+        // encryption (rejected, Phase 1)
+        "EncryptionInfo", "EncryptedSummary",
+        // Phase 3l
+        "ObjectPool",
+        // Phase 3n
+        "Macros", "_VBA_PROJECT_CUR",
+        // Phase 3n-2
+        "_SignaturesV1", "_signatures", "_DigitalSignature", "\x01CompObj_DigitalSignature",
+    };
+
+    // Phase 3n-3 — root 의 모든 sub-storage 중 known 카테고리에 안 잡힌 것들을 catch-all 로 보존.
+    //   round-trip 충실도 — IWPF → DOC export 시 원형에 가깝게 복원할 수 있어야 한다.
+    private static IReadOnlyList<OpaqueStorageInfo> ParsePreservedRootStorages(OpenMcdf.RootStorage root)
+    {
+        var list = new List<OpaqueStorageInfo>();
+        foreach (var entry in root.EnumerateEntries())
+        {
+            if (KnownRootEntries.Contains(entry.Name)) continue;
+            // storage 인지 시도 — stream 이면 try fails → skip (stream 형식 미인식 active content 는 별도 단계).
+            if (!root.TryOpenStorage(entry.Name, out var storage)) continue;
+            var streams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            ReadStorageRecursive(storage, "", streams);
+            if (streams.Count == 0) continue;
+            list.Add(new OpaqueStorageInfo(entry.Name, streams));
+        }
+        return list;
+    }
+
     // Phase 3n-2 — 디지털 서명 storage 격리 저장. 같은 패턴 (recursive raw bytes 보존).
     //   알려진 entry 이름: "_SignaturesV1" (Office 2003 XML 서명), "_DigitalSignature" (older 변종, stream).
     private static DigitalSignatureInfo? ParseDigitalSignature(OpenMcdf.RootStorage root)
@@ -3552,4 +3597,14 @@ public sealed record MacroProjectInfo(
 /// <param name="Streams">서명 storage 내 모든 stream path → raw bytes 사전. stream 단독이면 단일 entry.</param>
 public sealed record DigitalSignatureInfo(
     string StorageName,
+    IReadOnlyDictionary<string, byte[]> Streams);
+
+/// <summary>
+/// Phase 3n-3 — 카테고리 미인식 root storage 의 격리된 raw bytes. round-trip 충실도용.
+/// 알려진 카테고리 (Macros/Signatures/ObjectPool/main streams/metadata) 에 속하지 않는 모든 root storage 가 여기에 보존된다.
+/// </summary>
+/// <param name="Name">root storage 이름 (예: "MsoDataStore", "WebPubStg").</param>
+/// <param name="Streams">storage 내 모든 stream path → raw bytes 사전. sub-storage 는 "Sub/Stream" path 로 표현.</param>
+public sealed record OpaqueStorageInfo(
+    string Name,
     IReadOnlyDictionary<string, byte[]> Streams);
