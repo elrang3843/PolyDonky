@@ -126,7 +126,10 @@ public class DocBinaryReader
         uint   LcbSttbfFfn,
         // Phase 1e — Style Sheet (STSH)
         uint   FcStshf,
-        uint   LcbStshf);
+        uint   LcbStshf,
+        // Phase 3c — Section descriptor plex (FibRgFcLcb97 fcPlcfSed @ 0x00CA / lcbPlcfSed @ 0x00CE)
+        uint   FcPlcfSed,
+        uint   LcbPlcfSed);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -175,9 +178,13 @@ public class DocBinaryReader
         uint fcStshf  = BitConverter.ToUInt32(wd, 0x00A2);
         uint lcbStshf = BitConverter.ToUInt32(wd, 0x00A6);
 
+        // Phase 3c — PlcfSed (Section descriptor plex): fcPlcfSed @ 0x00CA, lcbPlcfSed @ 0x00CE
+        uint fcPlcfSed  = BitConverter.ToUInt32(wd, 0x00CA);
+        uint lcbPlcfSed = BitConverter.ToUInt32(wd, 0x00CE);
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
-                       fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf);
+                       fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -354,6 +361,9 @@ public class DocBinaryReader
         //   [MS-DOC] §2.8.25 — 0x13 field begin, 0x14 separator, 0x15 end. 중첩 필드는 1-level
         //   단순화 (대부분의 실문서에서 충분).
         int fieldMode = 0;
+        // Phase 3c — 다음 처리할 섹션 boundary 의 인덱스. SectionBoundaryCps[1..] 가 본문 내 break.
+        //          [0]=0 은 시작, [last]=ccpText 는 본문 끝. 단락이 boundary 를 넘으면 새 Section.
+        int nextSecIdx = 1;
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -369,6 +379,17 @@ public class DocBinaryReader
                     // 단락 경계에서 이미 0 이지만, 0x15 누락된 손상 파일/합성 입력 안전성.
                     fieldMode = 0;
                     FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
+                    // Phase 3c — 이 단락의 CP (i) 가 다음 섹션 boundary 를 넘었으면 새 Section.
+                    //   마지막 boundary 는 본문 끝 (cps[^1] = ccpText) 이므로 건드리지 않는다.
+                    while (nextSecIdx < fmt.SectionBoundaryCps.Count - 1 &&
+                           i + 1 >= fmt.SectionBoundaryCps[nextSecIdx])
+                    {
+                        // 진행 중인 표 마감 후 새 Section 으로 전환.
+                        FinalizeStack(section, tableStack, targetDepth: 0);
+                        section = new Section();
+                        doc.Sections.Add(section);
+                        nextSecIdx++;
+                    }
                     break;
                 case '\v':
                     paraChars.Add('\n'); paraFcs.Add(fc);
@@ -783,6 +804,9 @@ public class DocBinaryReader
         private readonly IReadOnlyList<string> _fonts;
         // Phase 1e — STSH (Style Sheet) 의 STD 배열. istd → sti/stk/name. null = 빈 슬롯.
         private readonly IReadOnlyList<StyleDef?> _styles;
+        // Phase 3c — PlcfSed 에서 추출한 section 경계 CP. 0 부터 시작, 마지막 = ccpText.
+        //   n+1 entries. 그 중 cps[1..n-1] 가 본문 내 섹션 break 위치 (마지막은 본문 끝).
+        public IReadOnlyList<int> SectionBoundaryCps { get; }
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
         // PAPX 는 (istd, sprms) 가 페어로 필요하므로 별도 캐시.
@@ -790,9 +814,11 @@ public class DocBinaryReader
         private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxCache = new();
 
         private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx,
-                             IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles)
+                             IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles,
+                             IReadOnlyList<int> sectionCps)
         {
             _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts; _styles = styles;
+            SectionBoundaryCps = sectionCps;
         }
 
         public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
@@ -801,7 +827,21 @@ public class DocBinaryReader
             var chpx   = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
             var fonts  = ReadSttbfFfn(table, (int)fib.FcSttbfFfn, (int)fib.LcbSttbfFfn);
             var styles = ReadStsh(table, (int)fib.FcStshf, (int)fib.LcbStshf);
-            return new FormatStyles(wd, papx, chpx, fonts, styles);
+            var sectionCps = ReadPlcfSed(table, (int)fib.FcPlcfSed, (int)fib.LcbPlcfSed);
+            return new FormatStyles(wd, papx, chpx, fonts, styles, sectionCps);
+        }
+
+        // [MS-DOC] §2.8.31 PlcfSed — aCP[n+1] (각 4 byte CP) + aSed[n] (각 12 byte SED).
+        // lcb = 4*(n+1) + 12*n = 16n + 4. 본 단계에서는 CP 만 추출 (SED 의 SEPX 내용은 후속).
+        private static IReadOnlyList<int> ReadPlcfSed(byte[] table, int fc, int lcb)
+        {
+            if (lcb < 4 || fc < 0 || fc + lcb > table.Length) return Array.Empty<int>();
+            int n = (lcb - 4) / 16;
+            if (n <= 0) return Array.Empty<int>();
+            var cps = new int[n + 1];
+            for (int i = 0; i <= n; i++)
+                cps[i] = BitConverter.ToInt32(table, fc + i * 4);
+            return cps;
         }
 
         // Phase 1f — (istd, ParagraphStyle?, InTable, IsTtp) — Phase 1 기본.

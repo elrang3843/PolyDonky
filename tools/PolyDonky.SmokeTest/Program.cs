@@ -45,6 +45,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 2g 셀 안 멀티-단락", DocB
 harness.Run("DOC (Word 97-2003 binary) — Phase 2h 중첩 표 (sprmPItap)", DocBinaryPhase2hNestedTable);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3a 필드 결과 보존 (0x13/0x14/0x15)", DocBinaryPhase3aFieldResult);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3b 페이지 break (sprmPFPageBreakBefore)", DocBinaryPhase3bPageBreak);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3c 섹션 분할 (PlcfSed)", DocBinaryPhase3cSections);
 
 return harness.Finish();
 
@@ -2642,6 +2643,117 @@ static void DocBinaryPhase3bPageBreak()
             "단락 0 의 ForcePageBreakBefore = false (빈 PAPX)");
         SmokeHarness.True(paragraphs[1].Style.ForcePageBreakBefore,
             "단락 1 의 ForcePageBreakBefore = true (sprmPFPageBreakBefore=1)");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3cSections()
+{
+    // 6 chars 본문 ("AB\rCD\r") + PlcfSed cps = [0, 3, 6] (두 섹션).
+    //   첫 섹션 = CP [0..3) → "AB\r"
+    //   두 번째 섹션 = CP [3..6) → "CD\r"
+    // 결과: doc.Sections.Count == 2, 각 섹션의 첫 단락이 "AB" / "CD".
+    const string text = "AB\rCD\r";  // 6 chars
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 2 단락
+    int cpara = 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)0x206);  // 단락 1 끝+2 ("AB\r" 다음)
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 8), (int)(0x200 + ccp * 2));
+    int papx0Off = 100, papx1Off = 110;
+    wd[fcPapxFkp + 12 + 0 * 13] = (byte)(papx0Off / 2);
+    wd[fcPapxFkp + 12 + 1 * 13] = (byte)(papx1Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    p = fcPapxFkp + papx1Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 비어 있음
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)(0x200 + ccp * 2));
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // PlcfSed: aCP[3] = [0, 3, 6] + aSed[2] (각 12 byte = 0)
+    int plcfSedStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0); tblMs.Write(b4);   // cps[0] = 0
+    BitConverter.TryWriteBytes(b4, (int)3); tblMs.Write(b4);   // cps[1] = 3 (첫 섹션 끝)
+    BitConverter.TryWriteBytes(b4, (int)6); tblMs.Write(b4);   // cps[2] = 6 (본문 끝)
+    var emptySed = new byte[24];   // 2 SED × 12 byte = 24 byte (zeros)
+    tblMs.Write(emptySed);
+    int plcfSedLen = (int)tblMs.Position - plcfSedStart;
+
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00CA), (uint)plcfSedStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00CE), (uint)plcfSedLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        SmokeHarness.Equal(2, doc.Sections.Count, "doc.Sections.Count = 2");
+        SmokeHarness.True(doc.Sections[0].Blocks.Count >= 1, "섹션 0 단락 >= 1");
+        SmokeHarness.True(doc.Sections[1].Blocks.Count >= 1, "섹션 1 단락 >= 1");
+        SmokeHarness.Equal("AB",
+            ((Paragraph)doc.Sections[0].Blocks[0]).GetPlainText(),
+            "섹션 0 단락 0 텍스트 'AB'");
+        SmokeHarness.Equal("CD",
+            ((Paragraph)doc.Sections[1].Blocks[0]).GetPlainText(),
+            "섹션 1 단락 0 텍스트 'CD'");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
