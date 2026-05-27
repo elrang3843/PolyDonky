@@ -7204,6 +7204,18 @@ static void IwpfFidelityCapsulesRoundtrip()
         SmokeHarness.True(sig.SequenceEqual(sigBytes), "signature capsule bytes 일치");
         var ds = ReadEntry("fidelity/capsules/msdoc/preserved/MsoDataStore/Props");
         SmokeHarness.True(ds.SequenceEqual(dsBytes), "preserved storage capsule bytes 일치");
+        zip.Dispose();
+
+        // Reader 가 다시 PolyDonkyument.FidelityCapsules 로 복원하는지 검증.
+        using var fs = File.OpenRead(tmp);
+        var doc2 = new PolyDonky.Iwpf.IwpfReader().Read(fs);
+        SmokeHarness.Equal(3, doc2.FidelityCapsules.Count, "복원된 capsule 수 = 3");
+        SmokeHarness.True(doc2.FidelityCapsules.TryGetValue("msdoc/macros/Macros/PROJECT", out var m2)
+            && m2.SequenceEqual(macroBytes), "복원 macros bytes 일치");
+        SmokeHarness.True(doc2.FidelityCapsules.TryGetValue("msdoc/signatures/_SignaturesV1/origSigs", out var s2)
+            && s2.SequenceEqual(sigBytes), "복원 signature bytes 일치");
+        SmokeHarness.True(doc2.FidelityCapsules.TryGetValue("msdoc/preserved/MsoDataStore/Props", out var d2)
+            && d2.SequenceEqual(dsBytes), "복원 preserved bytes 일치");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
