@@ -64,6 +64,10 @@ public sealed class Run
     /// <summary>책갈피 끝 marker. 책갈피 이름을 보존하는 빈 marker Run. DOCX <c>w:bookmarkEnd</c> 와 매핑.</summary>
     public string? BookmarkEnd { get; set; }
 
+    /// <summary>리뷰어 코멘트 참조 ID. null 이면 일반 Run.
+    /// <see cref="PolyDonkyument.Comments"/> 의 CommentEntry.Id 와 매핑. DOCX <c>w:commentReference</c>.</summary>
+    public string? CommentId { get; set; }
+
     /// <summary>루비 주석 텍스트 (한자 위 후리가나 등). null 이면 루비 없음.
     /// HTML <c>&lt;ruby&gt;&lt;rb&gt;base&lt;/rb&gt;&lt;rt&gt;annotation&lt;/rt&gt;&lt;/ruby&gt;</c>
     /// 에서 rt 콘텐츠를 여기에 저장, 베이스 텍스트는 Text 에 저장.</summary>
@@ -89,6 +93,7 @@ public sealed class Run
         RevisionDate       = RevisionDate,
         BookmarkStart      = BookmarkStart,
         BookmarkEnd        = BookmarkEnd,
+        CommentId          = CommentId,
         RubyText          = RubyText,
     };
 }

@@ -223,7 +223,14 @@ public class DocBinaryReader
         uint   FcPlcfBkf,
         uint   LcbPlcfBkf,
         uint   FcPlcfBkl,
-        uint   LcbPlcfBkl);
+        uint   LcbPlcfBkl,
+        // Phase 3j — Comments (annotations).
+        //   FibRgFcLcb97 pair 4: fcPlcfAtnRef @ 0x00BA, lcbPlcfAtnRef @ 0x00BE.
+        //   FibRgFcLcb97 pair 5: fcPlcfAtnTxt @ 0x00C2, lcbPlcfAtnTxt @ 0x00C6.
+        uint   FcPlcfAtnRef,
+        uint   LcbPlcfAtnRef,
+        uint   FcPlcfAtnTxt,
+        uint   LcbPlcfAtnTxt);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -326,6 +333,12 @@ public class DocBinaryReader
         uint fcPlcfBkl    = wd.Length >= 0x0196 ? BitConverter.ToUInt32(wd, 0x0192) : 0u;
         uint lcbPlcfBkl   = wd.Length >= 0x019A ? BitConverter.ToUInt32(wd, 0x0196) : 0u;
 
+        // Phase 3j — Comments (FibRgFcLcb97 pair 4 / 5).
+        uint fcPlcfAtnRef  = wd.Length >= 0x00BE ? BitConverter.ToUInt32(wd, 0x00BA) : 0u;
+        uint lcbPlcfAtnRef = wd.Length >= 0x00C2 ? BitConverter.ToUInt32(wd, 0x00BE) : 0u;
+        uint fcPlcfAtnTxt  = wd.Length >= 0x00C6 ? BitConverter.ToUInt32(wd, 0x00C2) : 0u;
+        uint lcbPlcfAtnTxt = wd.Length >= 0x00CA ? BitConverter.ToUInt32(wd, 0x00C6) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
@@ -335,7 +348,8 @@ public class DocBinaryReader
                        ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt,
                        fcPlcffndRef, lcbPlcffndRef, fcPlcfendRef, lcbPlcfendRef,
                        fcSttbfRMark, lcbSttbfRMark,
-                       fcSttbfBkmk, lcbSttbfBkmk, fcPlcfBkf, lcbPlcfBkf, fcPlcfBkl, lcbPlcfBkl);
+                       fcSttbfBkmk, lcbSttbfBkmk, fcPlcfBkf, lcbPlcfBkf, fcPlcfBkl, lcbPlcfBkl,
+                       fcPlcfAtnRef, lcbPlcfAtnRef, fcPlcfAtnTxt, lcbPlcfAtnTxt);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -650,14 +664,24 @@ public class DocBinaryReader
                         if (fnId is not null || enId is not null)
                         {
                             fmt.RegisterRefFc(fc, fnId, enId);
-                            // OBJECT REPLACEMENT CHARACTER (U+FFFC) 를 placeholder 로 박는다.
-                            // BuildParaFromChars 가 만나면 fc lookup 으로 ref Run 생성.
                             paraChars.Add('\uFFFC');
                             paraFcs.Add(fc);
                         }
                     }
                     break;
-                case '\u0005':  // comment ref
+                case '\u0005':  // Phase 3j — comment 참조 char.
+                    if (fieldMode != 1)
+                    {
+                        int cIdx = fmt.FindCommentRefIndex(i);
+                        if (cIdx >= 0)
+                        {
+                            string cmtId = $"cmt{cIdx + 1}";
+                            fmt.RegisterRefFc(fc, fnId: null, enId: null, cmtId: cmtId);
+                            paraChars.Add('\uFFFC');
+                            paraFcs.Add(fc);
+                        }
+                    }
+                    break;
                 case '\u0008':  // drawing
                     break;
                 case '\t':
@@ -875,13 +899,12 @@ public class DocBinaryReader
             char c = chars[i];
             int fc = fcs[i];
 
-            // Phase 3g-2 — OBJECT REPLACEMENT CHARACTER (U+FFFC) 는 footnote/endnote ref marker.
-            //   별도 Run 으로 (Text="", FootnoteId/EndnoteId 설정) emit 후 다음 chars 계속.
-            // Phase 3i-2 — 같은 marker 가 bookmark 시작/끝 도 표현. footnote/endnote 가 우선 매칭, 그 다음 bookmark.
+            // Phase 3g-2 / 3i-2 / 3j — OBJECT REPLACEMENT CHARACTER (U+FFFC) marker:
+            //   footnote/endnote/comment ref (3g-2 / 3j) → bookmark start/end (3i-2) 순으로 매칭.
             if (c == '￼')
             {
-                var (fnId, enId) = fmt.GetRefAtFc(fc);
-                if (fnId is not null || enId is not null)
+                var (fnId, enId, cmtId) = fmt.GetRefAtFc(fc);
+                if (fnId is not null || enId is not null || cmtId is not null)
                 {
                     Flush();
                     para.Runs.Add(new Run
@@ -890,6 +913,7 @@ public class DocBinaryReader
                         Style      = curStyle ?? new RunStyle(),
                         FootnoteId = fnId,
                         EndnoteId  = enId,
+                        CommentId  = cmtId,
                     });
                     continue;
                 }
@@ -1731,6 +1755,45 @@ public class DocBinaryReader
                 ednBase, ednEnd,
                 doc.Endnotes, idPrefix: "en");
         }
+
+        // Phase 3j — 주석 영역 (본문 + 각주 + 헤더/푸터 뒤).
+        if (fib.CcpAtn > 0 && fib.LcbPlcfAtnTxt >= 8)
+        {
+            int atnBase = (int)(fib.CcpText + fib.CcpFtn + fib.CcpHdd);
+            int atnEnd  = atnBase + (int)fib.CcpAtn;
+            ExtractCommentsInto(wd, table, fib,
+                (int)fib.FcPlcfAtnTxt, (int)fib.LcbPlcfAtnTxt,
+                atnBase, atnEnd, doc.Comments);
+        }
+    }
+
+    // Phase 3j — PlcfAtnTxt 의 sub-story 들에서 코멘트 텍스트 추출 후 CommentEntry 로 sink 에 추가.
+    //   ExtractStoriesInto 의 CommentEntry 변종 (FootnoteEntry vs CommentEntry 가 서로 호환 안 되어 별도 helper).
+    private static void ExtractCommentsInto(
+        byte[] wd, byte[] table, Fib fib,
+        int plcStart, int plcLen,
+        int subBase, int subEnd,
+        IList<CommentEntry> sink)
+    {
+        if (plcStart < 0 || plcStart + plcLen > table.Length) return;
+        int n = plcLen / 4 - 1;
+        if (n <= 0) return;
+        var cps = new int[n + 1];
+        for (int i = 0; i <= n; i++)
+            cps[i] = BitConverter.ToInt32(table, plcStart + i * 4);
+
+        for (int i = 0; i < n; i++)
+        {
+            int cpStart = subBase + cps[i];
+            int cpEnd   = subBase + cps[i + 1];
+            if (cpEnd <= cpStart || cpEnd > subEnd) continue;
+            var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
+            var cleaned = CleanSubdocText(raw);
+            if (string.IsNullOrEmpty(cleaned)) continue;
+            var entry = new CommentEntry { Id = $"cmt{sink.Count + 1}" };
+            entry.Blocks.Add(Paragraph.Of(cleaned));
+            sink.Add(entry);
+        }
     }
 
     // PlcfTxt 형식의 aCP 배열을 walk 해서 각 sub-story 의 텍스트를 추출, FootnoteEntry 로 sink 에 추가.
@@ -2010,9 +2073,11 @@ public class DocBinaryReader
         //   char-walk 에서 0x02 만났을 때 CP lookup 으로 footnote/endnote 인덱스 결정.
         private int[] _footnoteRefCps = Array.Empty<int>();
         private int[] _endnoteRefCps  = Array.Empty<int>();
-        // 본문 char-walk 가 0x02 를 발견하면 fc → (fnId, enId) 를 등록.
+        // Phase 3j — Comment ref CP 배열 (0x05 char 의 위치).
+        private int[] _commentRefCps  = Array.Empty<int>();
+        // 본문 char-walk 가 0x02 / 0x05 를 발견하면 fc → (fnId, enId, cmtId) 를 등록.
         // BuildParaFromChars 가 '￼' 마커 만났을 때 lookup.
-        private readonly Dictionary<int, (string? FnId, string? EnId)> _refsByFc = new();
+        private readonly Dictionary<int, (string? FnId, string? EnId, string? CmtId)> _refsByFc = new();
 
         // Phase 3h-2 — SttbfRMark 의 author 이름 배열. sprmCIbstRMark / sprmCIbstRMarkDel 의 인덱스 참조.
         private string[] _rmarkAuthors = Array.Empty<string>();
@@ -2062,20 +2127,21 @@ public class DocBinaryReader
 
         public int FindFootnoteRefIndex(int cp) => Array.IndexOf(_footnoteRefCps, cp);
         public int FindEndnoteRefIndex(int cp)  => Array.IndexOf(_endnoteRefCps,  cp);
+        public int FindCommentRefIndex(int cp)  => Array.IndexOf(_commentRefCps,  cp);
 
-        public void RegisterRefFc(int fc, string? fnId, string? enId)
+        public void RegisterRefFc(int fc, string? fnId, string? enId, string? cmtId = null)
         {
-            if (fnId is not null || enId is not null)
-                _refsByFc[fc] = (fnId, enId);
+            if (fnId is not null || enId is not null || cmtId is not null)
+                _refsByFc[fc] = (fnId, enId, cmtId);
         }
 
-        public (string? FnId, string? EnId) GetRefAtFc(int fc)
-            => _refsByFc.TryGetValue(fc, out var v) ? v : (null, null);
+        public (string? FnId, string? EnId, string? CmtId) GetRefAtFc(int fc)
+            => _refsByFc.TryGetValue(fc, out var v) ? v : (null, null, null);
 
         private FormatStyles(byte[] wd, byte[] table, List<BteEntry> papx, List<BteEntry> chpx,
                              IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles,
                              IReadOnlyList<int> sectionCps, IReadOnlyList<int> sectionFcSepx,
-                             int[] footnoteRefCps, int[] endnoteRefCps,
+                             int[] footnoteRefCps, int[] endnoteRefCps, int[] commentRefCps,
                              string[] rmarkAuthors)
         {
             _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts; _styles = styles;
@@ -2084,6 +2150,7 @@ public class DocBinaryReader
             TableBytes = table;
             _footnoteRefCps = footnoteRefCps;
             _endnoteRefCps  = endnoteRefCps;
+            _commentRefCps  = commentRefCps;
             _rmarkAuthors   = rmarkAuthors;
         }
 
@@ -2098,10 +2165,12 @@ public class DocBinaryReader
             //   lcb = 4*(N+1) + 2*N = 4 + 6*N. N = (lcb - 4) / 6.
             var fnRefCps = ReadPlcCps(table, (int)fib.FcPlcffndRef, (int)fib.LcbPlcffndRef, frdSize: 2);
             var enRefCps = ReadPlcCps(table, (int)fib.FcPlcfendRef, (int)fib.LcbPlcfendRef, frdSize: 2);
+            // Phase 3j — PlcfAtnRef. element = aCP(4) + ATRDPre10(30) = 34 byte. lcb = 4*(N+1) + 30*N = 4 + 34*N.
+            var cmtRefCps = ReadPlcCps(table, (int)fib.FcPlcfAtnRef, (int)fib.LcbPlcfAtnRef, frdSize: 30);
             // Phase 3h-2 — SttbfRMark: extended SttbExtend (fExtend=0xFFFF + cData + cbExtra + entries).
             var rmarkAuthors = ReadSttbExtend(table, (int)fib.FcSttbfRMark, (int)fib.LcbSttbfRMark);
             return new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx,
-                                    fnRefCps, enRefCps, rmarkAuthors);
+                                    fnRefCps, enRefCps, cmtRefCps, rmarkAuthors);
         }
 
         // Phase 3h-2 — SttbExtend (extended Sttb) 파싱. Format:
