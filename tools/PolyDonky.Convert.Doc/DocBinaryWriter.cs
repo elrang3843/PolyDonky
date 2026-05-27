@@ -11,18 +11,19 @@ namespace PolyDonky.Convert.Doc;
 /// <summary>
 /// IWPF → Word 97-2003 (.doc) OLE2 바이너리 writer.
 ///
-/// 현재 단계 — Phase F1-W2c (책갈피 추가):
+/// 현재 단계 — Phase F1-W2d (이미지/도형 placeholder):
 ///   * CFB 컨테이너 + FIB + CLX (단일 piece) + 본문 텍스트
 ///   * SttbfFfn (폰트 테이블)
 ///   * PAPX FKP 페이지 — 단락별 정렬·들여쓰기·간격·줄높이
 ///   * CHPX FKP 페이지 — Run 별 굵게/이탤릭/밑줄/취소선·글자크기·전경색·폰트 인덱스
 ///   * PlcfBtePapx / PlcfBteChpx — FKP 페이지 인덱스
 ///   * SttbfBkmk + PlcfBkf + PlcfBkl — Run.BookmarkStart/End 책갈피
+///   * ImageBlock / ShapeObject / TextBoxObject / Table → 가시 placeholder 텍스트 (정보 보존)
+///     실제 OfficeArt 바이너리 임베드는 후속 v1.0.0+ 단계.
 ///
 /// 후속 단계:
-///   F1-W2c+ 헤더/푸터, 섹션 (SEPX), 각주/미주, 주석, 필드  ← 미구현 (defer)
-///   F1-W2d  이미지 (PICF / BStore), 도형 (FSPA / OfficeArt)
 ///   F1-W2e  FidelityCapsules → OLE2 storage 복원 (VBA / 서명 / 미인식 root storage)
+///   v1.0.0+ 헤더/푸터, 섹션 SEPX, 각주/미주, 주석, 필드, OfficeArt 이미지/도형 binary 임베드
 ///
 /// 참고 사양:
 ///   [MS-CFB]  Compound File Binary File Format        (OpenMcdf 가 처리)
@@ -114,9 +115,84 @@ public sealed class DocBinaryWriter
             var sb = new StringBuilder();
             foreach (var sec in doc.Sections)
             foreach (var blk in sec.Blocks)
-                if (blk is Paragraph p) CollectParagraph(p, sb);
+                CollectBlock(blk, sb);
 
-            // 본문은 반드시 단락 마크 \r 로 끝나야 함 (Word EOF 마크 invariant).
+            FinalizeBody(sb);
+        }
+
+        /// <summary>임의의 Block 을 처리 — Paragraph 는 본문으로, 나머지는 Phase F1-W2d 단계에서는
+        /// 가시 placeholder 단락으로 변환해 본문에 emit.</summary>
+        private void CollectBlock(Block blk, StringBuilder sb)
+        {
+            switch (blk)
+            {
+                case Paragraph p:
+                    CollectParagraph(p, sb);
+                    break;
+                case ImageBlock img:
+                    CollectParagraph(MakePlaceholderPara(BuildImagePlaceholder(img)), sb);
+                    break;
+                case ShapeObject shape:
+                    CollectParagraph(MakePlaceholderPara($"[Shape: {shape.Kind}, {shape.WidthMm:0.#}×{shape.HeightMm:0.#}mm]"), sb);
+                    break;
+                case TextBoxObject tb:
+                    {
+                        var label = $"[TextBox {tb.WidthMm:0.#}×{tb.HeightMm:0.#}mm]";
+                        CollectParagraph(MakePlaceholderPara(label), sb);
+                        // 글상자 안 단락도 본문으로 함께 emit — 텍스트 정보가 살아남도록.
+                        foreach (var inner in tb.Content)
+                            CollectBlock(inner, sb);
+                        CollectParagraph(MakePlaceholderPara("[/TextBox]"), sb);
+                    }
+                    break;
+                case Table table:
+                    {
+                        CollectParagraph(MakePlaceholderPara($"[Table {table.Rows.Count}×{(table.Rows.FirstOrDefault()?.Cells.Count ?? 0)}]"), sb);
+                        foreach (var row in table.Rows)
+                            foreach (var cell in row.Cells)
+                                foreach (var inner in cell.Blocks) CollectBlock(inner, sb);
+                        CollectParagraph(MakePlaceholderPara("[/Table]"), sb);
+                    }
+                    break;
+                case ContainerBlock c:
+                    foreach (var inner in c.Children) CollectBlock(inner, sb);
+                    break;
+                case ThematicBreakBlock:
+                    CollectParagraph(MakePlaceholderPara("────────"), sb);
+                    break;
+                case TocBlock toc:
+                    CollectParagraph(MakePlaceholderPara($"[TOC: levels {toc.MinLevel}..{toc.MaxLevel}, {toc.Entries.Count} entries]"), sb);
+                    // 본문에 entry 들의 텍스트도 emit — 사용자가 목차 항목을 잃지 않도록.
+                    foreach (var e in toc.Entries)
+                        CollectParagraph(MakePlaceholderPara($"  {new string(' ', Math.Max(0, e.Level - 1) * 2)}{e.Text}"), sb);
+                    break;
+                case OpaqueBlock opaque:
+                    CollectParagraph(MakePlaceholderPara($"[Opaque: {opaque.DisplayLabel}]"), sb);
+                    break;
+            }
+        }
+
+        private static Paragraph MakePlaceholderPara(string text)
+        {
+            var p = new Paragraph();
+            // 이탤릭 + 회색 으로 placeholder 임을 시각적으로 표시.
+            p.AddText(text, new RunStyle { Italic = true, Foreground = new Color(0x80, 0x80, 0x80) });
+            return p;
+        }
+
+        private static string BuildImagePlaceholder(ImageBlock img)
+        {
+            string type = string.IsNullOrEmpty(img.MediaType) ? "image" : img.MediaType!;
+            string size = img.WidthMm > 0 && img.HeightMm > 0
+                ? $", {img.WidthMm:0.#}×{img.HeightMm:0.#}mm" : string.Empty;
+            int bytes = img.Data?.Length ?? 0;
+            string byteStr = bytes > 1024 ? $", {bytes / 1024} KB" : $", {bytes} B";
+            return $"[Image: {type}{size}{byteStr}]";
+        }
+
+        /// <summary>본문 마지막에 단락 마크 보장 + bytes/CCP 확정. Collect() 진입 마지막 단계.</summary>
+        private void FinalizeBody(StringBuilder sb)
+        {
             if (sb.Length == 0 || sb[^1] != '\r')
             {
                 int fcStart = sb.Length;

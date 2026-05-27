@@ -472,6 +472,112 @@ public class DocBinaryWriterTests
         Assert.Equal("unclosed", reader.Bookmarks[0].Name);
     }
 
+    // ── Phase F1-W2d: 비-Paragraph block placeholder ───────────────────────
+
+    [Fact]
+    public void ImageBlock_Emits_Visible_Placeholder_With_Size_And_Mime()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(Paragraph.Of("before"));
+        sec.Blocks.Add(new ImageBlock { MediaType = "image/png", WidthMm = 50, HeightMm = 30, Data = new byte[2048] });
+        sec.Blocks.Add(Paragraph.Of("after"));
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        var texts = string.Join("\n", NonEmptyParagraphTexts(doc2));
+        Assert.Contains("before", texts);
+        Assert.Contains("[Image: image/png", texts);
+        Assert.Contains("50", texts);   // width
+        Assert.Contains("30", texts);   // height
+        Assert.Contains("after", texts);
+    }
+
+    [Fact]
+    public void Table_Emits_Placeholder_With_Dimensions_And_Cell_Contents()
+    {
+        var table = new Table();
+        var row1 = new TableRow();
+        var cell1 = new TableCell();
+        cell1.Blocks.Add(Paragraph.Of("cell A"));
+        var cell2 = new TableCell();
+        cell2.Blocks.Add(Paragraph.Of("cell B"));
+        row1.Cells.Add(cell1);
+        row1.Cells.Add(cell2);
+        table.Rows.Add(row1);
+
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(table);
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        var texts = string.Join("\n", NonEmptyParagraphTexts(doc2));
+        Assert.Contains("[Table 1×2]", texts);
+        Assert.Contains("cell A", texts);
+        Assert.Contains("cell B", texts);
+        Assert.Contains("[/Table]", texts);
+    }
+
+    [Fact]
+    public void ShapeObject_Emits_Placeholder_With_Kind_And_Size()
+    {
+        var shape = new ShapeObject { Kind = ShapeKind.Ellipse, WidthMm = 40, HeightMm = 25 };
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(shape);
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        Assert.Contains("[Shape: Ellipse", string.Join("\n", NonEmptyParagraphTexts(doc2)));
+    }
+
+    [Fact]
+    public void TextBoxObject_Emits_Boundary_Markers_And_Inner_Content()
+    {
+        var tb = new TextBoxObject { WidthMm = 60, HeightMm = 30 };
+        tb.Content.Add(Paragraph.Of("inner text"));
+
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(tb);
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        var texts = string.Join("\n", NonEmptyParagraphTexts(doc2));
+        Assert.Contains("[TextBox", texts);
+        Assert.Contains("inner text", texts);
+        Assert.Contains("[/TextBox]", texts);
+    }
+
+    [Fact]
+    public void ThematicBreak_Emits_Horizontal_Rule_Like_Glyph()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(new ThematicBreakBlock());
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        var texts = string.Join("\n", NonEmptyParagraphTexts(doc2));
+        Assert.Contains("─", texts);
+    }
+
+    [Fact]
+    public void ContainerBlock_Children_Are_Flattened_Into_Body()
+    {
+        var container = new ContainerBlock();
+        container.Children.Add(Paragraph.Of("inside container"));
+
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(container);
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        Assert.Contains("inside container", NonEmptyParagraphTexts(doc2));
+    }
+
     [Fact]
     public void Mixed_Style_Runs_In_Single_Paragraph_RoundTrip()
     {
