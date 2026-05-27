@@ -92,6 +92,9 @@ public class DocBinaryReader
             var fmt = FormatStyles.Build(wd, table, fib);
             var doc = BuildDocument(text, fcs, fmt);
 
+            // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
+            ApplyHeaderFooter(wd, table, fib, doc);
+
             // 메타데이터 (best-effort)
             var summary = ReadAll(root, "SummaryInformation");
             if (summary is { Length: > 0 })
@@ -129,7 +132,13 @@ public class DocBinaryReader
         uint   LcbStshf,
         // Phase 3c — Section descriptor plex (FibRgFcLcb97 fcPlcfSed @ 0x00CA / lcbPlcfSed @ 0x00CE)
         uint   FcPlcfSed,
-        uint   LcbPlcfSed);
+        uint   LcbPlcfSed,
+        // Phase 3d — Header/footer subdocument: ccpFtn (footnote 길이) + ccpHdd (header/footer 길이)
+        //          + PlcfHdd (sub-story 경계 CP 들). 텍스트 영역은 main text 다음에 위치.
+        uint   CcpFtn,
+        uint   CcpHdd,
+        uint   FcPlcfHdd,
+        uint   LcbPlcfHdd);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -182,9 +191,18 @@ public class DocBinaryReader
         uint fcPlcfSed  = BitConverter.ToUInt32(wd, 0x00CA);
         uint lcbPlcfSed = BitConverter.ToUInt32(wd, 0x00CE);
 
+        // Phase 3d — Subdocument lengths + PlcfHdd:
+        //   ccpFtn @ 0x0050, ccpHdd @ 0x0054
+        //   fcPlcfHdd @ 0x00F2, lcbPlcfHdd @ 0x00F6
+        uint ccpFtn     = BitConverter.ToUInt32(wd, 0x0050);
+        uint ccpHdd     = BitConverter.ToUInt32(wd, 0x0054);
+        uint fcPlcfHdd  = BitConverter.ToUInt32(wd, 0x00F2);
+        uint lcbPlcfHdd = BitConverter.ToUInt32(wd, 0x00F6);
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
-                       fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed);
+                       fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
+                       ccpFtn, ccpHdd, fcPlcfHdd, lcbPlcfHdd);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -655,6 +673,88 @@ public class DocBinaryReader
     // PIDSI 코드: 0x02 Title · 0x03 Subject · 0x04 Author · 0x05 Keywords · 0x06 Comments ·
     //             0x08 LastSavedBy · 0x09 RevisionNumber · 0x0C CreateTime · 0x0D LastSavedTime ·
     //             0x12 AppName.
+    // Phase 3d — 헤더/푸터 sub-document 영역의 텍스트 추출 후 doc.Sections[0] 에 매핑.
+    // Word 의 본문 다음에 footnote, 그 다음 header/footer subdocument 가 위치.
+    // PlcfHdd 의 aCP[n+1] 이 영역 내 sub-story 들의 경계. 본 단계는 첫 두 sub-story 만
+    // Header.Center / Footer.Center 로 매핑 (홀/짝/첫페이지 구분은 후속 SEPX 단계).
+    private static void ApplyHeaderFooter(byte[] wd, byte[] table, Fib fib, PolyDonkyument doc)
+    {
+        if (fib.CcpHdd == 0 || fib.LcbPlcfHdd < 4 || doc.Sections.Count == 0) return;
+        int hddBase = (int)(fib.CcpText + fib.CcpFtn);
+        int hddEnd  = hddBase + (int)fib.CcpHdd;
+
+        int plcStart = (int)fib.FcPlcfHdd;
+        int plcLen   = (int)fib.LcbPlcfHdd;
+        if (plcStart < 0 || plcStart + plcLen > table.Length) return;
+        int n = plcLen / 4 - 1;
+        if (n <= 0) return;
+        var subCps = new int[n + 1];
+        for (int i = 0; i <= n; i++)
+            subCps[i] = BitConverter.ToInt32(table, plcStart + i * 4);
+
+        // 첫 sub-story → Header.Center, 두 번째 → Footer.Center (단순 매핑).
+        for (int i = 0; i < n && i < 2; i++)
+        {
+            int cpStart = hddBase + subCps[i];
+            int cpEnd   = hddBase + subCps[i + 1];
+            if (cpEnd <= cpStart || cpEnd > hddEnd) continue;
+            var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
+            var cleaned = CleanSubdocText(raw);
+            if (string.IsNullOrEmpty(cleaned)) continue;
+            var slot = i == 0 ? doc.Sections[0].Page.Header.Center : doc.Sections[0].Page.Footer.Center;
+            slot.Paragraphs.Add(Paragraph.Of(cleaned));
+        }
+    }
+
+    // 임의 CP 범위 [cpStart, cpEnd) 의 텍스트를 piece table 따라 추출. ExtractTextWithFcs 의 일반화.
+    private static string ExtractSubdocText(byte[] wd, byte[] table, Fib fib, int cpStart, int cpEnd)
+    {
+        if (fib.LcbClx == 0 || cpEnd <= cpStart) return string.Empty;
+        var pcds = ParsePieceTable(table, (int)fib.FcClx, (int)fib.LcbClx, out int[] cps);
+        var sb = new StringBuilder();
+        for (int i = 0; i < pcds.Count; i++)
+        {
+            int pcStart = cps[i];
+            int pcEnd   = cps[i + 1];
+            int effStart = Math.Max(pcStart, cpStart);
+            int effEnd   = Math.Min(pcEnd, cpEnd);
+            if (effEnd <= effStart) continue;
+            int len = effEnd - effStart;
+            int offsetInPiece = effStart - pcStart;
+
+            uint fcRaw = pcds[i].Fc;
+            bool compressed = (fcRaw & 0x40000000u) != 0;
+            int  fc   = (int)(fcRaw & 0x3FFFFFFFu);
+            if (compressed)
+            {
+                fc /= 2;
+                int absFc = fc + offsetInPiece;
+                if (absFc < 0 || absFc + len > wd.Length) continue;
+                sb.Append(DecodeAnsi(wd, absFc, len));
+            }
+            else
+            {
+                int absFc = fc + offsetInPiece * 2;
+                int byteLen = len * 2;
+                if (absFc < 0 || absFc + byteLen > wd.Length) continue;
+                sb.Append(Encoding.Unicode.GetString(wd, absFc, byteLen));
+            }
+        }
+        return sb.ToString();
+    }
+
+    // 헤더/푸터 sub-story 의 raw 텍스트에서 \r → \n, 그 외 제어 문자 (필드/cell mark 등) 폐기.
+    private static string CleanSubdocText(string raw)
+    {
+        var sb = new StringBuilder(raw.Length);
+        foreach (char c in raw)
+        {
+            if (c == '\r' || c == '\f') sb.Append('\n');
+            else if (c >= 0x20 || c == '\t' || c == '\n') sb.Append(c);
+        }
+        return sb.ToString().TrimEnd('\n', '\r', '\t', ' ');
+    }
+
     // Variant 타입: VT_LPSTR (0x001E, CP1252) · VT_LPWSTR (0x001F, UTF-16LE) · VT_FILETIME (0x0040)
     // 만 지원 — 그 외 PID/Variant 는 무시 (메타데이터는 본문 무효화 사유가 되지 않음).
     private static void ApplySummaryInformation(byte[] data, PolyDonkyument doc)
