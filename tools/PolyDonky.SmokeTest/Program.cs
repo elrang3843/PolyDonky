@@ -81,6 +81,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3j-2 주석 메타 (Author + Da
 harness.Run("DOC (Word 97-2003 binary) — Phase 3m 헤더/푸터 Run-rich 통합", DocBinaryPhase3mHeaderFooterRichRuns);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3m-2 footnote/endnote/comment Run-rich", DocBinaryPhase3m2SubdocRichRuns);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3l 임베드 OLE (ObjectPool)", DocBinaryPhase3lObjectPool);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3l-2 본문 0x01 + sprmCFOle2 → OLE placeholder", DocBinaryPhase3l2OlePicMarker);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3l-3 Ole10Native wrapper 풀기", DocBinaryPhase3l3Ole10NativeUnwrap);
 
 return harness.Finish();
 
@@ -6781,6 +6783,186 @@ static void DocBinaryPhase3lObjectPool()
             "primary content = AA BB CC DD");
         SmokeHarness.True(ole.Streams.ContainsKey("CompObj"),        "Streams contains CompObj");
         SmokeHarness.True(ole.Streams.ContainsKey("EquationNative"), "Streams contains EquationNative");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3l-2 — 본문 0x01 + sprmCFOle2 → ImageBlock 으로 OLE placeholder 삽입,
+//   OleEmbeds 의 1:1 매칭 entry 의 ClassName + PrimaryContent 채움.
+//   본문 "X\x01Y\r" + ObjectPool/_1/{CompObj=Excel.Sheet.8, Workbook=dummy}.
+static void DocBinaryPhase3l2OlePicMarker()
+{
+    const string text = "XYY\r";  // 0x01 박은 후 4 chars 의 placeholder
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락.
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 3 runs:
+    //   run 0: [0x200, 0x202) "X" — 빈 CHPX
+    //   run 1: [0x202, 0x204) "\x01" — sprmCFOle2 (0x080A) op=1
+    //   run 2: [0x204, 0x20A) "YY\r" — 빈 CHPX
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x202);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x204);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x20A);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    // ChpxInFkp[1]: cb=3, sprmCFOle2(2)=0x080A + op(1)=1
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x080A); c += 2;
+    wd[c++] = 1;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream.
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    // CompObj for "Excel.Sheet.8" (12 chars + null = 13).
+    var compObj = new byte[32 + 13];
+    BitConverter.TryWriteBytes(compObj.AsSpan(28), (int)13);
+    var classBytes = Encoding.GetEncoding(1252).GetBytes("Excel.Sheet.8");
+    Buffer.BlockCopy(classBytes, 0, compObj, 32, classBytes.Length);
+    byte[] workbook = { 0xDE, 0xAD, 0xBE, 0xEF };
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            var pool = root.CreateStorage("ObjectPool");
+            var obj  = pool.CreateStorage("_1");
+            using (var s = obj.CreateStream("CompObj"))  s.Write(compObj);
+            using (var s = obj.CreateStream("Workbook")) s.Write(workbook);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        // 본문 paragraph 안에 OLE ImageBlock 1 개 + Paragraph "XYY" (또는 비슷).
+        var blocks = doc.Sections[0].Blocks;
+        var img = blocks.OfType<ImageBlock>().FirstOrDefault();
+        SmokeHarness.True(img is not null, "ImageBlock 존재");
+        SmokeHarness.Equal("application/x-ole-embed", img!.MediaType, "MediaType = OLE embed");
+        SmokeHarness.Equal("[OLE Excel.Sheet.8]",     img.Description, "Description = OLE className");
+        SmokeHarness.True(img.Data.SequenceEqual(workbook),
+            $"Data == workbook (got {BitConverter.ToString(img.Data)})");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3l-3 — Ole10Native wrapper unwrap. ObjectPool/_1/Ole10Native 의 wrapper 를 풀어 inner
+// native data 와 원본 파일 이름을 추출.
+static void DocBinaryPhase3l3Ole10NativeUnwrap()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+
+    // Ole10Native wrapper 합성:
+    //   [0..3]   TotalSize (4 byte, 임의)
+    //   [4..5]   flag = 0x0002
+    //   다음     ANSI cstring "Package\0"
+    //   다음     ANSI cstring "test.txt\0"
+    //   다음     ANSI cstring "C:\\path\0"
+    //   다음 8   reserved
+    //   다음 4   tempPathLen = 0
+    //   다음 4   nativeDataLen = 11
+    //   다음 11  "Hello World"
+    var enc = Encoding.GetEncoding(1252);
+    byte[] cls    = enc.GetBytes("Package\0");
+    byte[] fn     = enc.GetBytes("test.txt\0");
+    byte[] src    = enc.GetBytes("C:\\path\0");
+    byte[] native = enc.GetBytes("Hello World");
+    int total = 4 + 2 + cls.Length + fn.Length + src.Length + 8 + 4 + 4 + native.Length;
+    var wrap = new byte[total];
+    int pos = 0;
+    BitConverter.TryWriteBytes(wrap.AsSpan(pos), (uint)(total - 4));  pos += 4;
+    BitConverter.TryWriteBytes(wrap.AsSpan(pos), (ushort)0x0002);     pos += 2;
+    Buffer.BlockCopy(cls,    0, wrap, pos, cls.Length);    pos += cls.Length;
+    Buffer.BlockCopy(fn,     0, wrap, pos, fn.Length);     pos += fn.Length;
+    Buffer.BlockCopy(src,    0, wrap, pos, src.Length);    pos += src.Length;
+    pos += 8;  // reserved zeros
+    BitConverter.TryWriteBytes(wrap.AsSpan(pos), (uint)0); pos += 4;  // tempPathLen
+    BitConverter.TryWriteBytes(wrap.AsSpan(pos), (uint)native.Length); pos += 4;
+    Buffer.BlockCopy(native, 0, wrap, pos, native.Length);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            var pool = root.CreateStorage("ObjectPool");
+            var obj  = pool.CreateStorage("_1");
+            using (var s = obj.CreateStream("Ole10Native")) s.Write(wrap);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.Equal(1, reader.OleEmbeds.Count, "OleEmbeds.Count");
+        var ole = reader.OleEmbeds[0];
+        SmokeHarness.Equal("Ole10Native", ole.PrimaryStreamName, "PrimaryStreamName = Ole10Native");
+        SmokeHarness.Equal("test.txt",    ole.OriginalFileName,  "OriginalFileName = test.txt");
+        SmokeHarness.True(ole.PrimaryContent is not null && ole.PrimaryContent.SequenceEqual(native),
+            $"PrimaryContent == 'Hello World' bytes (got {(ole.PrimaryContent is null ? "null" : System.Text.Encoding.ASCII.GetString(ole.PrimaryContent))})");
+        // Streams 사전은 원본 wrapper 보존 (round-trip 위해).
+        SmokeHarness.True(ole.Streams.TryGetValue("Ole10Native", out var rawWrap) && rawWrap.SequenceEqual(wrap),
+            "Streams['Ole10Native'] 는 원본 wrapper");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
