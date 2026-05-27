@@ -275,4 +275,55 @@ public class DocumentModelTests
         Assert.Equal(1,  nestedImg.AnchorPageIndex);
         Assert.Equal(23, nestedImg.OverlayYMm);   // 320 - 297 = 23
     }
+
+    [Fact]
+    public void FidelityCapsules_DefaultsToEmpty()
+    {
+        var doc = PolyDonkyument.Empty();
+        Assert.Empty(doc.FidelityCapsules);
+        Assert.False(doc.HasMacroCapsule);
+        Assert.False(doc.HasDigitalSignatureCapsule);
+    }
+
+    [Fact]
+    public void HasMacroCapsule_DetectsKnownPrefixes()
+    {
+        var doc = PolyDonkyument.Empty();
+
+        doc.FidelityCapsules["msdoc/macros/Macros/PROJECT"] = new byte[] { 1 };
+        Assert.True(doc.HasMacroCapsule);
+
+        doc.FidelityCapsules.Clear();
+        doc.FidelityCapsules["ooxml/word/vbaProject.bin"] = new byte[] { 1 };
+        Assert.True(doc.HasMacroCapsule);
+
+        doc.FidelityCapsules.Clear();
+        doc.FidelityCapsules["hwpx/Scripts/macro.xml"] = new byte[] { 1 };
+        Assert.True(doc.HasMacroCapsule);
+
+        doc.FidelityCapsules.Clear();
+        doc.FidelityCapsules["hancom/Scripts/Module1"] = new byte[] { 1 };
+        Assert.True(doc.HasMacroCapsule);
+
+        doc.FidelityCapsules.Clear();
+        doc.FidelityCapsules["ooxml/customXml/item1.xml"] = new byte[] { 1 };
+        Assert.False(doc.HasMacroCapsule);
+    }
+
+    [Fact]
+    public void HasDigitalSignatureCapsule_DetectsKnownPrefixes()
+    {
+        var doc = PolyDonkyument.Empty();
+
+        doc.FidelityCapsules["msdoc/signatures/_SignaturesV1/origSigs"] = new byte[] { 1 };
+        Assert.True(doc.HasDigitalSignatureCapsule);
+
+        doc.FidelityCapsules.Clear();
+        doc.FidelityCapsules["ooxml/_xmlsignatures/sig1.xml"] = new byte[] { 1 };
+        Assert.True(doc.HasDigitalSignatureCapsule);
+
+        doc.FidelityCapsules.Clear();
+        doc.FidelityCapsules["ooxml/word/document.xml"] = new byte[] { 1 };
+        Assert.False(doc.HasDigitalSignatureCapsule);
+    }
 }

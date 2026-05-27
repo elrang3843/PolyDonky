@@ -122,6 +122,18 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _currentFilePath = string.Empty;
 
+    /// <summary>현재 문서에 매크로/스크립트가 보존돼 있으면 true — 상태바 보안 경고용.</summary>
+    [ObservableProperty]
+    private bool _hasMacroCapsule;
+
+    /// <summary>현재 문서에 디지털 서명이 보존돼 있으면 true — 상태바 표시용.</summary>
+    [ObservableProperty]
+    private bool _hasDigitalSignatureCapsule;
+
+    /// <summary>현재 문서의 fidelity capsule 항목 수 (round-trip 보존 데이터). 0 = 없음.</summary>
+    [ObservableProperty]
+    private int _fidelityCapsuleCount;
+
     [ObservableProperty]
     private string _statusMessage = SR.StatusReady;
 
@@ -220,6 +232,10 @@ public partial class MainViewModel : ObservableObject
         DocumentTitle = string.IsNullOrEmpty(path) ? SR.DlgNewDocTitle : Path.GetFileName(path);
         HasUnsavedChanges = false;
         UndoRedo.Clear(); // 새 문서·로드된 문서는 이전 편집 이력과 무관
+        // FidelityCapsule 상태 지표 갱신 — 매크로/서명/기타 보존 콘텐츠 경고 UI 표시.
+        HasMacroCapsule            = document.HasMacroCapsule;
+        HasDigitalSignatureCapsule = document.HasDigitalSignatureCapsule;
+        FidelityCapsuleCount       = document.FidelityCapsules.Count;
     }
 
     [RelayCommand]

@@ -48,6 +48,8 @@
                 <Separator />
                 <MenuItem Header="{Binding MenuFilePreviewPrint, Source={x:Static svc:LocalizedStrings.Instance}}" Click="OnPreviewClick" InputGestureText="Ctrl+P" />
                 <Separator />
+                <MenuItem Header="문서 정보 / 보존 데이터..." Click="OnShowDocumentInfoClick" />
+                <Separator />
                 <MenuItem Header="{Binding MenuFileClose, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding CloseCommand}" />
                 <MenuItem Header="{Binding MenuFileExit, Source={x:Static svc:LocalizedStrings.Instance}}" Command="{Binding ExitCommand}" InputGestureText="Alt+F4" />
             </MenuItem>
@@ -476,6 +478,28 @@
             </StatusBarItem>
             <Separator DockPanel.Dock="Right"
                        Visibility="{Binding IsWriteProtected, Converter={StaticResource BoolToVis}}" />
+
+            <!-- 매크로 보존 경고 — HasMacroCapsule true 일 때만. 보안 경고 색상. -->
+            <StatusBarItem DockPanel.Dock="Right"
+                           Visibility="{Binding HasMacroCapsule, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="⚠ 매크로 포함"
+                           Foreground="#C0392B"
+                           FontWeight="SemiBold"
+                           ToolTip="이 문서에 매크로/스크립트가 포함되어 있습니다. 신뢰할 수 있는 출처가 아니면 실행하지 마세요. (PolyDonky 는 매크로를 실행하지 않습니다.)" />
+            </StatusBarItem>
+            <Separator DockPanel.Dock="Right"
+                       Visibility="{Binding HasMacroCapsule, Converter={StaticResource BoolToVis}}" />
+
+            <!-- 디지털 서명 표시 — HasDigitalSignatureCapsule true 일 때만. -->
+            <StatusBarItem DockPanel.Dock="Right"
+                           Visibility="{Binding HasDigitalSignatureCapsule, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="🔏 서명됨"
+                           Foreground="#16A085"
+                           FontWeight="SemiBold"
+                           ToolTip="이 문서에는 원본 디지털 서명이 보존되어 있습니다. 편집 시 서명의 효력은 깨질 수 있으므로 보존 증적으로만 사용됩니다." />
+            </StatusBarItem>
+            <Separator DockPanel.Dock="Right"
+                       Visibility="{Binding HasDigitalSignatureCapsule, Converter={StaticResource BoolToVis}}" />
 
             <!-- 진행 막대 — 파일 열기/저장 등 백그라운드 I/O 중에만 보임. -->
             <StatusBarItem DockPanel.Dock="Right"
