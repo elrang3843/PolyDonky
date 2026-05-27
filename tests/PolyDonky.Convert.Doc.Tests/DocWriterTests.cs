@@ -233,4 +233,234 @@ public class DocWriterTests
         Assert.True(e > 0);
         Assert.True(s < h && h < e);
     }
+
+    // ── 변경추적 ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Inserted_Run_Wraps_In_Revised_RevAuth_Group()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run
+        {
+            Text                = "added",
+            IsInsertedRevision  = true,
+            RevisionAuthor      = "Alice",
+        });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"{\*\revtbl", rtf);
+        Assert.Contains("{Alice;}",     rtf);
+        Assert.Contains(@"\revised\revauth1", rtf);
+        Assert.Contains("added",        rtf);
+    }
+
+    [Fact]
+    public void Deleted_Run_Wraps_In_Deleted_RevAuthDel_Group()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run
+        {
+            Text               = "gone",
+            IsDeletedRevision  = true,
+            RevisionAuthor     = "Bob",
+        });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\deleted\revauthdel1", rtf);
+        Assert.Contains("{Bob;}", rtf);
+    }
+
+    [Fact]
+    public void Revision_Without_Author_Uses_Index_0_Unknown()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "x", IsInsertedRevision = true });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\revised\revauth0", rtf);
+        // 작성자가 Unknown 한 명뿐이면 revtbl 자체를 생략
+        Assert.DoesNotContain(@"\*\revtbl", rtf);
+    }
+
+    [Fact]
+    public void Revision_With_Date_Emits_RevDttm()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run
+        {
+            Text               = "x",
+            IsInsertedRevision = true,
+            RevisionAuthor     = "Alice",
+            RevisionDate       = new DateTimeOffset(2026, 5, 27, 10, 30, 0, TimeSpan.Zero),
+        });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Matches(@"\\revised\\revauth1\\revdttm-?\d+", rtf);
+    }
+
+    [Fact]
+    public void Revision_Author_Table_Indexes_Are_Stable()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "a", IsInsertedRevision = true, RevisionAuthor = "Alice" });
+        p.Runs.Add(new Run { Text = "b", IsInsertedRevision = true, RevisionAuthor = "Bob" });
+        p.Runs.Add(new Run { Text = "c", IsInsertedRevision = true, RevisionAuthor = "Alice" });
+        var rtf = WriteRtf(DocWith(p));
+
+        // Alice = 1, Bob = 2 (Unknown = 0)
+        Assert.Contains("{Unknown;}{Alice;}{Bob;}", rtf);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(rtf, @"\\revauth1\b").Count);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(rtf, @"\\revauth2\b"));
+    }
+
+    [Fact]
+    public void Paragraph_Inserted_Revision_Emits_Revised_Before_Par()
+    {
+        var p = new Paragraph { IsInsertedRevision = true };
+        p.AddText("new line");
+        var rtf = WriteRtf(DocWith(p));
+
+        int revIdx = rtf.LastIndexOf(@"\revised\revauth0", StringComparison.Ordinal);
+        int parIdx = rtf.IndexOf(@"\par", revIdx, StringComparison.Ordinal);
+        Assert.True(revIdx > 0);
+        Assert.True(parIdx > revIdx);
+    }
+
+    [Fact]
+    public void Paragraph_Deleted_Revision_Emits_Deleted_Before_Par()
+    {
+        var p = new Paragraph { IsDeletedRevision = true };
+        p.AddText("gone");
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\deleted\revauthdel0", rtf);
+    }
+
+    // ── 각주 / 미주 ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Footnote_Ref_Emits_Inline_Footnote_With_Body()
+    {
+        var doc = new PolyDonkyument();
+        doc.Sections.Add(new Section());
+        var p = new Paragraph();
+        p.AddText("Body text");
+        p.Runs.Add(new Run { FootnoteId = "fn1" });
+        doc.Sections[0].Blocks.Add(p);
+
+        var note = new FootnoteEntry { Id = "fn1" };
+        note.Blocks.Add(Paragraph.Of("This is the footnote."));
+        doc.Footnotes.Add(note);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"{\super\chftn", rtf);
+        Assert.Contains(@"{\*\footnote", rtf);
+        Assert.Contains("This is the footnote.", rtf);
+        Assert.DoesNotContain(@"\ftnalt", rtf);  // 각주이므로 미주 marker 없어야 함
+    }
+
+    [Fact]
+    public void Endnote_Ref_Emits_Footnote_With_FtnAlt_Marker()
+    {
+        var doc = new PolyDonkyument();
+        doc.Sections.Add(new Section());
+        var p = new Paragraph();
+        p.AddText("Body");
+        p.Runs.Add(new Run { EndnoteId = "en1" });
+        doc.Sections[0].Blocks.Add(p);
+
+        var note = new FootnoteEntry { Id = "en1" };
+        note.Blocks.Add(Paragraph.Of("This is an endnote."));
+        doc.Endnotes.Add(note);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"\ftnalt", rtf);
+        Assert.Contains("This is an endnote.", rtf);
+    }
+
+    [Fact]
+    public void Dangling_Footnote_Ref_Still_Emits_Marker()
+    {
+        var p = new Paragraph();
+        p.AddText("x");
+        p.Runs.Add(new Run { FootnoteId = "fnX" });  // 본문 없음
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\chftn", rtf);
+    }
+
+    [Fact]
+    public void Footnote_Body_Does_Not_Recurse_Into_Its_Own_Footnote_Ref()
+    {
+        var doc = new PolyDonkyument();
+        doc.Sections.Add(new Section());
+        var p = new Paragraph();
+        p.AddText("x");
+        p.Runs.Add(new Run { FootnoteId = "fn1" });
+        doc.Sections[0].Blocks.Add(p);
+
+        // 각주 본문 안에 또 다른 각주 ref — 무한 재귀 방지 확인
+        var note = new FootnoteEntry { Id = "fn1" };
+        var noteBody = new Paragraph();
+        noteBody.AddText("inner ");
+        noteBody.Runs.Add(new Run { FootnoteId = "fn2" });
+        note.Blocks.Add(noteBody);
+        doc.Footnotes.Add(note);
+
+        var rtf = WriteRtf(doc);  // 무한 재귀가 있으면 StackOverflow 로 떨어짐
+        Assert.Contains("inner", rtf);
+    }
+
+    // ── 주석 (annotations) ───────────────────────────────────────────────────
+
+    [Fact]
+    public void Comment_Ref_Emits_Atnauthor_And_Annotation()
+    {
+        var doc = new PolyDonkyument();
+        doc.Sections.Add(new Section());
+        var p = new Paragraph();
+        p.AddText("Body ");
+        p.Runs.Add(new Run { CommentId = "cmt1" });
+        doc.Sections[0].Blocks.Add(p);
+
+        var cm = new CommentEntry
+        {
+            Id     = "cmt1",
+            Author = "Charlie",
+            Date   = new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero),
+        };
+        cm.Blocks.Add(Paragraph.Of("Please review."));
+        doc.Comments.Add(cm);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"{\*\atnauthor Charlie}", rtf);
+        Assert.Contains(@"{\*\atnid Charlie}",     rtf);
+        Assert.Matches(@"\\\*\\atndate -?\d+",     rtf);
+        Assert.Contains(@"\chatn",                 rtf);
+        Assert.Contains(@"{\*\annotation",         rtf);
+        Assert.Contains("Please review.",          rtf);
+    }
+
+    [Fact]
+    public void Comment_Without_Author_Skips_Atnauthor_Headers()
+    {
+        var doc = new PolyDonkyument();
+        doc.Sections.Add(new Section());
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "x", CommentId = "c1" });
+        doc.Sections[0].Blocks.Add(p);
+
+        var cm = new CommentEntry { Id = "c1" };
+        cm.Blocks.Add(Paragraph.Of("anon"));
+        doc.Comments.Add(cm);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.DoesNotContain(@"\atnauthor", rtf);
+        Assert.Contains(@"\chatn", rtf);
+        Assert.Contains("anon",    rtf);
+    }
 }

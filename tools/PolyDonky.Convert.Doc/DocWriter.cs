@@ -11,14 +11,23 @@ namespace PolyDonky.Convert.Doc;
 /// 지원: 글자 서식·단락 서식·위첨자/아래첨자·들여쓰기·리스트·이미지·표·메타데이터·
 ///       도형(\shp, 위치·크기·종류·색상 아웃라인)·OLE 개체(OpaqueBlock 재출력 또는 플레이스홀더)·
 ///       하이퍼링크(\field HYPERLINK)·자동 필드(PAGE/NUMPAGES/DATE/TIME/AUTHOR/TITLE 등)·
-///       책갈피(\*\bkmkstart / \*\bkmkend).
+///       책갈피(\*\bkmkstart / \*\bkmkend)·변경추적(\revised / \deleted + \revtbl)·
+///       각주·미주(\chftn / \footnote [\ftnalt])·주석(\chatn / \annotation + \atnauthor / \atndate).
 /// v1.0.0 이후 계획: \shp 전체 속성(그림자·3D·꼭짓점 경로 등) + OLE 데이터 완전 직렬화.
 /// </summary>
 public class DocWriter
 {
     // ── 테이블 ──────────────────────────────────────────────────────────────────
-    private readonly List<string>   _fonts  = new();
-    private readonly List<RtfColor> _colors = new();
+    private readonly List<string>   _fonts      = new();
+    private readonly List<RtfColor> _colors     = new();
+    /// <summary>변경추적 작성자 테이블 — index 0 = "Unknown".</summary>
+    private readonly List<string>   _revAuthors = new();
+
+    /// <summary>현재 Write 중인 PolyDonkyument — 각주/미주/주석 본문 lookup 에 사용.</summary>
+    private PolyDonkyument? _doc;
+
+    /// <summary>각주/주석 본문을 emit 중인지 — 중첩 footnote ref 무한 재귀 방지.</summary>
+    private bool _inFootnoteOrComment;
 
     private const string DefaultFont = "Arial";
     private const double MmToTwips   = 56.692;  // 1mm ≈ 56.692 twips (1440/25.4)
@@ -28,21 +37,30 @@ public class DocWriter
 
     public void Write(PolyDonkyument doc, Stream output)
     {
+        _doc = doc;
         _fonts.Clear();
         _colors.Clear();
+        _revAuthors.Clear();
         _fonts.Add(DefaultFont);
         _colors.Add(new RtfColor(0, 0, 0));   // 색상 0: 기본 검정
+        _revAuthors.Add("Unknown");           // 작성자 0: Unknown
 
-        // 1패스: 폰트/색상 수집
+        // 1패스: 폰트/색상/작성자 수집
         foreach (var sec in doc.Sections)
             foreach (var blk in sec.Blocks)
                 ScanBlock(blk);
+        // 각주/미주/주석 본문 안의 폰트/색상/작성자도 수집
+        foreach (var fn in doc.Footnotes.Concat(doc.Endnotes))
+            foreach (var b in fn.Blocks) ScanBlock(b);
+        foreach (var cm in doc.Comments)
+            foreach (var b in cm.Blocks) ScanBlock(b);
 
         // 2패스: RTF 생성
         var sb = new StringBuilder(4096);
         sb.AppendLine(@"{\rtf1\ansi\ansicpg1252\deff0");
         WriteFontTable(sb);
         WriteColorTable(sb);
+        WriteRevAuthorTable(sb);
         sb.AppendLine(@"\viewkind4\uc1");
 
         WriteInfo(doc.Metadata, sb);
@@ -64,7 +82,12 @@ public class DocWriter
         switch (block)
         {
             case Paragraph p:
-                foreach (var r in p.Runs) ScanRunStyle(r.Style, p.Style);
+                foreach (var r in p.Runs)
+                {
+                    ScanRunStyle(r.Style, p.Style);
+                    if (!string.IsNullOrEmpty(r.RevisionAuthor))
+                        RegisterRevAuthor(r.RevisionAuthor!);
+                }
                 break;
             case Table t:
                 foreach (var row in t.Rows)
@@ -81,6 +104,14 @@ public class DocWriter
                 foreach (var b in c.Children) ScanBlock(b);
                 break;
         }
+    }
+
+    private int RegisterRevAuthor(string name)
+    {
+        int i = _revAuthors.IndexOf(name);
+        if (i >= 0) return i;
+        _revAuthors.Add(name);
+        return _revAuthors.Count - 1;
     }
 
     private void ScanRunStyle(RunStyle? rs, ParagraphStyle? ps)
@@ -127,6 +158,28 @@ public class DocWriter
         foreach (var c in _colors)
             sb.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
         sb.AppendLine("}");
+    }
+
+    /// <summary>변경추적 작성자 테이블. <c>\revauthN</c> / <c>\revauthdelN</c> 가 인덱스로 참조.</summary>
+    private void WriteRevAuthorTable(StringBuilder sb)
+    {
+        if (_revAuthors.Count <= 1) return;  // Unknown 한 명뿐이면 생략
+        sb.Append(@"{\*\revtbl");
+        foreach (var name in _revAuthors)
+            sb.Append('{').Append(EscapeRtf(name)).Append(";}");
+        sb.AppendLine("}");
+    }
+
+    /// <summary>DateTimeOffset → Word DTTM 4-byte packed (\revdttm / \atndate 가 사용).</summary>
+    private static int PackDttm(DateTimeOffset d)
+    {
+        int min  = d.Minute & 0x3F;
+        int hour = d.Hour   & 0x1F;
+        int day  = d.Day    & 0x1F;
+        int mon  = d.Month  & 0x0F;
+        int year = (d.Year - 1900) & 0x1FF;
+        int wd   = (int)d.DayOfWeek & 0x07;
+        return min | (hour << 6) | (day << 11) | (mon << 16) | (year << 20) | (wd << 29);
     }
 
     private static void WriteInfo(DocumentMetadata meta, StringBuilder sb)
@@ -202,6 +255,12 @@ public class DocWriter
         foreach (var run in para.Runs)
             WriteRun(run, ps, sb);
 
+        // 단락 마크(\r) 자체의 변경추적 — Phase 3h-3 와 짝.
+        if (para.IsInsertedRevision)
+            sb.Append(@"\revised\revauth0");
+        else if (para.IsDeletedRevision)
+            sb.Append(@"\deleted\revauthdel0");
+
         sb.Append(inTable ? @"\cell" : @"\par");
         sb.AppendLine();
     }
@@ -218,25 +277,113 @@ public class DocWriter
 
     private void WriteRun(Run run, ParagraphStyle ps, StringBuilder sb)
     {
-        bool hasText      = !string.IsNullOrEmpty(run.Text);
-        bool hasBkmkStart = !string.IsNullOrEmpty(run.BookmarkStart);
-        bool hasBkmkEnd   = !string.IsNullOrEmpty(run.BookmarkEnd);
-        bool isHyperlink  = !string.IsNullOrEmpty(run.Url);
-        var  fieldType    = run.Field;
+        bool hasText       = !string.IsNullOrEmpty(run.Text);
+        bool hasBkmkStart  = !string.IsNullOrEmpty(run.BookmarkStart);
+        bool hasBkmkEnd    = !string.IsNullOrEmpty(run.BookmarkEnd);
+        bool isHyperlink   = !string.IsNullOrEmpty(run.Url);
+        var  fieldType     = run.Field;
+        bool hasFootnote   = !string.IsNullOrEmpty(run.FootnoteId);
+        bool hasEndnote    = !string.IsNullOrEmpty(run.EndnoteId);
+        bool hasComment    = !string.IsNullOrEmpty(run.CommentId);
+        bool isRevised     = run.IsInsertedRevision || run.IsDeletedRevision;
 
-        if (!hasText && !hasBkmkStart && !hasBkmkEnd && !isHyperlink && fieldType is null)
+        if (!hasText && !hasBkmkStart && !hasBkmkEnd && !isHyperlink && fieldType is null
+            && !hasFootnote && !hasEndnote && !hasComment)
             return;
 
         if (hasBkmkStart)
             sb.Append($@"{{\*\bkmkstart {SanitizeBookmarkName(run.BookmarkStart!)}}}");
 
-        if (isHyperlink || fieldType is not null)
+        // 변경추적 wrap — { \revised\revauthN [\revdttmDTTM] <body> } 또는 { \deleted... }
+        bool openedRevGroup = false;
+        if (isRevised)
+        {
+            int authIdx = string.IsNullOrEmpty(run.RevisionAuthor)
+                ? 0 : RegisterRevAuthor(run.RevisionAuthor!);
+            string revToken  = run.IsInsertedRevision ? "revised"   : "deleted";
+            string authToken = run.IsInsertedRevision ? "revauth"   : "revauthdel";
+            sb.Append($@"{{\{revToken}\{authToken}{authIdx}");
+            if (run.RevisionDate is { } dt)
+            {
+                string dttmToken = run.IsInsertedRevision ? "revdttm" : "revdttmdel";
+                sb.Append($@"\{dttmToken}{PackDttm(dt)}");
+            }
+            sb.Append(' ');
+            openedRevGroup = true;
+        }
+
+        if (hasFootnote && !_inFootnoteOrComment)
+            WriteFootnoteRef(run.FootnoteId!, isEndnote: false, sb);
+        else if (hasEndnote && !_inFootnoteOrComment)
+            WriteFootnoteRef(run.EndnoteId!, isEndnote: true, sb);
+        else if (hasComment && !_inFootnoteOrComment)
+            WriteCommentRef(run.CommentId!, sb);
+        else if (isHyperlink || fieldType is not null)
             WriteFieldRun(run, ps, sb, isHyperlink, fieldType);
         else if (hasText)
             WriteStyledRunBody(run, ps, sb);
 
+        if (openedRevGroup) sb.Append('}');
+
         if (hasBkmkEnd)
             sb.Append($@"{{\*\bkmkend {SanitizeBookmarkName(run.BookmarkEnd!)}}}");
+    }
+
+    /// <summary>각주/미주 참조 marker — `{\super\chftn {\*\footnote [\ftnalt] \chftn ...body... }}`.
+    /// 본문 lookup 은 <see cref="_doc"/> 의 Footnotes/Endnotes 에서 Id 매칭. dangling ref 면 marker 만 emit.</summary>
+    private void WriteFootnoteRef(string id, bool isEndnote, StringBuilder sb)
+    {
+        var list = isEndnote ? _doc?.Endnotes : _doc?.Footnotes;
+        var entry = list?.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.Ordinal));
+
+        sb.Append(@"{\super\chftn ");
+        sb.Append(@"{\*\footnote ");
+        if (isEndnote) sb.Append(@"\ftnalt ");
+        sb.Append(@"\chftn ");
+
+        if (entry is not null)
+        {
+            _inFootnoteOrComment = true;
+            try
+            {
+                foreach (var b in entry.Blocks) WriteBlock(b, sb, inTable: false);
+            }
+            finally { _inFootnoteOrComment = false; }
+        }
+
+        sb.Append("}}");
+        sb.Append(' ');
+    }
+
+    /// <summary>주석(annotation) 참조 marker — `{\*\atnid …}{\*\atnauthor …}\chatn{\*\annotation …}`.</summary>
+    private void WriteCommentRef(string id, StringBuilder sb)
+    {
+        var entry = _doc?.Comments.FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.Ordinal));
+
+        if (entry?.Author is { Length: > 0 } author)
+        {
+            // \*\atnid 는 짧은 이니셜용이지만 풀네임으로 채워도 Word 가 허용
+            sb.Append($@"{{\*\atnid {EscapeRtf(author)}}}");
+            sb.Append($@"{{\*\atnauthor {EscapeRtf(author)}}}");
+        }
+        if (entry?.Date is { } dt)
+            sb.Append($@"{{\*\atndate {PackDttm(dt)}}}");
+
+        sb.Append(@"\chatn ");
+        sb.Append(@"{\*\annotation \chatn ");
+
+        if (entry is not null)
+        {
+            _inFootnoteOrComment = true;
+            try
+            {
+                foreach (var b in entry.Blocks) WriteBlock(b, sb, inTable: false);
+            }
+            finally { _inFootnoteOrComment = false; }
+        }
+
+        sb.Append('}');
+        sb.Append(' ');
     }
 
     private void WriteFieldRun(Run run, ParagraphStyle ps, StringBuilder sb, bool isHyperlink, FieldType? fieldType)
