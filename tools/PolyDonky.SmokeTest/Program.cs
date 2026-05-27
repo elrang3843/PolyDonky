@@ -79,6 +79,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3i-2 책갈피 Run marker 자�
 harness.Run("DOC (Word 97-2003 binary) — Phase 3j 주석 (annotations)", DocBinaryPhase3jComments);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3j-2 주석 메타 (Author + Date)", DocBinaryPhase3j2CommentMetadata);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3m 헤더/푸터 Run-rich 통합", DocBinaryPhase3mHeaderFooterRichRuns);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3m-2 footnote/endnote/comment Run-rich", DocBinaryPhase3m2SubdocRichRuns);
 
 return harness.Finish();
 
@@ -6609,6 +6610,127 @@ static void DocBinaryPhase3mHeaderFooterRichRuns()
         SmokeHarness.True(linkRun is not null, "Url Run 존재");
         SmokeHarness.Equal("here", linkRun!.Text, "Url Run.Text = here");
         SmokeHarness.Equal("https://h.com", linkRun.Url, "Url 값");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3m-2 — footnote / endnote / comment sub-doc 도 BuildSubdocParagraphs 로 Run-rich 처리.
+//   footnote 본문에 HYPERLINK 필드를 박아 FootnoteEntry.Blocks[0].Runs 에 Url 이 보존되는지 검증.
+//   main "Body\r" (5) + footnote " \r" + "fn:<HYPERLINK https://f.com>here</>\r" (38) → total 43.
+static void DocBinaryPhase3m2SubdocRichRuns()
+{
+    const string mainText = "Body\r";
+    const string instr = "HYPERLINK \"https://f.com\"";
+    string ftnPart = "fn:" + "" + instr + "" + "here" + "" + "\r";
+    SmokeHarness.Equal(36, ftnPart.Length, "ftnPart 길이");
+    string ftnText = " \r" + ftnPart;
+    SmokeHarness.Equal(38, ftnText.Length, "ftnText 길이");
+
+    int ccpMain = mainText.Length;
+    int ccpFtn  = ftnText.Length;
+    int totalCcp = ccpMain + ccpFtn;
+    string fullText = mainText + ftnText;
+    var textBytes = Encoding.Unicode.GetBytes(fullText);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // 3 paragraphs: main(ends CP 5), separator(ends CP 7), footnote(ends CP 43).
+    int cpara = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0),  (int)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4),  (int)(fcText + ccpMain * 2));
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 8),  (int)(fcText + (ccpMain + 2) * 2));
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 12), (int)(fcText + totalCcp * 2));
+    int papx0Off = 160, papx1Off = 180, papx2Off = 200;
+    wd[fcPapxFkp + 16 + 0 * 13] = (byte)(papx0Off / 2);
+    wd[fcPapxFkp + 16 + 1 * 13] = (byte)(papx1Off / 2);
+    wd[fcPapxFkp + 16 + 2 * 13] = (byte)(papx2Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    p = fcPapxFkp + papx1Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    p = fcPapxFkp + papx2Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 빈 (1 run covering everything).
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)(fcText + totalCcp * 2));
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);          tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)totalCcp);   tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText);     tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)fcText);      tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)(fcText + totalCcp * 2 + 0x100)); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx);      tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)fcText);      tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)(fcText + totalCcp * 2 + 0x100)); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx);      tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // PlcfFndTxt: aCP = [0, 2, 38]
+    int fndStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)2);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)ccpFtn); tblMs.Write(b4);
+    int fndLen = (int)tblMs.Position - fndStart;
+
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccpMain);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x50),   (uint)ccpFtn);
+    BitConverter.TryWriteBytes(wd.AsSpan(0xB2),   (uint)fndStart);   // fcPlcffndTxt
+    BitConverter.TryWriteBytes(wd.AsSpan(0xB6),   (uint)fndLen);     // lcbPlcffndTxt
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+
+        SmokeHarness.Equal(1, doc.Footnotes.Count, "Footnotes.Count = 1");
+        var fn = doc.Footnotes[0];
+        SmokeHarness.Equal("fn1", fn.Id, "fn.Id = fn1");
+        var para = (Paragraph)fn.Blocks[0];
+        SmokeHarness.Equal("fn:here", para.GetPlainText(), "footnote plain text = 'fn:here'");
+        var linkRun = para.Runs.FirstOrDefault(r => r.Url is { Length: > 0 });
+        SmokeHarness.True(linkRun is not null, "footnote 안 HYPERLINK Run 존재");
+        SmokeHarness.Equal("here", linkRun!.Text, "linkRun.Text = here");
+        SmokeHarness.Equal("https://f.com", linkRun.Url, "linkRun.Url");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
