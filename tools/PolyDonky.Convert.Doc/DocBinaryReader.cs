@@ -65,6 +65,11 @@ public class DocBinaryReader
     public IReadOnlyDictionary<int, int> ShapeImageIndex { get; private set; }
         = new Dictionary<int, int>();
 
+    /// <summary>
+    /// Phase 3i — 본문 책갈피 목록. 각 entry 는 (Name, StartCp, EndCp). SttbfBkmk + PlcfBkf + PlcfBkl 결합.
+    /// </summary>
+    public IReadOnlyList<BookmarkEntry> Bookmarks { get; private set; } = Array.Empty<BookmarkEntry>();
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -126,6 +131,8 @@ public class DocBinaryReader
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
             ApplyFloatingShapeImages(doc);
+            // Phase 3i — Bookmarks (SttbfBkmk + PlcfBkf + PlcfBkl).
+            Bookmarks = ParseBookmarks(table, fib);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc);
@@ -205,7 +212,17 @@ public class DocBinaryReader
         // Phase 3h-2 — SttbfRMark (revision mark 작성자 이름 SttbExtend).
         //   FibRgFcLcb97 pair 25: fcSttbfRMark @ 0x0142, lcbSttbfRMark @ 0x0146.
         uint   FcSttbfRMark,
-        uint   LcbSttbfRMark);
+        uint   LcbSttbfRMark,
+        // Phase 3i — Bookmarks.
+        //   FibRgFcLcb97 pair 29: fcSttbfBkmk @ 0x0182, lcbSttbfBkmk @ 0x0186.
+        //   FibRgFcLcb97 pair 30: fcPlcfBkf   @ 0x018A, lcbPlcfBkf   @ 0x018E.
+        //   FibRgFcLcb97 pair 31: fcPlcfBkl   @ 0x0192, lcbPlcfBkl   @ 0x0196.
+        uint   FcSttbfBkmk,
+        uint   LcbSttbfBkmk,
+        uint   FcPlcfBkf,
+        uint   LcbPlcfBkf,
+        uint   FcPlcfBkl,
+        uint   LcbPlcfBkl);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -300,6 +317,14 @@ public class DocBinaryReader
         uint fcSttbfRMark  = wd.Length >= 0x0146 ? BitConverter.ToUInt32(wd, 0x0142) : 0u;
         uint lcbSttbfRMark = wd.Length >= 0x014A ? BitConverter.ToUInt32(wd, 0x0146) : 0u;
 
+        // Phase 3i — Bookmarks (FibRgFcLcb97 pair 29 / 30 / 31).
+        uint fcSttbfBkmk  = wd.Length >= 0x0186 ? BitConverter.ToUInt32(wd, 0x0182) : 0u;
+        uint lcbSttbfBkmk = wd.Length >= 0x018A ? BitConverter.ToUInt32(wd, 0x0186) : 0u;
+        uint fcPlcfBkf    = wd.Length >= 0x018E ? BitConverter.ToUInt32(wd, 0x018A) : 0u;
+        uint lcbPlcfBkf   = wd.Length >= 0x0192 ? BitConverter.ToUInt32(wd, 0x018E) : 0u;
+        uint fcPlcfBkl    = wd.Length >= 0x0196 ? BitConverter.ToUInt32(wd, 0x0192) : 0u;
+        uint lcbPlcfBkl   = wd.Length >= 0x019A ? BitConverter.ToUInt32(wd, 0x0196) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
@@ -308,7 +333,8 @@ public class DocBinaryReader
                        fcPlcSpaMom, lcbPlcSpaMom,
                        ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt,
                        fcPlcffndRef, lcbPlcffndRef, fcPlcfendRef, lcbPlcfendRef,
-                       fcSttbfRMark, lcbSttbfRMark);
+                       fcSttbfRMark, lcbSttbfRMark,
+                       fcSttbfBkmk, lcbSttbfBkmk, fcPlcfBkf, lcbPlcfBkf, fcPlcfBkl, lcbPlcfBkl);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -1373,6 +1399,56 @@ public class DocBinaryReader
         }
     }
 
+    // Phase 3i — 본문 책갈피 추출. SttbfBkmk (이름 배열) + PlcfBkf (시작 CP) + PlcfBkl (끝 CP).
+    //   PlcfBkf 형식: aCP[N+1] + aBKF[N], BKF = 4 byte (ibkl 2 + flags 2). lcb = 4*(N+1) + 4*N = 4 + 8*N.
+    //   PlcfBkl 형식: aCP[M+1] only. lcb = 4*(M+1).
+    //   각 BKF.ibkl 가 PlcfBkl 의 인덱스 (해당 책갈피의 끝 CP 위치).
+    //   책갈피 이름은 SttbfBkmk[i] — 인덱스 i 는 PlcfBkf 의 순서와 일치.
+    private static IReadOnlyList<BookmarkEntry> ParseBookmarks(byte[] table, Fib fib)
+    {
+        // 이름.
+        var names = FormatStyles.ReadSttbExtend(table, (int)fib.FcSttbfBkmk, (int)fib.LcbSttbfBkmk);
+
+        // PlcfBkf — 시작 CP + ibkl.
+        var bkfPlc = ReadPlcCpsAndU16Pair(table, (int)fib.FcPlcfBkf, (int)fib.LcbPlcfBkf, dataSize: 4);
+        if (bkfPlc.Cps.Length == 0) return Array.Empty<BookmarkEntry>();
+
+        // PlcfBkl — 끝 CP. data 없음 (element = 4 byte CP).
+        var bklCps = FormatStyles.ReadPlcCps(table, (int)fib.FcPlcfBkl, (int)fib.LcbPlcfBkl, frdSize: 0);
+
+        int n = bkfPlc.Cps.Length;
+        var list = new List<BookmarkEntry>(n);
+        for (int i = 0; i < n; i++)
+        {
+            int startCp = bkfPlc.Cps[i];
+            int ibkl    = bkfPlc.DataU16s[i];  // BKF body[0..1] = ibkl
+            int endCp   = (ibkl >= 0 && ibkl < bklCps.Length) ? bklCps[ibkl] : startCp;
+            string name = i < names.Length ? names[i] : $"_Bookmark{i}";
+            list.Add(new BookmarkEntry(name, startCp, endCp));
+        }
+        return list;
+    }
+
+    // PlcfBkf 같이 element 가 CP + 가변 크기 data 인 plex 에서 CP 와 data 의 첫 2 byte (U16) 를 함께 추출.
+    //   lcb = 4*(N+1) + dataSize*N.
+    private static (int[] Cps, int[] DataU16s) ReadPlcCpsAndU16Pair(byte[] table, int fc, int lcb, int dataSize)
+    {
+        if (lcb < 4 + dataSize || fc < 0 || fc + lcb > table.Length)
+            return (Array.Empty<int>(), Array.Empty<int>());
+        int element = 4 + dataSize;
+        int n = (lcb - 4) / element;
+        if (n <= 0) return (Array.Empty<int>(), Array.Empty<int>());
+        var cps = new int[n];
+        var u16 = new int[n];
+        int dataBase = fc + 4 * (n + 1);
+        for (int i = 0; i < n; i++)
+        {
+            cps[i] = BitConverter.ToInt32(table, fc + i * 4);
+            u16[i] = dataSize >= 2 ? BitConverter.ToUInt16(table, dataBase + i * dataSize) : 0;
+        }
+        return (cps, u16);
+    }
+
     // Phase 3f-5 — DggContainer 안의 OfficeArtSpContainer (0xF004) 들을 walk 해 spid → pib 맵 작성.
     //   각 SpContainer:
     //     - Sp atom (0xF009, body 8 byte: spid(4) + flags(4)) — shape ID
@@ -1966,7 +2042,7 @@ public class DocBinaryReader
         //   [4..5]   cbExtra (typically 0)
         //   For each entry: [cchData (2 byte)] + [data (cchData * 2 byte UTF-16)] + [cbExtra bytes extra]
         // SttbfRMark 는 항상 extended.
-        private static string[] ReadSttbExtend(byte[] table, int fc, int lcb)
+        internal static string[] ReadSttbExtend(byte[] table, int fc, int lcb)
         {
             if (lcb < 6 || fc < 0 || fc + lcb > table.Length) return Array.Empty<string>();
             int pos = fc;
@@ -1989,7 +2065,7 @@ public class DocBinaryReader
             return arr;
         }
 
-        private static int[] ReadPlcCps(byte[] table, int fc, int lcb, int frdSize)
+        internal static int[] ReadPlcCps(byte[] table, int fc, int lcb, int frdSize)
         {
             if (lcb < 4 || fc < 0 || fc + lcb > table.Length) return Array.Empty<int>();
             int element = 4 + frdSize;
@@ -2845,3 +2921,11 @@ public sealed record FspaEntry(
     int YaTopTwips,
     int XaRightTwips,
     int YaBottomTwips);
+
+/// <summary>
+/// Phase 3i — DOC 본문 책갈피 entry. SttbfBkmk + PlcfBkf + PlcfBkl 의 결합 결과.
+/// </summary>
+/// <param name="Name">책갈피 이름 (SttbfBkmk 의 string).</param>
+/// <param name="StartCp">시작 CP (PlcfBkf aCP).</param>
+/// <param name="EndCp">끝 CP (PlcfBkl aCP — BKF.ibkl 로 매핑).</param>
+public sealed record BookmarkEntry(string Name, int StartCp, int EndCp);

@@ -74,6 +74,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3g-2 0x02 footnote/endnote ref 
 harness.Run("DOC (Word 97-2003 binary) — Phase 3h 변경추적 (sprmCFRMarkIns/Del)", DocBinaryPhase3hRevisionMarks);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3h-2 변경추적 메타 (Author + DTTM)", DocBinaryPhase3h2RevisionMeta);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3h-3 단락 마크 변경추적", DocBinaryPhase3h3ParagraphRevision);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3i 책갈피 (SttbfBkmk + PlcfBkf + PlcfBkl)", DocBinaryPhase3iBookmarks);
 
 return harness.Finish();
 
@@ -5957,6 +5958,138 @@ static void DocBinaryPhase3h3ParagraphRevision()
         var para1 = (Paragraph)blocks[1];
         SmokeHarness.Equal("B", para1.GetPlainText(), "para1 text");
         SmokeHarness.True(!para1.IsInsertedRevision, "para1.IsInsertedRevision = false");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3i — 책갈피 (Bookmarks). SttbfBkmk (이름) + PlcfBkf (시작 CP+BKF) + PlcfBkl (끝 CP).
+//   2 bookmarks: intro (CP 0..2), body (CP 3..5).
+static void DocBinaryPhase3iBookmarks()
+{
+    const string text = "Hello\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)(0x200 + ccp * 2));
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream: CLX + BTE + SttbfBkmk + PlcfBkf + PlcfBkl.
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    Span<byte> b2 = stackalloc byte[2];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // SttbfBkmk extended Sttb: fExtend + cData(2) + cbExtra(0) + ["intro"(5) + "body"(4)]
+    int sttbStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b2, (ushort)0xFFFF); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)2);      tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)0);      tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)5);      tblMs.Write(b2);
+    var introBytes = Encoding.Unicode.GetBytes("intro");
+    tblMs.Write(introBytes, 0, introBytes.Length);
+    BitConverter.TryWriteBytes(b2, (ushort)4);      tblMs.Write(b2);
+    var bodyBytes  = Encoding.Unicode.GetBytes("body");
+    tblMs.Write(bodyBytes, 0, bodyBytes.Length);
+    int sttbLen = (int)tblMs.Position - sttbStart;
+
+    // PlcfBkf: aCP[3] = {0, 3, 6} + aBKF[2] each 4 byte (ibkl=0/1, flags=0).
+    int bkfStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)3); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)6); tblMs.Write(b4);
+    // BKF #0
+    BitConverter.TryWriteBytes(b2, (ushort)0); tblMs.Write(b2);  // ibkl = 0
+    BitConverter.TryWriteBytes(b2, (ushort)0); tblMs.Write(b2);  // flags
+    // BKF #1
+    BitConverter.TryWriteBytes(b2, (ushort)1); tblMs.Write(b2);  // ibkl = 1
+    BitConverter.TryWriteBytes(b2, (ushort)0); tblMs.Write(b2);
+    int bkfLen = (int)tblMs.Position - bkfStart;
+
+    // PlcfBkl: aCP[3] = {2, 5, 6} only (data element size = 0).
+    int bklStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)2); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)5); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)6); tblMs.Write(b4);
+    int bklLen = (int)tblMs.Position - bklStart;
+
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x182),  (uint)sttbStart);   // fcSttbfBkmk
+    BitConverter.TryWriteBytes(wd.AsSpan(0x186),  (uint)sttbLen);     // lcbSttbfBkmk
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18A),  (uint)bkfStart);    // fcPlcfBkf
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18E),  (uint)bkfLen);      // lcbPlcfBkf
+    BitConverter.TryWriteBytes(wd.AsSpan(0x192),  (uint)bklStart);    // fcPlcfBkl
+    BitConverter.TryWriteBytes(wd.AsSpan(0x196),  (uint)bklLen);      // lcbPlcfBkl
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.Equal(2, reader.Bookmarks.Count, $"Bookmarks.Count = 2 (got {reader.Bookmarks.Count})");
+
+        SmokeHarness.Equal("intro", reader.Bookmarks[0].Name,    "Bookmark[0].Name = intro");
+        SmokeHarness.Equal(0,       reader.Bookmarks[0].StartCp, "Bookmark[0].StartCp = 0");
+        SmokeHarness.Equal(2,       reader.Bookmarks[0].EndCp,   "Bookmark[0].EndCp = 2");
+
+        SmokeHarness.Equal("body",  reader.Bookmarks[1].Name,    "Bookmark[1].Name = body");
+        SmokeHarness.Equal(3,       reader.Bookmarks[1].StartCp, "Bookmark[1].StartCp = 3");
+        SmokeHarness.Equal(5,       reader.Bookmarks[1].EndCp,   "Bookmark[1].EndCp = 5");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
