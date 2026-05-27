@@ -336,6 +336,8 @@ public class DocBinaryReader
     //   기타 0x00..0x1F 중 \t(0x09) 외 → 제거
     // Phase 1b — 단락 경계(\r 또는 \f) 도달 시 그 FC 로 PAPX 를 조회해 단락 정렬 적용.
     //          단락 내 각 char 의 FC 로 CHPX 를 조회해 같은 RunStyle 끼리 묶어 Run 분할.
+    // Phase 2h — 중첩 표 지원을 위해 Stack<TableState> 기반으로 흐름 일반화.
+    // 각 단락의 itap level 에 따라 stack push/pop, level=0 면 본문, level>=1 면 해당 깊이의 표.
     private static PolyDonkyument BuildDocument(string raw, int[] fcs, FormatStyles fmt)
     {
         var doc     = new PolyDonkyument();
@@ -345,15 +347,9 @@ public class DocBinaryReader
         var paraChars = new List<char>();
         var paraFcs   = new List<int>();
         int lastFc    = 0;
-        // Phase 2a — 표 누적 상태 (pending: 진행 중인 표/행).
-        // Phase 2f — TTP 시 raw row + cellProps 를 pendingRowsRaw 에 보관, 표 마감 시
-        //          세로 → 가로 병합 순으로 후처리 (세로 병합이 여러 행에 걸치므로).
-        // Phase 2g — currentCellParas: 셀의 누적 단락. 한 셀이 여러 단락을 가질 수 있음.
-        //          0x07 cell mark 가 단락 끝에 있으면 셀 종료. 0x07 없으면 셀 중간 단락.
-        Table? pendingTable = null;
-        TableRow? pendingRow = null;
-        var pendingRowsRaw = new List<(TableRow Row, TableCellProps[]? Cp)>();
-        var currentCellParas = new List<Paragraph>();
+        // Phase 2h — itap level 별 누적 상태. itap=0 면 stack 비어 있음, itap=1 면 외곽 표 한 개,
+        //          itap=2 면 외곽+내부 두 개.
+        var tableStack = new Stack<TableState>();
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -364,75 +360,104 @@ public class DocBinaryReader
             switch (c)
             {
                 case '\r':
-                case '\f':  // page break — 단락 분리로 처리
-                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw, currentCellParas);
+                case '\f':
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
                     break;
-                case '\v':  // soft line break
+                case '\v':
                     paraChars.Add('\n'); paraFcs.Add(fc);
                     break;
-                case '':  // cell mark
+                case '\u0007':  // cell mark — 단락 빌드 시 itap>=1 면 셀 분리에 사용.
                     paraChars.Add('\u0007'); paraFcs.Add(fc);
                     break;
-                case '': // field begin
-                case '': // field separator
-                case '': // field end
-                case '': // footnote ref
-                case '': // comment ref
-                case '': // drawing
-                case '': // picture
-                    // 무시 (Phase 2 까지)
+                case '\u0013':  // field begin
+                case '\u0014':  // field separator
+                case '\u0015':  // field end
+                case '\u0002':  // footnote ref
+                case '\u0005':  // comment ref
+                case '\u0008':  // drawing
+                case '\u0001':  // picture
                     break;
                 case '\t':
                 case '\n':
                     paraChars.Add(c); paraFcs.Add(fc);
                     break;
                 default:
-                    if (c < 0x20) break;  // 그 외 제어 문자 폐기
+                    if (c < 0x20) break;
                     paraChars.Add(c); paraFcs.Add(fc);
                     break;
             }
         }
-        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw, currentCellParas);
-        // 본문 끝에서 표가 미완 상태이면 마감 — Phase 2f: FinalizeTable 가 세로/가로 병합 후처리.
-        if (pendingTable is not null)
-        {
-            if (pendingRow is { Cells.Count: > 0 }) pendingRowsRaw.Add((pendingRow, null));
-            FinalizeTable(pendingTable, pendingRowsRaw);
-            if (pendingTable.Rows.Count > 0) section.Blocks.Add(pendingTable);
-        }
+        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, tableStack);
+
+        // 본문 끝에서 stack 에 남은 표들을 모두 마감.
+        FinalizeStack(section, tableStack, targetDepth: 0);
 
         if (section.Blocks.Count == 0) section.Blocks.Add(new Paragraph());
         return doc;
     }
 
+    // Phase 2h — itap level 별 표 누적 상태.
+    private sealed class TableState
+    {
+        public Table Table { get; } = new();
+        public TableRow? Row { get; set; }
+        public List<(TableRow Row, TableCellProps[]? Cp)> RowsRaw { get; } = new();
+        // 셀의 누적 Block 들. Paragraph + 중첩 Table 둘 다 가능.
+        public List<Block> CellBlocks { get; } = new();
+    }
+
+    // Phase 2h — stack 을 targetDepth 까지 pop 하면서 각 표를 마감. 부모가 있으면 그 셀의 CellBlocks
+    // 에 Table 추가; 없으면 section.Blocks 에 직접 추가.
+    private static void FinalizeStack(Section section, Stack<TableState> stack, int targetDepth)
+    {
+        while (stack.Count > targetDepth)
+        {
+            var top = stack.Pop();
+            if (top.Row is { Cells.Count: > 0 }) top.RowsRaw.Add((top.Row, null));
+            FinalizeTable(top.Table, top.RowsRaw);
+            if (top.Table.Rows.Count == 0) continue;  // 빈 표는 버림
+            if (stack.Count > 0) stack.Peek().CellBlocks.Add(top.Table);
+            else                  section.Blocks.Add(top.Table);
+        }
+    }
+
     // Phase 1b — 누적된 (char, fc) 쌍을 한 단락으로 묶어 만든다.
-    // Phase 2a — InTable=true 단락은 pendingTable 에 셀별로 누적, IsTtp 단락은 행 종료,
-    //          비-InTable 단락은 표를 마감하고 section.Blocks 에 직접 추가.
-    // Phase 2f — TTP 시 가로 병합 즉시 적용 대신 raw row + cellProps 를 pendingRowsRaw 에 누적,
-    //          표 마감 시 FinalizeTable 가 세로 → 가로 병합 순으로 후처리.
+    // Phase 2a/2h — itap level 에 따라 stack 조정 후 단락을 본문 또는 표 셀 안에 배치.
     private static void FlushParagraph(
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
-        ref Table? pendingTable, ref TableRow? pendingRow,
-        List<(TableRow Row, TableCellProps[]? Cp)> pendingRowsRaw,
-        List<Paragraph> currentCellParas)
+        Stack<TableState> tableStack)
     {
-        var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps) = fmt.GetParagraphInfo(paraEndFc);
+        var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps, itap) = fmt.GetParagraphInfo(paraEndFc);
 
-        // 행 종료 단락 (TTP). 비어 있고 행을 마무리하는 신호.
+        // 1) Stack depth 를 itap 에 맞춤. depth > itap 면 표 마감, depth < itap 면 새 표 push.
+        FinalizeStack(section, tableStack, targetDepth: itap);
+        while (tableStack.Count < itap)
+            tableStack.Push(new TableState());
+
+        if (itap == 0)
+        {
+            // 본문 단락.
+            var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
+            section.Blocks.Add(para);
+            paraChars.Clear();
+            paraFcs.Clear();
+            return;
+        }
+
+        var top = tableStack.Peek();
+
+        // TTP — 행 종료. Phase 2b: rgdxa → 컬럼 너비.
         if (isTtp)
         {
-            pendingTable ??= new Table();
-            if (pendingRow is { Cells.Count: > 0 })
-                pendingRowsRaw.Add((pendingRow, cellProps));
-            pendingRow = null;
-            // Phase 2b — TTP 의 PAPX 에 sprmTDefTable 가 있으면 셀 너비를 표 컬럼에 적용 (가장 처음 행 기준).
-            if (rgdxa is { Length: > 1 } && pendingTable.Columns.Count == 0)
+            if (top.Row is { Cells.Count: > 0 }) top.RowsRaw.Add((top.Row, cellProps));
+            top.Row = null;
+            if (rgdxa is { Length: > 1 } && top.Table.Columns.Count == 0)
             {
-                for (int i = 0; i < rgdxa.Length - 1; i++)
+                for (int j = 0; j < rgdxa.Length - 1; j++)
                 {
-                    double widthMm = (rgdxa[i + 1] - rgdxa[i]) / 56.692;
-                    if (widthMm <= 0) widthMm = 0;
-                    pendingTable.Columns.Add(new TableColumn { WidthMm = widthMm });
+                    double widthMm = (rgdxa[j + 1] - rgdxa[j]) / 56.692;
+                    if (widthMm < 0) widthMm = 0;
+                    top.Table.Columns.Add(new TableColumn { WidthMm = widthMm });
                 }
             }
             paraChars.Clear();
@@ -440,121 +465,11 @@ public class DocBinaryReader
             return;
         }
 
-        // 표 안 단락. 0x07 셀 마커로 분리해서 셀별 단락을 누적.
-        if (inTable)
-        {
-            pendingTable ??= new Table();
-            pendingRow   ??= new TableRow();
-            SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, pendingRow, currentCellParas);
-            paraChars.Clear();
-            paraFcs.Clear();
-            return;
-        }
-
-        // 비-InTable 단락 — 표가 진행 중이면 마감.
-        if (pendingTable is not null)
-        {
-            // TTP 없이 끝난 row 가 있으면 (드물지만 안전성) raw 누적에 추가.
-            if (pendingRow is { Cells.Count: > 0 }) pendingRowsRaw.Add((pendingRow, null));
-            FinalizeTable(pendingTable, pendingRowsRaw);
-            if (pendingTable.Rows.Count > 0) section.Blocks.Add(pendingTable);
-            pendingTable = null;
-            pendingRow   = null;
-            pendingRowsRaw.Clear();
-        }
-
-        var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
-        section.Blocks.Add(para);
+        // 표 안 셀 단락 — 0x07 으로 셀 분리, 없으면 셀 중간 단락으로 누적.
+        top.Row ??= new TableRow();
+        SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, top.Row, top.CellBlocks);
         paraChars.Clear();
         paraFcs.Clear();
-    }
-
-    // Phase 2f — 표 마감 시점에 raw rows + cellProps 를 walk 해 (세로 병합 → 가로 병합) 순으로
-    // 적용한 후 pendingTable.Rows 에 채운다.
-    private static void FinalizeTable(
-        Table table, List<(TableRow Row, TableCellProps[]? Cp)> rows)
-    {
-        if (rows.Count == 0) return;
-
-        // 1. 세로 병합 — column 별로 chain 찾고 시작 셀의 RowSpan 증가, 흡수 셀은 toRemove 표시.
-        int maxCols = rows.Max(r => r.Cp?.Length ?? 0);
-        var toRemove = new bool[rows.Count][];
-        for (int r = 0; r < rows.Count; r++)
-            toRemove[r] = new bool[rows[r].Cp?.Length ?? 0];
-
-        for (int col = 0; col < maxCols; col++)
-        {
-            int startRow = -1;
-            for (int r = 0; r < rows.Count; r++)
-            {
-                var cp = rows[r].Cp;
-                if (cp is null || col >= cp.Length) { startRow = -1; continue; }
-                var p = cp[col];
-                if (p.IsVertMerge && p.IsVertRestart)
-                {
-                    startRow = r;
-                }
-                else if (p.IsVertMerge && !p.IsVertRestart && startRow >= 0)
-                {
-                    if (col < rows[startRow].Row.Cells.Count)
-                        rows[startRow].Row.Cells[col].RowSpan++;
-                    toRemove[r][col] = true;
-                }
-                else
-                {
-                    startRow = -1;
-                }
-            }
-        }
-
-        // 2. 각 row 에 (세로 흡수 제거 + 가로 병합) 적용. row.Cells.Count==0 (모든 셀이 세로 흡수) 인
-        //    행도 RowSpan 의미 보존을 위해 추가하지 않는다 (sparse: 흡수된 행 자체가 없음).
-        //    한 셀이라도 남으면 add — 부분 흡수 (다른 col 은 살아남음) 케이스를 지원.
-        for (int r = 0; r < rows.Count; r++)
-        {
-            var (row, cp) = rows[r];
-            row.Cells = MergeRowCells(row.Cells, cp, toRemove[r]);
-            if (row.Cells.Count > 0) table.Rows.Add(row);
-        }
-    }
-
-    // 한 행의 row.Cells 에 세로 흡수 제거 + 가로 병합 (Phase 2e) 적용. cp 와 toRemove 의 인덱스는
-    // 입력 row.Cells 와 1:1 (SplitIntoCells 가 0x07 단위로 만들기 때문).
-    private static IList<TableCell> MergeRowCells(
-        IList<TableCell> cells, TableCellProps[]? cp, bool[]? toRemove)
-    {
-        // cp 가 없으면 그대로 — 테두리/배경/병합 정보 없음.
-        if (cp is null)
-        {
-            // 테두리·배경 적용 없이 그대로.
-            return cells;
-        }
-
-        // 1) 테두리·배경 1:1 적용.
-        int n = Math.Min(cells.Count, cp.Length);
-        for (int i = 0; i < n; i++)
-        {
-            var cell = cells[i];
-            var p    = cp[i];
-            if (p.Top    is not null) cell.BorderTop    = p.Top;
-            if (p.Left   is not null) cell.BorderLeft   = p.Left;
-            if (p.Bottom is not null) cell.BorderBottom = p.Bottom;
-            if (p.Right  is not null) cell.BorderRight  = p.Right;
-            if (p.BackgroundHex is not null) cell.BackgroundColor = p.BackgroundHex;
-        }
-
-        // 2) 세로 흡수 제거 + 가로 병합.
-        var merged = new List<TableCell>();
-        for (int col = 0; col < n; col++)
-        {
-            if (toRemove is not null && col < toRemove.Length && toRemove[col]) continue;  // 세로 흡수
-            bool absorb = cp[col].IsMerged && !cp[col].IsFirstMerged && merged.Count > 0;
-            if (absorb) merged[^1].ColumnSpan++;
-            else        merged.Add(cells[col]);
-        }
-        // cp 길이 초과 셀은 그대로 (드물지만 안전성)
-        for (int k = n; k < cells.Count; k++) merged.Add(cells[k]);
-        return merged;
     }
 
     // 단일 셀 단락 만들기 — Phase 1 의 Run 분할 알고리즘 재사용.
@@ -584,12 +499,84 @@ public class DocBinaryReader
         return para;
     }
 
-    // Phase 2a/2g — paraChars 를 0x07 (cell mark) 기준으로 단락 종료 시점에 분리.
-    //   0x07 이 단락 안에 등장하면 → 그 텍스트가 셀의 마지막 단락. 셀 종료 후 pendingRow 에 추가.
-    //   0x07 없는 텍스트 (단락 끝까지 누적) → 셀의 중간 단락. currentCellParas 에 누적.
+    // Phase 2f — 표 마감 시 raw rows + cellProps 를 walk 해 (세로 → 가로 병합) 순으로 적용.
+    private static void FinalizeTable(
+        Table table, List<(TableRow Row, TableCellProps[]? Cp)> rows)
+    {
+        if (rows.Count == 0) return;
+
+        // 1. 세로 병합 — column 별 chain.
+        int maxCols = rows.Max(r => r.Cp?.Length ?? 0);
+        var toRemove = new bool[rows.Count][];
+        for (int r = 0; r < rows.Count; r++)
+            toRemove[r] = new bool[rows[r].Cp?.Length ?? 0];
+
+        for (int col = 0; col < maxCols; col++)
+        {
+            int startRow = -1;
+            for (int r = 0; r < rows.Count; r++)
+            {
+                var cp = rows[r].Cp;
+                if (cp is null || col >= cp.Length) { startRow = -1; continue; }
+                var p = cp[col];
+                if (p.IsVertMerge && p.IsVertRestart) startRow = r;
+                else if (p.IsVertMerge && !p.IsVertRestart && startRow >= 0)
+                {
+                    if (col < rows[startRow].Row.Cells.Count)
+                        rows[startRow].Row.Cells[col].RowSpan++;
+                    toRemove[r][col] = true;
+                }
+                else startRow = -1;
+            }
+        }
+
+        // 2. 각 row 에 (세로 흡수 제거 + 가로 병합) 적용.
+        for (int r = 0; r < rows.Count; r++)
+        {
+            var (row, cp) = rows[r];
+            row.Cells = MergeRowCells(row.Cells, cp, toRemove[r]);
+            if (row.Cells.Count > 0) table.Rows.Add(row);
+        }
+    }
+
+    // 한 행의 row.Cells 에 (테두리·배경 적용 → 세로 흡수 제거 + 가로 병합) 처리.
+    private static IList<TableCell> MergeRowCells(
+        IList<TableCell> cells, TableCellProps[]? cp, bool[]? toRemove)
+    {
+        if (cp is null) return cells;
+
+        int n = Math.Min(cells.Count, cp.Length);
+        for (int i = 0; i < n; i++)
+        {
+            var cell = cells[i];
+            var p    = cp[i];
+            if (p.Top    is not null) cell.BorderTop    = p.Top;
+            if (p.Left   is not null) cell.BorderLeft   = p.Left;
+            if (p.Bottom is not null) cell.BorderBottom = p.Bottom;
+            if (p.Right  is not null) cell.BorderRight  = p.Right;
+            if (p.BackgroundHex is not null) cell.BackgroundColor = p.BackgroundHex;
+        }
+
+        var merged = new List<TableCell>();
+        for (int col = 0; col < n; col++)
+        {
+            if (toRemove is not null && col < toRemove.Length && toRemove[col]) continue;
+            bool absorb = cp[col].IsMerged && !cp[col].IsFirstMerged && merged.Count > 0;
+            if (absorb) merged[^1].ColumnSpan++;
+            else        merged.Add(cells[col]);
+        }
+        for (int k = n; k < cells.Count; k++) merged.Add(cells[k]);
+        return merged;
+    }
+
+    // Phase 2a/2g/2h — paraChars 를 0x07 (cell mark) 기준으로 셀 종료 시점에 분리.
+    //   0x07 만남: curChars 의 텍스트 + 누적 cellBlocks 를 cell.Blocks 로 묶어 pendingRow 에 추가.
+    //   0x07 없이 단락 끝남: cellBlocks 에 단락 누적만, 셀 종료 X. 다음 단락에서 이어진다.
+    // cellBlocks 는 List<Block> 이라 중첩 표(Phase 2h)도 셀 안에 자연스럽게 들어간다 — 중첩 표는
+    // 상위 FlushParagraph 가 stack pop 시 부모의 CellBlocks 에 Table 을 추가한 결과.
     private static void SplitIntoCells(
         List<char> paraChars, List<int> paraFcs, int paraIstd, FormatStyles fmt,
-        TableRow pendingRow, List<Paragraph> currentCellParas)
+        TableRow pendingRow, List<Block> cellBlocks)
     {
         var curChars = new List<char>();
         var curFcs   = new List<int>();
@@ -597,18 +584,15 @@ public class DocBinaryReader
         {
             if (paraChars[i] == '\u0007')
             {
-                // 셀 종료: curChars 는 이 셀의 마지막 단락. currentCellParas 에 추가 후 셀 finalize.
-                if (curChars.Count > 0 || currentCellParas.Count > 0)
-                {
-                    currentCellParas.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
-                }
+                // 셀 종료. curChars 가 비어 있고 cellBlocks 가 채워져 있는 케이스 (예: 외곽 셀의
+                // 마지막 0x07 이 단락 안에 단독 — 그 직전에 inner 표가 누적됨) 면 빈 단락 추가 X.
+                if (curChars.Count > 0)
+                    cellBlocks.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
                 var cell = new TableCell();
-                if (currentCellParas.Count == 0)
-                    cell.Blocks.Add(new Paragraph());  // 빈 셀도 단락 1개 보장 (IWPF 모델 가정)
-                else
-                    foreach (var p in currentCellParas) cell.Blocks.Add(p);
+                if (cellBlocks.Count == 0) cell.Blocks.Add(new Paragraph());
+                else foreach (var b in cellBlocks) cell.Blocks.Add(b);
                 pendingRow.Cells.Add(cell);
-                currentCellParas.Clear();
+                cellBlocks.Clear();
                 curChars.Clear();
                 curFcs.Clear();
             }
@@ -618,13 +602,9 @@ public class DocBinaryReader
                 curFcs.Add(paraFcs[i]);
             }
         }
-        // 잔여 (0x07 없이 단락이 끝남) — 셀 중간 단락. 셀 종료 전이라 currentCellParas 에 누적.
         if (curChars.Count > 0)
-        {
-            currentCellParas.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
-        }
+            cellBlocks.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
     }
-
     private static bool RunStyleEquals(RunStyle a, RunStyle b)
         => a.Bold == b.Bold
         && a.Italic == b.Italic
@@ -815,11 +795,12 @@ public class DocBinaryReader
         // Phase 2a — InTable / IsTtp 플래그 추가 (sprmPFInTable / sprmPFTtp).
         // Phase 2b — Rgdxa (sprmTDefTable 의 셀 boundary, twips) 추가.
         // Phase 2c — CellProps (sprmTDefTable 의 rgTc 에서 추출한 셀 테두리) 추가.
+        // Phase 2h — Itap (sprmPItap 의 nesting level): 0=일반, 1=표 안, 2=중첩 표 안.
         public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp,
-                short[]? Rgdxa, TableCellProps[]? CellProps) GetParagraphInfo(int paraEndFc)
+                short[]? Rgdxa, TableCellProps[]? CellProps, int Itap) GetParagraphInfo(int paraEndFc)
         {
             var papx = LoadPapx(paraEndFc);
-            if (papx is null) return (-1, null, false, false, null, null);
+            if (papx is null) return (-1, null, false, false, null, null, 0);
 
             var (istd, directSprms) = papx.Value;
             var style = new ParagraphStyle();
@@ -828,6 +809,7 @@ public class DocBinaryReader
             bool isTtp   = false;
             short[]? rgdxa = null;
             TableCellProps[]? cellProps = null;
+            int itap = 0;
 
             // 1. STSH built-in sti → Outline (Heading N → HN).
             if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
@@ -843,15 +825,18 @@ public class DocBinaryReader
                 if (_styles[chainIstd]?.PapxSprms is { Length: > 0 } chainSprms)
                 {
                     touched |= ApplyParagraphSprms(chainSprms, style);
-                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps);
+                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap);
                 }
             }
 
             // 3. 직접 PAPX sprms — 스타일 상속값을 덮어쓴다.
             touched |= ApplyParagraphSprms(directSprms, style);
-            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps);
+            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap);
 
-            return (istd, touched ? style : null, inTable, isTtp, rgdxa, cellProps);
+            // sprmPItap 가 명시 안 되어도 InTable=true / IsTtp=true 면 1-level 표로 간주 — Word 95
+            // legacy 호환 + 합성 케이스. itap > 0 이 명시된 경우 (중첩) 는 그대로.
+            if (itap == 0 && (inTable || isTtp)) itap = 1;
+            return (istd, touched ? style : null, inTable, isTtp, rgdxa, cellProps, itap);
         }
 
         // [MS-DOC] 단락의 표 관련 sprm 일괄 스캔:
@@ -862,16 +847,24 @@ public class DocBinaryReader
         //                  + rgTc[itcMac] (20 byte each, §2.9.301 TC97).
         // ref 매개변수는 람다 캡처 불가라 로컬에 모은 뒤 호출부에서 합친다.
         private static void ScanTableProps(byte[] grpprl,
-            ref bool inTable, ref bool isTtp, ref short[]? rgdxa, ref TableCellProps[]? cellProps)
+            ref bool inTable, ref bool isTtp, ref short[]? rgdxa, ref TableCellProps[]? cellProps,
+            ref int itap)
         {
             bool localIn  = inTable;
             bool localTtp = isTtp;
             short[]? localDxa = rgdxa;
             TableCellProps[]? localCp = cellProps;
+            int localItap = itap;
             WalkSprms(grpprl, (sprm, operand) =>
             {
                 if (sprm == 0x2416 && operand.Length >= 1) localIn = operand[0] != 0;
                 else if (sprm == 0x2417 && operand.Length >= 1) localTtp = operand[0] != 0;
+                else if (sprm == 0x6649 && operand.Length >= 4)
+                {
+                    // sprmPItap (spra=3, 4-byte signed) — nesting level. itap>=1 면 표 안.
+                    int v = BitConverter.ToInt32(operand, 0);
+                    if (v >= 0 && v <= 8) localItap = v;
+                }
                 else if (sprm == 0xD608)
                 {
                     if (operand.Length < 1) return;
@@ -929,6 +922,7 @@ public class DocBinaryReader
             isTtp     = localTtp;
             rgdxa     = localDxa;
             cellProps = localCp;
+            itap      = localItap;
         }
 
         // [MS-DOC] §2.9.16 Brc80 (4 byte border code):
