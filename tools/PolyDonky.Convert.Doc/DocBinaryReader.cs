@@ -201,7 +201,11 @@ public class DocBinaryReader
         uint   FcPlcffndRef,
         uint   LcbPlcffndRef,
         uint   FcPlcfendRef,
-        uint   LcbPlcfendRef);
+        uint   LcbPlcfendRef,
+        // Phase 3h-2 — SttbfRMark (revision mark 작성자 이름 SttbExtend).
+        //   FibRgFcLcb97 pair 25: fcSttbfRMark @ 0x0142, lcbSttbfRMark @ 0x0146.
+        uint   FcSttbfRMark,
+        uint   LcbSttbfRMark);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -291,6 +295,11 @@ public class DocBinaryReader
         uint fcPlcfendRef  = wd.Length >= 0x014E ? BitConverter.ToUInt32(wd, 0x014A) : 0u;
         uint lcbPlcfendRef = wd.Length >= 0x0152 ? BitConverter.ToUInt32(wd, 0x014E) : 0u;
 
+        // Phase 3h-2 — SttbfRMark (revision authors).
+        //   FibRgFcLcb97 pair 25: fcSttbfRMark @ 0x0142, lcbSttbfRMark @ 0x0146.
+        uint fcSttbfRMark  = wd.Length >= 0x0146 ? BitConverter.ToUInt32(wd, 0x0142) : 0u;
+        uint lcbSttbfRMark = wd.Length >= 0x014A ? BitConverter.ToUInt32(wd, 0x0146) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
@@ -298,7 +307,8 @@ public class DocBinaryReader
                        fcDggInfo, lcbDggInfo,
                        fcPlcSpaMom, lcbPlcSpaMom,
                        ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt,
-                       fcPlcffndRef, lcbPlcffndRef, fcPlcfendRef, lcbPlcfendRef);
+                       fcPlcffndRef, lcbPlcffndRef, fcPlcfendRef, lcbPlcfendRef,
+                       fcSttbfRMark, lcbSttbfRMark);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -671,6 +681,11 @@ public class DocBinaryReader
         {
             // 본문 단락.
             var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
+            // Phase 3h-3 — 단락 마크(\r) 의 CHPX 에서 revision flag 추출 → Paragraph 자체에 적용.
+            //   sprmCFRMarkIns / Del 가 paragraph mark 에 붙으면 단락 자체가 inserted/deleted.
+            var (_, paraRev) = fmt.GetRunStyle(paraEndFc, paraIstd);
+            if (paraRev.Inserted) para.IsInsertedRevision = true;
+            if (paraRev.Deleted)  para.IsDeletedRevision  = true;
             section.Blocks.Add(para);
             paraChars.Clear();
             paraFcs.Clear();
@@ -794,6 +809,8 @@ public class DocBinaryReader
         string?    curArg   = null;
         bool       curIns   = false;
         bool       curDel   = false;
+        string?    curRevAuthor = null;
+        System.DateTimeOffset? curRevDate = null;
         var curText = new StringBuilder();
 
         void Flush()
@@ -805,6 +822,8 @@ public class DocBinaryReader
             if (curArg is { Length: > 0 }) run.FieldArg = curArg;
             if (curIns) run.IsInsertedRevision = true;
             if (curDel) run.IsDeletedRevision  = true;
+            if (curRevAuthor is { Length: > 0 }) run.RevisionAuthor = curRevAuthor;
+            if (curRevDate is not null)          run.RevisionDate   = curRevDate;
             para.Runs.Add(run);
             curText.Clear();
         }
@@ -833,23 +852,28 @@ public class DocBinaryReader
                 }
             }
 
-            var (rsOrNull, ins, del) = fmt.GetRunStyle(fc, paraIstd);
+            var (rsOrNull, rev) = fmt.GetRunStyle(fc, paraIstd);
             var rs = rsOrNull ?? new RunStyle();
             var (url, field, arg) = fmt.GetFieldAtFc(fc);
+            var revDate = rev.HasDttm ? FormatStyles.UnpackDttm(rev.RMarkDttm) : null;
             bool styleBreak = curStyle is null || !RunStyleEquals(curStyle, rs);
             bool fieldBreak = !string.Equals(curUrl, url, StringComparison.Ordinal)
                             || curField != field
                             || !string.Equals(curArg, arg, StringComparison.Ordinal);
-            bool revBreak   = curIns != ins || curDel != del;
+            bool revBreak   = curIns != rev.Inserted || curDel != rev.Deleted
+                            || !string.Equals(curRevAuthor, rev.Author, StringComparison.Ordinal)
+                            || !Nullable.Equals(curRevDate, revDate);
             if (styleBreak || fieldBreak || revBreak)
             {
                 Flush();
-                curStyle = rs;
-                curUrl   = url;
-                curField = field;
-                curArg   = arg;
-                curIns   = ins;
-                curDel   = del;
+                curStyle     = rs;
+                curUrl       = url;
+                curField     = field;
+                curArg       = arg;
+                curIns       = rev.Inserted;
+                curDel       = rev.Deleted;
+                curRevAuthor = rev.Author;
+                curRevDate   = revDate;
             }
             curText.Append(c);
         }
@@ -1887,6 +1911,11 @@ public class DocBinaryReader
         // BuildParaFromChars 가 '￼' 마커 만났을 때 lookup.
         private readonly Dictionary<int, (string? FnId, string? EnId)> _refsByFc = new();
 
+        // Phase 3h-2 — SttbfRMark 의 author 이름 배열. sprmCIbstRMark / sprmCIbstRMarkDel 의 인덱스 참조.
+        private string[] _rmarkAuthors = Array.Empty<string>();
+        public string? GetRMarkAuthor(int index)
+            => index >= 0 && index < _rmarkAuthors.Length ? _rmarkAuthors[index] : null;
+
         public int FindFootnoteRefIndex(int cp) => Array.IndexOf(_footnoteRefCps, cp);
         public int FindEndnoteRefIndex(int cp)  => Array.IndexOf(_endnoteRefCps,  cp);
 
@@ -1902,7 +1931,8 @@ public class DocBinaryReader
         private FormatStyles(byte[] wd, byte[] table, List<BteEntry> papx, List<BteEntry> chpx,
                              IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles,
                              IReadOnlyList<int> sectionCps, IReadOnlyList<int> sectionFcSepx,
-                             int[] footnoteRefCps, int[] endnoteRefCps)
+                             int[] footnoteRefCps, int[] endnoteRefCps,
+                             string[] rmarkAuthors)
         {
             _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts; _styles = styles;
             SectionBoundaryCps = sectionCps;
@@ -1910,6 +1940,7 @@ public class DocBinaryReader
             TableBytes = table;
             _footnoteRefCps = footnoteRefCps;
             _endnoteRefCps  = endnoteRefCps;
+            _rmarkAuthors   = rmarkAuthors;
         }
 
         public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
@@ -1923,8 +1954,39 @@ public class DocBinaryReader
             //   lcb = 4*(N+1) + 2*N = 4 + 6*N. N = (lcb - 4) / 6.
             var fnRefCps = ReadPlcCps(table, (int)fib.FcPlcffndRef, (int)fib.LcbPlcffndRef, frdSize: 2);
             var enRefCps = ReadPlcCps(table, (int)fib.FcPlcfendRef, (int)fib.LcbPlcfendRef, frdSize: 2);
+            // Phase 3h-2 — SttbfRMark: extended SttbExtend (fExtend=0xFFFF + cData + cbExtra + entries).
+            var rmarkAuthors = ReadSttbExtend(table, (int)fib.FcSttbfRMark, (int)fib.LcbSttbfRMark);
             return new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx,
-                                    fnRefCps, enRefCps);
+                                    fnRefCps, enRefCps, rmarkAuthors);
+        }
+
+        // Phase 3h-2 — SttbExtend (extended Sttb) 파싱. Format:
+        //   [0..1]   fExtend = 0xFFFF (extended marker)
+        //   [2..3]   cData  (number of strings)
+        //   [4..5]   cbExtra (typically 0)
+        //   For each entry: [cchData (2 byte)] + [data (cchData * 2 byte UTF-16)] + [cbExtra bytes extra]
+        // SttbfRMark 는 항상 extended.
+        private static string[] ReadSttbExtend(byte[] table, int fc, int lcb)
+        {
+            if (lcb < 6 || fc < 0 || fc + lcb > table.Length) return Array.Empty<string>();
+            int pos = fc;
+            ushort fExtend = BitConverter.ToUInt16(table, pos); pos += 2;
+            if (fExtend != 0xFFFF) return Array.Empty<string>();
+            int cData = BitConverter.ToUInt16(table, pos); pos += 2;
+            int cbExtra = BitConverter.ToUInt16(table, pos); pos += 2;
+            if (cData <= 0) return Array.Empty<string>();
+            var arr = new string[cData];
+            int end = fc + lcb;
+            for (int i = 0; i < cData; i++)
+            {
+                if (pos + 2 > end) return arr.Take(i).ToArray();
+                int cch = BitConverter.ToUInt16(table, pos); pos += 2;
+                int byteLen = cch * 2;
+                if (pos + byteLen + cbExtra > end) return arr.Take(i).ToArray();
+                arr[i] = cch > 0 ? System.Text.Encoding.Unicode.GetString(table, pos, byteLen) : string.Empty;
+                pos += byteLen + cbExtra;
+            }
+            return arr;
         }
 
         private static int[] ReadPlcCps(byte[] table, int fc, int lcb, int frdSize)
@@ -2229,7 +2291,8 @@ public class DocBinaryReader
         // Phase 1f — paraIstd 가 -1 아니면 단락 스타일의 STD chpxSprms 를 먼저 적용한 뒤
         // 직접 CHPX 로 override. Heading 의 폰트/크기/굵게 등이 자동 상속된다.
         // Phase 3h — sprmCFRMarkIns / sprmCFRMarkDel 도 동시에 추출해 revision flags 반환.
-        public (RunStyle? Style, bool Inserted, bool Deleted) GetRunStyle(int charFc, int paraIstd)
+        // Phase 3h-2 — sprmCIbstRMark/Del (author index) + sprmCDttmRMark/Del (DTTM) 도 추출.
+        public (RunStyle? Style, RunRevInfo Rev) GetRunStyle(int charFc, int paraIstd)
         {
             var rs = new RunStyle();
             var info = new RunRevInfo();
@@ -2247,11 +2310,23 @@ public class DocBinaryReader
             if (direct is { Length: > 0 })
                 touched |= ApplyRunSprms(direct, rs, info);
 
-            return (touched ? rs : null, info.Inserted, info.Deleted);
+            // SttbfRMark 인덱스를 작성자 이름으로 환산.
+            if (info.RMarkAuthorIndex >= 0)
+                info.Author = GetRMarkAuthor(info.RMarkAuthorIndex);
+
+            return (touched ? rs : null, info);
         }
 
         // Revision flags 를 lambda 캡처용으로 box 한 holder.
-        private sealed class RunRevInfo { public bool Inserted; public bool Deleted; }
+        public sealed class RunRevInfo
+        {
+            public bool Inserted;
+            public bool Deleted;
+            public int  RMarkAuthorIndex = -1;   // sprmCIbstRMark / sprmCIbstRMarkDel
+            public uint RMarkDttm;                // sprmCDttmRMark / sprmCDttmRMarkDel (packed DTTM)
+            public bool HasDttm;
+            public string? Author;                // resolved from index
+        }
 
         private bool ApplyRunSprms(byte[] grpprl, RunStyle rs, RunRevInfo info)
         {
@@ -2261,9 +2336,42 @@ public class DocBinaryReader
                 // Phase 3h — revision sprms (1-byte bool).
                 if (sprm == 0x0801 && operand.Length >= 1)      { info.Inserted = operand[0] != 0; touched = true; }
                 else if (sprm == 0x0807 && operand.Length >= 1) { info.Deleted  = operand[0] != 0; touched = true; }
-                else if (ApplyRunSprm(sprm, operand, rs))                                             touched = true;
+                // Phase 3h-2 — author index (2-byte) + DTTM (4-byte). Ins / Del 변종 모두 동일 슬롯에 저장
+                //   (Run 단위로는 ins XOR del 가 일반적이라 충돌 없음).
+                else if ((sprm == 0x4804 || sprm == 0x4863) && operand.Length >= 2)
+                {
+                    info.RMarkAuthorIndex = BitConverter.ToUInt16(operand, 0);
+                    touched = true;
+                }
+                else if ((sprm == 0x6805 || sprm == 0x6864) && operand.Length >= 4)
+                {
+                    info.RMarkDttm = BitConverter.ToUInt32(operand, 0);
+                    info.HasDttm   = true;
+                    touched = true;
+                }
+                else if (ApplyRunSprm(sprm, operand, rs)) touched = true;
             });
             return touched;
+        }
+
+        // Phase 3h-2 — DTTM (packed 32-bit) → DateTimeOffset.
+        //   bits  0..5  : minute (0-59)
+        //   bits  6..10 : hour   (0-23)
+        //   bits 11..15 : day    (1-31)
+        //   bits 16..19 : month  (1-12)
+        //   bits 20..28 : year - 1900
+        //   bits 29..31 : day-of-week (무시)
+        public static System.DateTimeOffset? UnpackDttm(uint dttm)
+        {
+            if (dttm == 0) return null;
+            int min  = (int)(dttm        & 0x3F);
+            int hour = (int)((dttm >> 6) & 0x1F);
+            int day  = (int)((dttm >> 11) & 0x1F);
+            int mon  = (int)((dttm >> 16) & 0x0F);
+            int year = (int)((dttm >> 20) & 0x1FF) + 1900;
+            if (mon < 1 || mon > 12 || day < 1 || day > 31 || hour > 23 || min > 59) return null;
+            try { return new System.DateTimeOffset(year, mon, day, hour, min, 0, System.TimeSpan.Zero); }
+            catch { return null; }
         }
 
         private bool ApplyRunSprm(ushort sprm, byte[] operand, RunStyle rs)

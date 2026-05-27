@@ -6,6 +6,13 @@ public sealed class Paragraph : Block
     public ParagraphStyle Style { get; set; } = new();
     public IList<Run> Runs { get; set; } = new List<Run>();
 
+    /// <summary>변경추적 — 단락 마크(끝)가 새로 삽입됨. 단락 분할이 새 편집이라는 표시.
+    /// DOCX <c>w:pPr/w:rPr/w:ins</c> 와 매핑. 단락 내 Run 의 IsInsertedRevision 과는 독립.</summary>
+    public bool IsInsertedRevision { get; set; }
+
+    /// <summary>변경추적 — 단락 마크가 삭제됨(두 단락이 합쳐질 예정). DOCX <c>w:pPr/w:rPr/w:del</c>.</summary>
+    public bool IsDeletedRevision { get; set; }
+
     public string GetPlainText() => string.Concat(Runs.Select(r => r.Text));
 
     public Paragraph AddText(string text, RunStyle? style = null)
@@ -23,9 +30,11 @@ public sealed class Paragraph : Block
 
     public Paragraph Clone() => new()
     {
-        StyleId = StyleId,
-        Style   = Style.Clone(),
-        Runs    = Runs.Select(r => r.Clone()).ToList(),
+        StyleId            = StyleId,
+        Style              = Style.Clone(),
+        Runs               = Runs.Select(r => r.Clone()).ToList(),
+        IsInsertedRevision = IsInsertedRevision,
+        IsDeletedRevision  = IsDeletedRevision,
     };
 }
 
