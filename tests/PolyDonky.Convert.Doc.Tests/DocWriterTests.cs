@@ -1,0 +1,236 @@
+using System.Text;
+using PolyDonky.Convert.Doc;
+using PolyDonky.Core;
+
+namespace PolyDonky.Convert.Doc.Tests;
+
+/// <summary>
+/// DocWriter (IWPF → RTF) 출력 검증.
+/// RTF 는 텍스트 기반이라 출력 문자열 내 control word 존재 여부로 검증한다.
+/// </summary>
+public class DocWriterTests
+{
+    private static string WriteRtf(PolyDonkyument doc)
+    {
+        using var ms = new MemoryStream();
+        new DocWriter().Write(doc, ms);
+        // RTF 출력은 모든 비-ASCII 가 \uNNNN? 로 이스케이프되어 순수 ASCII 이므로 Latin1 로 안전하게 디코딩.
+        return Encoding.Latin1.GetString(ms.ToArray());
+    }
+
+    private static PolyDonkyument DocWith(params Block[] blocks)
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        foreach (var b in blocks) sec.Blocks.Add(b);
+        doc.Sections.Add(sec);
+        return doc;
+    }
+
+    // ── 기본 RTF 구조 ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Header_Has_Rtf_Signature_And_Font_And_Color_Tables()
+    {
+        var doc = DocWith(Paragraph.Of("hello"));
+        string rtf = WriteRtf(doc);
+
+        Assert.StartsWith(@"{\rtf1\ansi", rtf);
+        Assert.Contains(@"\fonttbl", rtf);
+        Assert.Contains(@"\colortbl", rtf);
+        Assert.EndsWith("}", rtf.TrimEnd());
+    }
+
+    [Fact]
+    public void Plain_Paragraph_Emits_Text_With_Pard_And_Par()
+    {
+        var rtf = WriteRtf(DocWith(Paragraph.Of("hello world")));
+        Assert.Contains(@"\pard", rtf);
+        Assert.Contains("hello world", rtf);
+        Assert.Contains(@"\par", rtf);
+    }
+
+    [Fact]
+    public void Run_Styles_Bold_Italic_Underline_Emit_Toggles()
+    {
+        var p = new Paragraph();
+        p.AddText("B", new RunStyle { Bold = true });
+        p.AddText("I", new RunStyle { Italic = true });
+        p.AddText("U", new RunStyle { Underline = true });
+        p.AddText("S", new RunStyle { Strikethrough = true });
+
+        var rtf = WriteRtf(DocWith(p));
+        Assert.Contains(@"\b ", rtf);
+        Assert.Contains(@"\b0", rtf);
+        Assert.Contains(@"\i ", rtf);
+        Assert.Contains(@"\i0", rtf);
+        Assert.Contains(@"\ul", rtf);
+        Assert.Contains(@"\ulnone", rtf);
+        Assert.Contains(@"\strike", rtf);
+    }
+
+    [Fact]
+    public void Empty_Document_Produces_Valid_Skeleton()
+    {
+        var rtf = WriteRtf(new PolyDonkyument());
+        Assert.StartsWith(@"{\rtf1\ansi", rtf);
+        Assert.EndsWith("}", rtf.TrimEnd());
+    }
+
+    // ── 하이퍼링크 ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Hyperlink_Run_Emits_Field_With_HYPERLINK_Instruction()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "click here", Url = "https://example.com/page?x=1" });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"{\field{\*\fldinst HYPERLINK ""https://example.com/page?x=1""}", rtf);
+        Assert.Contains(@"{\fldrslt", rtf);
+        Assert.Contains("click here", rtf);
+    }
+
+    [Fact]
+    public void Hyperlink_With_Bold_Run_Wraps_Inside_Fldrslt()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run
+        {
+            Text = "PolyDonky",
+            Url = "https://github.com/elrang3843/polydonky",
+            Style = { Bold = true }
+        });
+        var rtf = WriteRtf(DocWith(p));
+
+        // 하이퍼링크 텍스트 안에 굵게 토글이 적용되어야 함
+        int instStart = rtf.IndexOf(@"\fldrslt", StringComparison.Ordinal);
+        Assert.True(instStart > 0);
+        Assert.Contains(@"\b ", rtf[instStart..]);
+        Assert.Contains("PolyDonky", rtf[instStart..]);
+    }
+
+    // ── 자동 필드 ─────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(FieldType.Page,      "PAGE")]
+    [InlineData(FieldType.NumPages,  "NUMPAGES")]
+    [InlineData(FieldType.Date,      "DATE")]
+    [InlineData(FieldType.Time,      "TIME")]
+    [InlineData(FieldType.Author,    "AUTHOR")]
+    [InlineData(FieldType.Title,     "TITLE")]
+    [InlineData(FieldType.NumChars,  "NUMCHARS")]
+    [InlineData(FieldType.FileName,  "FILENAME")]
+    [InlineData(FieldType.Subject,   "SUBJECT")]
+    [InlineData(FieldType.Keywords,  "KEYWORDS")]
+    [InlineData(FieldType.Comments,  "COMMENTS")]
+    [InlineData(FieldType.If,        "IF")]
+    public void Field_Run_Emits_Expected_Instruction(FieldType type, string keyword)
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "1", Field = type });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains($@"\fldinst {keyword}", rtf);
+    }
+
+    [Fact]
+    public void Field_Seq_Run_Preserves_Category_Arg()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "3", Field = FieldType.Seq, FieldArg = "Figure" });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\fldinst SEQ Figure", rtf);
+    }
+
+    [Fact]
+    public void Field_StyleRef_Run_Quotes_Argument()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "Chapter Title", Field = FieldType.StyleRef, FieldArg = "Heading 1" });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\fldinst STYLEREF ""Heading 1""", rtf);
+    }
+
+    [Fact]
+    public void Empty_Field_Run_Still_Emits_Field_Group()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = string.Empty, Field = FieldType.Page });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\fldinst PAGE", rtf);
+    }
+
+    // ── 책갈피 ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Bookmark_Start_End_Runs_Emit_Markers()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "",      BookmarkStart = "chapter_1" });
+        p.Runs.Add(new Run { Text = "Chapter 1" });
+        p.Runs.Add(new Run { Text = "",      BookmarkEnd   = "chapter_1" });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"{\*\bkmkstart chapter_1}", rtf);
+        Assert.Contains(@"{\*\bkmkend chapter_1}",   rtf);
+
+        // 마커 위치 — start 가 본문보다 앞, end 가 본문보다 뒤에 와야 함
+        int s = rtf.IndexOf(@"\bkmkstart", StringComparison.Ordinal);
+        int t = rtf.IndexOf("Chapter 1", StringComparison.Ordinal);
+        int e = rtf.IndexOf(@"\bkmkend",   StringComparison.Ordinal);
+        Assert.True(s < t && t < e);
+    }
+
+    [Fact]
+    public void Bookmark_Name_Strips_Non_Ascii_And_Whitespace()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "", BookmarkStart = "북마크 1" });
+        p.Runs.Add(new Run { Text = "x" });
+        p.Runs.Add(new Run { Text = "", BookmarkEnd   = "북마크 1" });
+        var rtf = WriteRtf(DocWith(p));
+
+        // 한글·공백은 제거 → "1" 만 남음
+        Assert.Contains(@"\bkmkstart 1}", rtf);
+        Assert.Contains(@"\bkmkend 1}",   rtf);
+    }
+
+    [Fact]
+    public void Bookmark_Empty_Name_Falls_Back_To_Default()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = "", BookmarkStart = "!!!" });
+        p.Runs.Add(new Run { Text = "x" });
+        p.Runs.Add(new Run { Text = "", BookmarkEnd   = "!!!" });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.Contains(@"\bkmkstart bm}", rtf);
+        Assert.Contains(@"\bkmkend bm}",   rtf);
+    }
+
+    [Fact]
+    public void Run_With_Bookmark_And_Hyperlink_Emits_Both_Markers()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run
+        {
+            Text          = "anchor",
+            Url           = "https://example.com",
+            BookmarkStart = "ref1",
+            BookmarkEnd   = "ref1",
+        });
+        var rtf = WriteRtf(DocWith(p));
+
+        int s = rtf.IndexOf(@"\bkmkstart ref1", StringComparison.Ordinal);
+        int h = rtf.IndexOf("HYPERLINK",         StringComparison.Ordinal);
+        int e = rtf.IndexOf(@"\bkmkend ref1",   StringComparison.Ordinal);
+        Assert.True(s > 0);
+        Assert.True(h > 0);
+        Assert.True(e > 0);
+        Assert.True(s < h && h < e);
+    }
+}

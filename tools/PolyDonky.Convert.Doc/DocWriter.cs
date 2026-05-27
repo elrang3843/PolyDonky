@@ -9,7 +9,9 @@ namespace PolyDonky.Convert.Doc;
 /// <summary>
 /// IWPF → RTF (Rich Text Format) 변환기.
 /// 지원: 글자 서식·단락 서식·위첨자/아래첨자·들여쓰기·리스트·이미지·표·메타데이터·
-///       도형(\shp, 위치·크기·종류·색상 아웃라인)·OLE 개체(OpaqueBlock 재출력 또는 플레이스홀더).
+///       도형(\shp, 위치·크기·종류·색상 아웃라인)·OLE 개체(OpaqueBlock 재출력 또는 플레이스홀더)·
+///       하이퍼링크(\field HYPERLINK)·자동 필드(PAGE/NUMPAGES/DATE/TIME/AUTHOR/TITLE 등)·
+///       책갈피(\*\bkmkstart / \*\bkmkend).
 /// v1.0.0 이후 계획: \shp 전체 속성(그림자·3D·꼭짓점 경로 등) + OLE 데이터 완전 직렬화.
 /// </summary>
 public class DocWriter
@@ -216,8 +218,48 @@ public class DocWriter
 
     private void WriteRun(Run run, ParagraphStyle ps, StringBuilder sb)
     {
-        if (string.IsNullOrEmpty(run.Text)) return;
+        bool hasText      = !string.IsNullOrEmpty(run.Text);
+        bool hasBkmkStart = !string.IsNullOrEmpty(run.BookmarkStart);
+        bool hasBkmkEnd   = !string.IsNullOrEmpty(run.BookmarkEnd);
+        bool isHyperlink  = !string.IsNullOrEmpty(run.Url);
+        var  fieldType    = run.Field;
 
+        if (!hasText && !hasBkmkStart && !hasBkmkEnd && !isHyperlink && fieldType is null)
+            return;
+
+        if (hasBkmkStart)
+            sb.Append($@"{{\*\bkmkstart {SanitizeBookmarkName(run.BookmarkStart!)}}}");
+
+        if (isHyperlink || fieldType is not null)
+            WriteFieldRun(run, ps, sb, isHyperlink, fieldType);
+        else if (hasText)
+            WriteStyledRunBody(run, ps, sb);
+
+        if (hasBkmkEnd)
+            sb.Append($@"{{\*\bkmkend {SanitizeBookmarkName(run.BookmarkEnd!)}}}");
+    }
+
+    private void WriteFieldRun(Run run, ParagraphStyle ps, StringBuilder sb, bool isHyperlink, FieldType? fieldType)
+    {
+        string fldinst = isHyperlink
+            ? $"HYPERLINK \"{EscapeFieldArg(run.Url!)}\""
+            : BuildFieldInstruction(fieldType!.Value, run.FieldArg);
+
+        sb.Append(@"{\field{\*\fldinst ");
+        sb.Append(fldinst);
+        sb.Append(@"}{\fldrslt ");
+        if (!string.IsNullOrEmpty(run.Text))
+        {
+            sb.Append('{');
+            WriteStyledRunBody(run, ps, sb);
+            sb.Append('}');
+        }
+        sb.Append("}}");
+        sb.Append(' ');
+    }
+
+    private void WriteStyledRunBody(Run run, ParagraphStyle ps, StringBuilder sb)
+    {
         var rs = run.Style ?? new RunStyle();
 
         // 글꼴
@@ -259,6 +301,71 @@ public class DocWriter
         if (hasBg)            sb.Append(@"\cb0");
 
         sb.Append(' ');
+    }
+
+    /// <summary>FieldType → RTF \fldinst 명령문 헤더. Reader 의 ParseFieldInstr 와 역매핑.</summary>
+    private static string BuildFieldInstruction(FieldType type, string? arg)
+    {
+        string head = type switch
+        {
+            FieldType.Page        => "PAGE",
+            FieldType.NumPages    => "NUMPAGES",
+            FieldType.Date        => "DATE",
+            FieldType.Time        => "TIME",
+            FieldType.Author      => "AUTHOR",
+            FieldType.Title       => "TITLE",
+            FieldType.NumChars    => "NUMCHARS",
+            FieldType.FileName    => "FILENAME",
+            FieldType.Subject     => "SUBJECT",
+            FieldType.Keywords    => "KEYWORDS",
+            FieldType.Comments    => "COMMENTS",
+            FieldType.Seq         => "SEQ",
+            FieldType.Ref         => "REF",
+            FieldType.StyleRef    => "STYLEREF",
+            FieldType.IncludeText => "INCLUDETEXT",
+            FieldType.If          => "IF",
+            _                     => "MERGEFIELD",
+        };
+        if (string.IsNullOrEmpty(arg)) return head;
+
+        // STYLEREF / INCLUDETEXT 는 인자를 따옴표로 감싸는 게 표준
+        bool quote = type is FieldType.StyleRef or FieldType.IncludeText;
+        return quote ? $"{head} \"{EscapeFieldArg(arg)}\"" : $"{head} {EscapeFieldArg(arg)}";
+    }
+
+    private static string EscapeFieldArg(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        var sb = new StringBuilder(s.Length + 8);
+        foreach (char c in s)
+        {
+            switch (c)
+            {
+                case '\\': sb.Append(@"\\"); break;
+                case '{':  sb.Append(@"\{"); break;
+                case '}':  sb.Append(@"\}"); break;
+                case '"':  sb.Append("'");   break;  // RTF \fldinst 인자에서 내부 따옴표 회피
+                default:
+                    if (c < 128) sb.Append(c);
+                    else         sb.Append($@"\u{(short)c}?");
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>책갈피 이름은 RTF 에서 공백/특수문자를 허용하지 않으므로 ASCII identifier 로 정리.</summary>
+    private static string SanitizeBookmarkName(string name)
+    {
+        var sb = new StringBuilder(name.Length);
+        foreach (char c in name)
+        {
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') || c == '_')
+                sb.Append(c);
+        }
+        if (sb.Length == 0) sb.Append("bm");
+        return sb.ToString();
     }
 
     // ── 표 ──────────────────────────────────────────────────────────────────────

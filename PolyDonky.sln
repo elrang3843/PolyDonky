@@ -63,6 +63,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PolyDonky.Convert.Hwp", "to
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PolyDonky.Codecs.Hwp", "src\PolyDonky.Codecs.Hwp\PolyDonky.Codecs.Hwp.csproj", "{2C36A416-A9AE-4C97-8BFA-A3F8A9D637FF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PolyDonky.Convert.Doc.Tests", "tests\PolyDonky.Convert.Doc.Tests\PolyDonky.Convert.Doc.Tests.csproj", "{9954A120-23B6-4710-B26F-32683167037D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -397,6 +399,18 @@ Global
 		{2C36A416-A9AE-4C97-8BFA-A3F8A9D637FF}.Release|x64.Build.0 = Release|Any CPU
 		{2C36A416-A9AE-4C97-8BFA-A3F8A9D637FF}.Release|x86.ActiveCfg = Release|Any CPU
 		{2C36A416-A9AE-4C97-8BFA-A3F8A9D637FF}.Release|x86.Build.0 = Release|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Debug|x64.Build.0 = Debug|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Debug|x86.Build.0 = Debug|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Release|x64.ActiveCfg = Release|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Release|x64.Build.0 = Release|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Release|x86.ActiveCfg = Release|Any CPU
+		{9954A120-23B6-4710-B26F-32683167037D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -429,5 +443,6 @@ Global
 		{E309AB2F-913D-4703-8826-DB3E01505F69} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{3F536BED-ECDD-4AB4-8979-47BBACE193AA} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{2C36A416-A9AE-4C97-8BFA-A3F8A9D637FF} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{9954A120-23B6-4710-B26F-32683167037D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
