@@ -140,6 +140,8 @@ public class DocBinaryReader
 
             // Phase 3g — 각주/미주 sub-document 텍스트 추출 후 doc.Footnotes / doc.Endnotes 에 매핑.
             ApplyFootnotesAndEndnotes(wd, table, fib, doc);
+            // Phase 3j-2 — comment author/date 메타 (ATRDPre10 + SttbfRMark) 를 CommentEntry 에 매핑.
+            ApplyCommentsMetadata(table, fib, doc.Comments, fmt.RMarkAuthors);
 
             // 메타데이터 (best-effort)
             var summary = ReadAll(root, "SummaryInformation");
@@ -1767,6 +1769,45 @@ public class DocBinaryReader
         }
     }
 
+    // Phase 3j-2 — PlcfAtnRef 의 ATRDPre10 (30 byte) 들에서 author 인덱스 (ibstName) + DTTM 추출,
+    //   이미 만들어진 CommentEntry 들에 Author + Date 적용. 1:1 매핑 (PlcfAtnRef 의 i 번째 entry 가
+    //   i 번째 comment 와 대응). ATRDPre10 layout:
+    //     [0..1]  xstUsrInitl.cch (의 wide-char 개수)
+    //     [2..21] xstUsrInitl chars (10 wide chars)
+    //     [22..23] ibst       (SttbfAtnBkmk index — skip)
+    //     [24..25] ibstName   (SttbfRMark index — author full name)
+    //     [26..29] dttm       (packed DateTime)
+    private static void ApplyCommentsMetadata(
+        byte[] table, Fib fib, IList<CommentEntry> comments, IReadOnlyList<string> authors)
+    {
+        if (comments.Count == 0 || fib.LcbPlcfAtnRef < 4 + 30) return;
+        int fc = (int)fib.FcPlcfAtnRef;
+        int lcb = (int)fib.LcbPlcfAtnRef;
+        if (fc < 0 || fc + lcb > table.Length) return;
+
+        const int atrdSize = 30;
+        int element = 4 + atrdSize;
+        int n = (lcb - 4) / element;
+        if (n <= 0) return;
+
+        int dataBase = fc + 4 * (n + 1);
+        int count = Math.Min(comments.Count, n);
+        for (int i = 0; i < count; i++)
+        {
+            int off = dataBase + i * atrdSize;
+            if (off + atrdSize > fc + lcb) break;
+            int ibstName = BitConverter.ToUInt16(table, off + 24);
+            uint dttm    = BitConverter.ToUInt32(table, off + 26);
+
+            if (ibstName > 0 && ibstName <= authors.Count)
+                comments[i].Author = authors[ibstName - 1];   // ibstName is 1-based per spec
+            else if (ibstName >= 0 && ibstName < authors.Count)
+                comments[i].Author = authors[ibstName];        // 0-based fallback
+            if (dttm != 0)
+                comments[i].Date = FormatStyles.UnpackDttm(dttm);
+        }
+    }
+
     // Phase 3j — PlcfAtnTxt 의 sub-story 들에서 코멘트 텍스트 추출 후 CommentEntry 로 sink 에 추가.
     //   ExtractStoriesInto 의 CommentEntry 변종 (FootnoteEntry vs CommentEntry 가 서로 호환 안 되어 별도 helper).
     private static void ExtractCommentsInto(
@@ -2083,6 +2124,8 @@ public class DocBinaryReader
         private string[] _rmarkAuthors = Array.Empty<string>();
         public string? GetRMarkAuthor(int index)
             => index >= 0 && index < _rmarkAuthors.Length ? _rmarkAuthors[index] : null;
+        // Phase 3j-2 — outer 코드가 SttbfRMark 배열을 직접 사용해야 할 때 (e.g., ATRDPre10 의 ibstName 해소).
+        public IReadOnlyList<string> RMarkAuthors => _rmarkAuthors;
 
         // Phase 3i-2 — Bookmark events. CP 단위로 시작/끝 이벤트를 저장; char-walk 이 매 CP 마다 확인.
         //   같은 CP 에 여러 책갈피 시작/끝 이 가능하므로 list 형식.
