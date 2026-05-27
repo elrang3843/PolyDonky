@@ -673,6 +673,12 @@ public class DocBinaryReader
             "SUBJECT"  => (FieldType.Subject,  (string?)null),
             "KEYWORDS" => (FieldType.Keywords, (string?)null),
             "COMMENTS" => (FieldType.Comments, (string?)null),
+            // Phase 3a-4 — 참조 / 인클루드 / 조건 계열 (인스트 인자는 현재 비보존, 결과 텍스트만 유지).
+            "SEQ"         => (FieldType.Seq,         (string?)null),
+            "REF"         => (FieldType.Ref,         (string?)null),
+            "STYLEREF"    => (FieldType.StyleRef,    (string?)null),
+            "INCLUDETEXT" => (FieldType.IncludeText, (string?)null),
+            "IF"          => (FieldType.If,          (string?)null),
             _          => ((FieldType?)null,   (string?)null),
         };
     }

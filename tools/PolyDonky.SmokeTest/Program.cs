@@ -64,6 +64,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3f-2 PICF FOPT pib → BStore l
 harness.Run("DOC (Word 97-2003 binary) — Phase 3a-2 필드 instr (HYPERLINK / PAGE)", DocBinaryPhase3a2FieldInstr);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3g 각주/미주 텍스트 추출", DocBinaryPhase3gFootnotesEndnotes);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3a-3 필드 instr 추가 (NUMCHARS/FILENAME/SUBJECT/KEYWORDS/COMMENTS)", DocBinaryPhase3a3ExtraFieldInstr);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3a-4 필드 instr 추가 (SEQ/REF/STYLEREF/INCLUDETEXT/IF)", DocBinaryPhase3a4ReferenceFieldInstr);
 
 return harness.Finish();
 
@@ -4619,6 +4620,117 @@ static void DocBinaryPhase3a3ExtraFieldInstr()
         SmokeHarness.Equal(FieldType.Keywords, para.Runs[3].Field, "Run[3].Field = Keywords");
         SmokeHarness.Equal("e", para.Runs[4].Text, "Run[4].Text");
         SmokeHarness.Equal(FieldType.Comments, para.Runs[4].Field, "Run[4].Field = Comments");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3a-4 — 참조 / 인클루드 / 조건 계열 필드 (SEQ / REF / STYLEREF / INCLUDETEXT / IF).
+//   인스트의 첫 토큰만 파싱 — 인자 (카테고리/책갈피명/스타일명/경로) 는 현재 비보존.
+//   결과 텍스트와 FieldType 만 검증.
+static void DocBinaryPhase3a4ReferenceFieldInstr()
+{
+    // 5 필드 인접 — 각 instr 에 인자도 함께 박아 첫 토큰만 추출됨을 확인.
+    //   "<0x13>SEQ Figure<0x14>1<0x15>
+    //    <0x13>REF MyBookmark<0x14>2<0x15>
+    //    <0x13>STYLEREF \"Heading 1\"<0x14>3<0x15>
+    //    <0x13>INCLUDETEXT \"file.doc\"<0x14>4<0x15>
+    //    <0x13>IF { PAGE } = 1<0x14>5<0x15>\r"
+    string text =
+        "" + "SEQ Figure"               + "" + "1" + "" +
+        "" + "REF MyBookmark"           + "" + "2" + "" +
+        "" + "STYLEREF \"Heading 1\""   + "" + "3" + "" +
+        "" + "INCLUDETEXT \"file.doc\"" + "" + "4" + "" +
+        "" + "IF { PAGE } = 1"          + "" + "5" + "" +
+        "\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    int cpara = 1;
+    int paraEndFc = 0x200 + ccp * 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)paraEndFc);
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)paraEndFc);
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);     tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)paraEndFc); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx);    tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);     tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)paraEndFc); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx);    tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+        SmokeHarness.True(blocks.Count >= 1, $"blocks.Count >= 1 (got {blocks.Count})");
+        var para = (Paragraph)blocks[0];
+
+        SmokeHarness.Equal("12345", para.GetPlainText(), "plain text = 12345");
+        SmokeHarness.Equal(5, para.Runs.Count, $"Runs.Count = 5 (got {para.Runs.Count})");
+
+        SmokeHarness.Equal("1", para.Runs[0].Text, "Run[0].Text");
+        SmokeHarness.Equal(FieldType.Seq,         para.Runs[0].Field, "Run[0].Field = Seq");
+        SmokeHarness.Equal("2", para.Runs[1].Text, "Run[1].Text");
+        SmokeHarness.Equal(FieldType.Ref,         para.Runs[1].Field, "Run[1].Field = Ref");
+        SmokeHarness.Equal("3", para.Runs[2].Text, "Run[2].Text");
+        SmokeHarness.Equal(FieldType.StyleRef,    para.Runs[2].Field, "Run[2].Field = StyleRef");
+        SmokeHarness.Equal("4", para.Runs[3].Text, "Run[3].Text");
+        SmokeHarness.Equal(FieldType.IncludeText, para.Runs[3].Field, "Run[3].Field = IncludeText");
+        SmokeHarness.Equal("5", para.Runs[4].Text, "Run[4].Text");
+        SmokeHarness.Equal(FieldType.If,          para.Runs[4].Field, "Run[4].Field = If");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
