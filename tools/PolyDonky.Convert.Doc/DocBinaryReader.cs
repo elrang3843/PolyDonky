@@ -431,14 +431,15 @@ public class DocBinaryReader
         //   [MS-DOC] §2.8.25 — 0x13 field begin, 0x14 separator, 0x15 end. 중첩 필드는 1-level
         //   단순화 (대부분의 실문서에서 충분).
         int fieldMode = 0;
-        // Phase 3a-2 — 활성 필드 instr / result 범위 추적.
+        // Phase 3a-2 / 3a-5 — 활성 필드 instr / result 범위 추적.
         //   fieldInstr: 0x13 ~ 0x14 사이 누적된 instr 문자 (HYPERLINK "url", PAGE, DATE 등).
         //   resultStartFc: 0x14 직후 fc — result 영역의 시작.
-        //   activeUrl / activeFieldType: instr 파싱 결과 — result 영역의 각 fc 에 매핑됨.
+        //   activeUrl / activeFieldType / activeFieldArg: instr 파싱 결과 — result 영역의 각 fc 에 매핑됨.
         StringBuilder? fieldInstr = null;
         int        resultStartFc  = -1;
         string?    activeUrl      = null;
         FieldType? activeFieldType = null;
+        string?    activeFieldArg  = null;
         // Phase 3c — 다음 처리할 섹션 boundary 의 인덱스. SectionBoundaryCps[1..] 가 본문 내 break.
         //          [0]=0 은 시작, [last]=ccpText 는 본문 끝. 단락이 boundary 를 넘으면 새 Section.
         int nextSecIdx = 1;
@@ -484,25 +485,28 @@ public class DocBinaryReader
                     resultStartFc  = -1;
                     activeUrl      = null;
                     activeFieldType = null;
+                    activeFieldArg  = null;
                     break;
                 case '\u0014':  // field separator → field result 모드 (포함)
                     fieldMode = 2;
                     if (fieldInstr is not null)
                     {
-                        var (t, u) = ParseFieldInstr(fieldInstr.ToString());
+                        var (t, u, a) = ParseFieldInstr(fieldInstr.ToString());
                         activeFieldType = t;
                         activeUrl       = u;
+                        activeFieldArg  = a;
                     }
                     resultStartFc = fc;
                     break;
                 case '\u0015':  // field end → 일반 모드 복귀
                     if (resultStartFc >= 0)
-                        fmt.AddFieldRange(resultStartFc, fc, activeUrl, activeFieldType);
+                        fmt.AddFieldRange(resultStartFc, fc, activeUrl, activeFieldType, activeFieldArg);
                     fieldMode = 0;
                     fieldInstr = null;
                     resultStartFc  = -1;
                     activeUrl      = null;
                     activeFieldType = null;
+                    activeFieldArg  = null;
                     break;
                 case '\u0001':  // picture marker (inline image)
                     // Phase 3e   — char-walk 중 picture marker 만나면 현재 단락 flush 후 ImageBlock 삽입.
@@ -634,24 +638,26 @@ public class DocBinaryReader
         paraFcs.Clear();
     }
 
-    // Phase 3a-2 — 필드 instr 파싱.
-    //   "HYPERLINK \"https://example.com\""  → (null, "https://example.com")
-    //   "HYPERLINK \"url\" \\o \"tooltip\""   → (null, "url")
-    //   "PAGE \\* MERGEFORMAT"               → (FieldType.Page, null)
-    //   "NUMPAGES"                            → (FieldType.NumPages, null)
-    //   기타 미지원 instr → (null, null)
-    private static (FieldType? Type, string? Url) ParseFieldInstr(string instr)
+    // Phase 3a-2 / 3a-5 — 필드 instr 파싱.
+    //   "HYPERLINK \"https://example.com\""  → (null, Url="https://example.com", Arg=null)
+    //   "PAGE \\* MERGEFORMAT"               → (FieldType.Page, null, null)
+    //   "SEQ Figure \\* ARABIC"              → (FieldType.Seq, null, Arg="Figure")
+    //   "REF MyBookmark"                     → (FieldType.Ref, null, Arg="MyBookmark")
+    //   "STYLEREF \"Heading 1\""             → (FieldType.StyleRef, null, Arg="Heading 1")
+    //   "INCLUDETEXT \"file.doc\""           → (FieldType.IncludeText, null, Arg="file.doc")
+    //   기타 미지원 instr → (null, null, null)
+    private static (FieldType? Type, string? Url, string? Arg) ParseFieldInstr(string instr)
     {
         var s = instr.TrimStart();
-        if (s.Length == 0) return (null, null);
+        if (s.Length == 0) return (null, null, null);
 
         if (s.StartsWith("HYPERLINK", StringComparison.OrdinalIgnoreCase))
         {
             int q1 = s.IndexOf('"');
-            if (q1 < 0) return (null, null);
+            if (q1 < 0) return (null, null, null);
             int q2 = s.IndexOf('"', q1 + 1);
-            if (q2 <= q1) return (null, null);
-            return (null, s.Substring(q1 + 1, q2 - q1 - 1));
+            if (q2 <= q1) return (null, null, null);
+            return (null, s.Substring(q1 + 1, q2 - q1 - 1), null);
         }
 
         // 첫 토큰 = 필드 종류. " " / "\t" / "\\" 로 끝.
@@ -659,28 +665,51 @@ public class DocBinaryReader
         while (wordEnd < s.Length && !char.IsWhiteSpace(s[wordEnd]) && s[wordEnd] != '\\')
             wordEnd++;
         var head = s[..wordEnd].ToUpperInvariant();
-        return head switch
+        FieldType? type = head switch
         {
-            "PAGE"     => (FieldType.Page,     (string?)null),
-            "NUMPAGES" => (FieldType.NumPages, (string?)null),
-            "DATE"     => (FieldType.Date,     (string?)null),
-            "TIME"     => (FieldType.Time,     (string?)null),
-            "AUTHOR"   => (FieldType.Author,   (string?)null),
-            "TITLE"    => (FieldType.Title,    (string?)null),
-            // Phase 3a-3 — 문서 메타데이터 / 통계 계열 필드.
-            "NUMCHARS" => (FieldType.NumChars, (string?)null),
-            "FILENAME" => (FieldType.FileName, (string?)null),
-            "SUBJECT"  => (FieldType.Subject,  (string?)null),
-            "KEYWORDS" => (FieldType.Keywords, (string?)null),
-            "COMMENTS" => (FieldType.Comments, (string?)null),
-            // Phase 3a-4 — 참조 / 인클루드 / 조건 계열 (인스트 인자는 현재 비보존, 결과 텍스트만 유지).
-            "SEQ"         => (FieldType.Seq,         (string?)null),
-            "REF"         => (FieldType.Ref,         (string?)null),
-            "STYLEREF"    => (FieldType.StyleRef,    (string?)null),
-            "INCLUDETEXT" => (FieldType.IncludeText, (string?)null),
-            "IF"          => (FieldType.If,          (string?)null),
-            _          => ((FieldType?)null,   (string?)null),
+            "PAGE"        => FieldType.Page,
+            "NUMPAGES"    => FieldType.NumPages,
+            "DATE"        => FieldType.Date,
+            "TIME"        => FieldType.Time,
+            "AUTHOR"      => FieldType.Author,
+            "TITLE"       => FieldType.Title,
+            // Phase 3a-3
+            "NUMCHARS"    => FieldType.NumChars,
+            "FILENAME"    => FieldType.FileName,
+            "SUBJECT"     => FieldType.Subject,
+            "KEYWORDS"    => FieldType.Keywords,
+            "COMMENTS"    => FieldType.Comments,
+            // Phase 3a-4
+            "SEQ"         => FieldType.Seq,
+            "REF"         => FieldType.Ref,
+            "STYLEREF"    => FieldType.StyleRef,
+            "INCLUDETEXT" => FieldType.IncludeText,
+            "IF"          => FieldType.If,
+            _             => (FieldType?)null,
         };
+        if (type is null) return (null, null, null);
+
+        // Phase 3a-5 — head 다음 첫 의미 인자 추출. 스위치 (\) 만나면 인자 없음.
+        //   "ABC" 형식이면 따옴표 안쪽, 아니면 다음 공백/스위치 까지의 토큰.
+        string? arg = null;
+        int p = wordEnd;
+        while (p < s.Length && char.IsWhiteSpace(s[p])) p++;
+        if (p < s.Length && s[p] != '\\')
+        {
+            if (s[p] == '"')
+            {
+                int q = s.IndexOf('"', p + 1);
+                if (q > p) arg = s.Substring(p + 1, q - p - 1);
+            }
+            else
+            {
+                int end = p;
+                while (end < s.Length && !char.IsWhiteSpace(s[end]) && s[end] != '\\')
+                    end++;
+                if (end > p) arg = s.Substring(p, end - p);
+            }
+        }
+        return (type, null, arg);
     }
 
     // 단일 셀 단락 만들기 — Phase 1 의 Run 분할 알고리즘 재사용. Phase 3a-2 — URL/FieldType 도
@@ -695,6 +724,7 @@ public class DocBinaryReader
         RunStyle?  curStyle = null;
         string?    curUrl   = null;
         FieldType? curField = null;
+        string?    curArg   = null;
         var curText = new StringBuilder();
 
         void Flush()
@@ -703,6 +733,7 @@ public class DocBinaryReader
             var run = new Run { Text = curText.ToString(), Style = curStyle };
             if (curUrl is { Length: > 0 }) run.Url = curUrl;
             if (curField is not null)      run.Field = curField;
+            if (curArg is { Length: > 0 }) run.FieldArg = curArg;
             para.Runs.Add(run);
             curText.Clear();
         }
@@ -710,15 +741,18 @@ public class DocBinaryReader
         for (int i = 0; i < chars.Count; i++)
         {
             var rs = fmt.GetRunStyle(fcs[i], paraIstd) ?? new RunStyle();
-            var (url, field) = fmt.GetFieldAtFc(fcs[i]);
+            var (url, field, arg) = fmt.GetFieldAtFc(fcs[i]);
             bool styleBreak = curStyle is null || !RunStyleEquals(curStyle, rs);
-            bool fieldBreak = !string.Equals(curUrl, url, StringComparison.Ordinal) || curField != field;
+            bool fieldBreak = !string.Equals(curUrl, url, StringComparison.Ordinal)
+                            || curField != field
+                            || !string.Equals(curArg, arg, StringComparison.Ordinal);
             if (styleBreak || fieldBreak)
             {
                 Flush();
                 curStyle = rs;
                 curUrl   = url;
                 curField = field;
+                curArg   = arg;
             }
             curText.Append(chars[i]);
         }
@@ -1538,27 +1572,28 @@ public class DocBinaryReader
         // PICF body 안의 OfficeArtFOPT pib (property ID 260) 가 이 인덱스를 참조.
         public IReadOnlyList<(string MediaType, byte[] Data)>? BStoreImages { get; set; }
 
-        // Phase 3a-2 — 필드 범위 (fcStart ≤ fc < fcEnd 의 result text 에 Url/FieldType 적용).
+        // Phase 3a-2 / 3a-5 — 필드 범위 (fcStart ≤ fc < fcEnd 의 result text 에 Url/FieldType/FieldArg 적용).
         //   char-walk 가 0x13(field begin) / 0x14(separator) / 0x15(field end) 를 처리하면서
-        //   instr (0x13 ~ 0x14 사이) 를 파싱해 HYPERLINK URL 또는 FieldType (PAGE/DATE/...) 을 결정,
+        //   instr (0x13 ~ 0x14 사이) 를 파싱해 HYPERLINK URL / FieldType (PAGE/DATE/...) / FieldArg
+        //   (SEQ 카테고리명, REF 책갈피명, STYLEREF 스타일명, INCLUDETEXT 경로) 를 결정,
         //   result 영역 (0x14 ~ 0x15 사이) 의 fc 범위에 매핑한다.
-        private readonly List<(int FcStart, int FcEnd, string? Url, FieldType? Type)> _fieldRanges = new();
+        private readonly List<(int FcStart, int FcEnd, string? Url, FieldType? Type, string? Arg)> _fieldRanges = new();
 
-        public void AddFieldRange(int fcStart, int fcEnd, string? url, FieldType? type)
+        public void AddFieldRange(int fcStart, int fcEnd, string? url, FieldType? type, string? arg)
         {
-            if (fcEnd > fcStart && (url is not null || type is not null))
-                _fieldRanges.Add((fcStart, fcEnd, url, type));
+            if (fcEnd > fcStart && (url is not null || type is not null || arg is not null))
+                _fieldRanges.Add((fcStart, fcEnd, url, type, arg));
         }
 
-        public (string? Url, FieldType? Type) GetFieldAtFc(int fc)
+        public (string? Url, FieldType? Type, string? Arg) GetFieldAtFc(int fc)
         {
             // 범위는 작은 수 — 평탄한 linear scan 으로 충분.
             for (int i = _fieldRanges.Count - 1; i >= 0; i--)
             {
                 var r = _fieldRanges[i];
-                if (fc >= r.FcStart && fc < r.FcEnd) return (r.Url, r.Type);
+                if (fc >= r.FcStart && fc < r.FcEnd) return (r.Url, r.Type, r.Arg);
             }
-            return (null, null);
+            return (null, null, null);
         }
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
