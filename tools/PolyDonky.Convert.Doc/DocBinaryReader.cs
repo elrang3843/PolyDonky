@@ -430,10 +430,22 @@ public class DocBinaryReader
                 case '\u0015':  // field end → 일반 모드 복귀
                     fieldMode = 0;
                     break;
+                case '\u0001':  // picture marker (inline image)
+                    // Phase 3e — 본문(itap=0) 의 picture marker 만나면 현재 단락 flush 후 ImageBlock
+                    // placeholder 삽입. 표 안의 inline image 및 실제 PICF/Data stream 추출은 후속.
+                    if (tableStack.Count == 0 && fieldMode != 1)
+                    {
+                        FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
+                        section.Blocks.Add(new ImageBlock
+                        {
+                            Description = "[image]",
+                            MediaType   = "application/octet-stream",
+                        });
+                    }
+                    break;
                 case '\u0002':  // footnote ref
                 case '\u0005':  // comment ref
                 case '\u0008':  // drawing
-                case '\u0001':  // picture
                     break;
                 case '\t':
                 case '\n':
