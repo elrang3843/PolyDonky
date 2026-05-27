@@ -348,9 +348,12 @@ public class DocBinaryReader
         // Phase 2a — 표 누적 상태 (pending: 진행 중인 표/행).
         // Phase 2f — TTP 시 raw row + cellProps 를 pendingRowsRaw 에 보관, 표 마감 시
         //          세로 → 가로 병합 순으로 후처리 (세로 병합이 여러 행에 걸치므로).
+        // Phase 2g — currentCellParas: 셀의 누적 단락. 한 셀이 여러 단락을 가질 수 있음.
+        //          0x07 cell mark 가 단락 끝에 있으면 셀 종료. 0x07 없으면 셀 중간 단락.
         Table? pendingTable = null;
         TableRow? pendingRow = null;
         var pendingRowsRaw = new List<(TableRow Row, TableCellProps[]? Cp)>();
+        var currentCellParas = new List<Paragraph>();
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -362,7 +365,7 @@ public class DocBinaryReader
             {
                 case '\r':
                 case '\f':  // page break — 단락 분리로 처리
-                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw);
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw, currentCellParas);
                     break;
                 case '\v':  // soft line break
                     paraChars.Add('\n'); paraFcs.Add(fc);
@@ -389,7 +392,7 @@ public class DocBinaryReader
                     break;
             }
         }
-        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw);
+        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw, currentCellParas);
         // 본문 끝에서 표가 미완 상태이면 마감 — Phase 2f: FinalizeTable 가 세로/가로 병합 후처리.
         if (pendingTable is not null)
         {
@@ -410,7 +413,8 @@ public class DocBinaryReader
     private static void FlushParagraph(
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
         ref Table? pendingTable, ref TableRow? pendingRow,
-        List<(TableRow Row, TableCellProps[]? Cp)> pendingRowsRaw)
+        List<(TableRow Row, TableCellProps[]? Cp)> pendingRowsRaw,
+        List<Paragraph> currentCellParas)
     {
         var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps) = fmt.GetParagraphInfo(paraEndFc);
 
@@ -441,7 +445,7 @@ public class DocBinaryReader
         {
             pendingTable ??= new Table();
             pendingRow   ??= new TableRow();
-            SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, pendingRow);
+            SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, pendingRow, currentCellParas);
             paraChars.Clear();
             paraFcs.Clear();
             return;
@@ -580,20 +584,31 @@ public class DocBinaryReader
         return para;
     }
 
-    // Phase 2a — paraChars 의 0x07 (cell mark) 위치마다 셀을 나눠 pendingRow 에 추가.
-    // 셀 안에는 단일 단락 가정 (멀티-단락 셀은 후속 단계).
+    // Phase 2a/2g — paraChars 를 0x07 (cell mark) 기준으로 단락 종료 시점에 분리.
+    //   0x07 이 단락 안에 등장하면 → 그 텍스트가 셀의 마지막 단락. 셀 종료 후 pendingRow 에 추가.
+    //   0x07 없는 텍스트 (단락 끝까지 누적) → 셀의 중간 단락. currentCellParas 에 누적.
     private static void SplitIntoCells(
-        List<char> paraChars, List<int> paraFcs, int paraIstd, FormatStyles fmt, TableRow pendingRow)
+        List<char> paraChars, List<int> paraFcs, int paraIstd, FormatStyles fmt,
+        TableRow pendingRow, List<Paragraph> currentCellParas)
     {
         var curChars = new List<char>();
         var curFcs   = new List<int>();
         for (int i = 0; i < paraChars.Count; i++)
         {
-            if (paraChars[i] == '')
+            if (paraChars[i] == '\u0007')
             {
+                // 셀 종료: curChars 는 이 셀의 마지막 단락. currentCellParas 에 추가 후 셀 finalize.
+                if (curChars.Count > 0 || currentCellParas.Count > 0)
+                {
+                    currentCellParas.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
+                }
                 var cell = new TableCell();
-                cell.Blocks.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
+                if (currentCellParas.Count == 0)
+                    cell.Blocks.Add(new Paragraph());  // 빈 셀도 단락 1개 보장 (IWPF 모델 가정)
+                else
+                    foreach (var p in currentCellParas) cell.Blocks.Add(p);
                 pendingRow.Cells.Add(cell);
+                currentCellParas.Clear();
                 curChars.Clear();
                 curFcs.Clear();
             }
@@ -603,12 +618,10 @@ public class DocBinaryReader
                 curFcs.Add(paraFcs[i]);
             }
         }
-        // 잔여 텍스트 — 0x07 없이 단락이 끝났다면 (셀의 미완 단락) 별개 셀로 처리.
+        // 잔여 (0x07 없이 단락이 끝남) — 셀 중간 단락. 셀 종료 전이라 currentCellParas 에 누적.
         if (curChars.Count > 0)
         {
-            var cell = new TableCell();
-            cell.Blocks.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
-            pendingRow.Cells.Add(cell);
+            currentCellParas.Add(BuildParaFromChars(curChars, curFcs, paraIstd, null, fmt));
         }
     }
 
