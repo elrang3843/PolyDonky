@@ -11,15 +11,16 @@ namespace PolyDonky.Convert.Doc;
 /// <summary>
 /// IWPF → Word 97-2003 (.doc) OLE2 바이너리 writer.
 ///
-/// 현재 단계 — Phase F1-W2b (글자 / 단락 서식):
+/// 현재 단계 — Phase F1-W2c (책갈피 추가):
 ///   * CFB 컨테이너 + FIB + CLX (단일 piece) + 본문 텍스트
 ///   * SttbfFfn (폰트 테이블)
 ///   * PAPX FKP 페이지 — 단락별 정렬·들여쓰기·간격·줄높이
 ///   * CHPX FKP 페이지 — Run 별 굵게/이탤릭/밑줄/취소선·글자크기·전경색·폰트 인덱스
 ///   * PlcfBtePapx / PlcfBteChpx — FKP 페이지 인덱스
+///   * SttbfBkmk + PlcfBkf + PlcfBkl — Run.BookmarkStart/End 책갈피
 ///
 /// 후속 단계:
-///   F1-W2c  헤더/푸터, 섹션, 책갈피, 각주/미주, 주석
+///   F1-W2c+ 헤더/푸터, 섹션 (SEPX), 각주/미주, 주석, 필드  ← 미구현 (defer)
 ///   F1-W2d  이미지 (PICF / BStore), 도형 (FSPA / OfficeArt)
 ///   F1-W2e  FidelityCapsules → OLE2 storage 복원 (VBA / 서명 / 미인식 root storage)
 ///
@@ -50,6 +51,10 @@ public sealed class DocBinaryWriter
     private const int PairFcPlcfBtePapx = 13;   // FIB 0x0102 / 0x0106
     private const int PairFcSttbfFfn    = 15;   // FIB 0x0112 / 0x0116  ← 14 가 아님 (0x10A = pair 14 는 fcPlcfFldMom)
     private const int PairFcClx         = 33;   // FIB 0x01A2 / 0x01A6
+    // Phase F1-W2c — bookmarks. FibRgFcLcb97 pair 29 / 30 / 31.
+    private const int PairFcSttbfBkmk   = 29;   // FIB 0x0182 / 0x0186
+    private const int PairFcPlcfBkf     = 30;   // FIB 0x018A / 0x018E
+    private const int PairFcPlcfBkl     = 31;   // FIB 0x0192 / 0x0196
 
     // FKP 페이지 크기 — [MS-DOC] §2.7 FKP 는 항상 512 byte.
     private const int FkpPageSize = 512;
@@ -89,10 +94,18 @@ public sealed class DocBinaryWriter
         public uint FcPlcfBteChpx, LcbPlcfBteChpx;
         public uint FcPlcfBtePapx, LcbPlcfBtePapx;
         public uint FcClx,         LcbClx;
+        // Phase F1-W2c — bookmarks
+        public uint FcSttbfBkmk,   LcbSttbfBkmk;
+        public uint FcPlcfBkf,     LcbPlcfBkf;
+        public uint FcPlcfBkl,     LcbPlcfBkl;
 
         // BuildWordDocument 가 채우는 BTE 목록 — 절대 페이지 번호로 치환된 상태로 BuildTable 에 전달.
         public List<BteEntry> PapxBtes = new();
         public List<BteEntry> ChpxBtes = new();
+
+        // Phase F1-W2c — 책갈피 (name, startCp, endCp). startCp / endCp 는 main text CP 단위.
+        //   Run.BookmarkStart 이 발견되면 stack 에 push, BookmarkEnd 시 pop 해서 완성된 항목으로 등록.
+        public readonly List<BookmarkRecord> Bookmarks = new();
 
         public void Collect(PolyDonkyument doc)
         {
@@ -129,21 +142,45 @@ public sealed class DocBinaryWriter
             var runs = new List<RunInfo>();
             var style = para.Style ?? new ParagraphStyle();
 
+            // 책갈피 시작/끝 marker 누적 — Run 의 양 끝에 가상 marker 적용.
+            //   Run.BookmarkStart 가 있으면 현재 CP 를 시작점으로 stack push,
+            //   BookmarkEnd 가 있으면 stack 에서 같은 이름 pop 후 항목 등록.
+            var openBookmarks = new Dictionary<string, int>(StringComparer.Ordinal);
+
             foreach (var run in para.Runs)
             {
-                if (string.IsNullOrEmpty(run.Text)) continue;
-                string sanitized = SanitizeForBody(run.Text);
-                if (sanitized.Length == 0) continue;
-                int runCpStart = sb.Length;
-                sb.Append(sanitized);
-                int runCpEnd = sb.Length;
-                runs.Add(new RunInfo
+                int curCp = sb.Length;
+
+                if (!string.IsNullOrEmpty(run.BookmarkStart))
+                    openBookmarks[run.BookmarkStart!] = curCp;
+
+                if (!string.IsNullOrEmpty(run.Text))
                 {
-                    CpStart  = runCpStart,
-                    CpEnd    = runCpEnd,
-                    ChpxBody = BuildChpxBody(run.Style ?? new RunStyle(), this),
-                });
+                    string sanitized = SanitizeForBody(run.Text);
+                    if (sanitized.Length > 0)
+                    {
+                        int runCpStart = sb.Length;
+                        sb.Append(sanitized);
+                        int runCpEnd = sb.Length;
+                        runs.Add(new RunInfo
+                        {
+                            CpStart  = runCpStart,
+                            CpEnd    = runCpEnd,
+                            ChpxBody = BuildChpxBody(run.Style ?? new RunStyle(), this),
+                        });
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(run.BookmarkEnd) &&
+                    openBookmarks.Remove(run.BookmarkEnd!, out int startCp))
+                {
+                    Bookmarks.Add(new BookmarkRecord(run.BookmarkEnd!, startCp, sb.Length));
+                }
             }
+
+            // 단락 끝까지 열려 있는 책갈피는 단락 마크 직전(\r 직전) 까지 확장.
+            foreach (var kv in openBookmarks)
+                Bookmarks.Add(new BookmarkRecord(kv.Key, kv.Value, sb.Length));
 
             // 단락 마크 \r 자체도 본문 character — CHPX 가 적용되어야 단락 끝의 폰트도 보존됨.
             int markCp = sb.Length;
@@ -538,6 +575,77 @@ public sealed class DocBinaryWriter
         ms.Write(plcPapx, 0, plcPapx.Length);
         ctx.LcbPlcfBtePapx = (uint)plcPapx.Length;
 
+        // 5. Phase F1-W2c — bookmarks (SttbfBkmk + PlcfBkf + PlcfBkl)
+        if (ctx.Bookmarks.Count > 0)
+        {
+            // (a) SttbfBkmk — bookmark names (extended SttbExtend)
+            ctx.FcSttbfBkmk = (uint)ms.Position;
+            byte[] sttbBkmk = BuildSttbExtend(ctx.Bookmarks.Select(b => b.Name).ToList());
+            ms.Write(sttbBkmk, 0, sttbBkmk.Length);
+            ctx.LcbSttbfBkmk = (uint)sttbBkmk.Length;
+
+            // (b) PlcfBkf — aCP[n+1] + BKF[n] (4 byte each: ibkl(2) + flags(2))
+            ctx.FcPlcfBkf = (uint)ms.Position;
+            byte[] plcBkf = BuildPlcfBkf(ctx.Bookmarks);
+            ms.Write(plcBkf, 0, plcBkf.Length);
+            ctx.LcbPlcfBkf = (uint)plcBkf.Length;
+
+            // (c) PlcfBkl — aCP[n+1] only (lcb = 4(n+1)).
+            ctx.FcPlcfBkl = (uint)ms.Position;
+            byte[] plcBkl = BuildPlcfBkl(ctx.Bookmarks);
+            ms.Write(plcBkl, 0, plcBkl.Length);
+            ctx.LcbPlcfBkl = (uint)plcBkl.Length;
+        }
+
+        return ms.ToArray();
+    }
+
+    /// <summary>SttbExtend (extended SttbF) — 0xFFFF + cData + cbExtra=0 + entries[cchData(2) + UTF-16 chars].
+    /// Reader 의 SttbfBkmk / SttbfRMark / SttbfFnm 등이 모두 이 포맷.</summary>
+    private static byte[] BuildSttbExtend(IReadOnlyList<string> strings)
+    {
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write((ushort)0xFFFF);
+        bw.Write((ushort)strings.Count);
+        bw.Write((ushort)0);                              // cbExtra
+        foreach (var s in strings)
+        {
+            byte[] utf16 = Encoding.Unicode.GetBytes(s ?? string.Empty);
+            ushort cch = (ushort)((s ?? string.Empty).Length);
+            bw.Write(cch);
+            bw.Write(utf16);
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>PlcfBkf — aCP[n+1] (시작 CP) + BKF[n] (각 4 byte: ibkl(2) + flags(2)).
+    /// ibkl 은 PlcfBkl 안에서 매칭되는 끝 CP 의 인덱스. 우리는 1:1 매핑이라 ibkl[i] = i.</summary>
+    private static byte[] BuildPlcfBkf(IReadOnlyList<BookmarkRecord> bookmarks)
+    {
+        int n = bookmarks.Count;
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        // aCP[n+1] — 시작 CP 들 + sentinel (= 마지막 끝 CP 또는 0). Reader 는 마지막을 무시하므로 0 충분.
+        for (int i = 0; i < n; i++) bw.Write(bookmarks[i].StartCp);
+        bw.Write(0);                                      // sentinel
+        // BKF[n] — 각 4 byte
+        for (int i = 0; i < n; i++)
+        {
+            bw.Write((ushort)i);                          // ibkl
+            bw.Write((ushort)0);                          // flags = 0 (col-first 등 미사용)
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>PlcfBkl — aCP[n+1] (끝 CP 들 + sentinel). 데이터 없음 (frdSize=0).</summary>
+    private static byte[] BuildPlcfBkl(IReadOnlyList<BookmarkRecord> bookmarks)
+    {
+        int n = bookmarks.Count;
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        for (int i = 0; i < n; i++) bw.Write(bookmarks[i].EndCp);
+        bw.Write(0);                                      // sentinel
         return ms.ToArray();
     }
 
@@ -620,6 +728,9 @@ public sealed class DocBinaryWriter
         WritePair(wd, PairFcPlcfBtePapx, ctx.FcPlcfBtePapx, ctx.LcbPlcfBtePapx);
         WritePair(wd, PairFcSttbfFfn,    ctx.FcSttbfFfn,    ctx.LcbSttbfFfn);
         WritePair(wd, PairFcClx,         ctx.FcClx,         ctx.LcbClx);
+        WritePair(wd, PairFcSttbfBkmk,   ctx.FcSttbfBkmk,   ctx.LcbSttbfBkmk);
+        WritePair(wd, PairFcPlcfBkf,     ctx.FcPlcfBkf,     ctx.LcbPlcfBkf);
+        WritePair(wd, PairFcPlcfBkl,     ctx.FcPlcfBkl,     ctx.LcbPlcfBkl);
         // STSH pair 는 0/0 — Reader 가 빈 styles 배열로 처리.
 
         int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;
@@ -678,3 +789,6 @@ public sealed class DocBinaryWriter
 
 /// <summary>PlcfBteChpx / PlcfBtePapx 의 한 엔트리 — FC 범위와 FKP 페이지 번호.</summary>
 internal record struct BteEntry(int FcStart, int FcEnd, int PnFkp);
+
+/// <summary>Phase F1-W2c — 책갈피 한 항목 (이름 + main text CP 범위).</summary>
+internal sealed record BookmarkRecord(string Name, int StartCp, int EndCp);

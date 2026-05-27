@@ -385,6 +385,93 @@ public class DocBinaryWriterTests
         Assert.Contains("p60", boldTexts);
     }
 
+    // ── Phase F1-W2c: 책갈피 round-trip ────────────────────────────────────
+
+    [Fact]
+    public void Single_Bookmark_RoundTrips_Via_DocBinaryReader()
+    {
+        // Run 의 BookmarkStart/End 가 본문 텍스트 양 끝을 감싸는 패턴.
+        var p = new Paragraph();
+        p.Runs.Add(new Run { BookmarkStart = "chap1" });
+        p.AddText("Chapter 1 content");
+        p.Runs.Add(new Run { BookmarkEnd   = "chap1" });
+
+        var bytes = WriteDoc(DocWith(p));
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.Single(reader.Bookmarks);
+        Assert.Equal("chap1", reader.Bookmarks[0].Name);
+        Assert.True(reader.Bookmarks[0].EndCp > reader.Bookmarks[0].StartCp);
+    }
+
+    [Fact]
+    public void Multiple_Bookmarks_RoundTrip_With_Distinct_Names()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { BookmarkStart = "alpha" });
+        p.AddText("a");
+        p.Runs.Add(new Run { BookmarkEnd   = "alpha" });
+        p.Runs.Add(new Run { BookmarkStart = "beta" });
+        p.AddText("b");
+        p.Runs.Add(new Run { BookmarkEnd   = "beta" });
+
+        var bytes = WriteDoc(DocWith(p));
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.Equal(2, reader.Bookmarks.Count);
+        Assert.Contains(reader.Bookmarks, b => b.Name == "alpha");
+        Assert.Contains(reader.Bookmarks, b => b.Name == "beta");
+    }
+
+    [Fact]
+    public void Bookmark_With_Korean_Name_RoundTrips_Utf16()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { BookmarkStart = "북마크_한글" });
+        p.AddText("내용");
+        p.Runs.Add(new Run { BookmarkEnd   = "북마크_한글" });
+
+        var bytes = WriteDoc(DocWith(p));
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.Single(reader.Bookmarks);
+        Assert.Equal("북마크_한글", reader.Bookmarks[0].Name);
+    }
+
+    [Fact]
+    public void No_Bookmarks_Means_No_Sttbf_Or_Plcf_Streams_In_Fib()
+    {
+        var bytes = WriteDoc(DocWith(Paragraph.Of("no bookmarks here")));
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.Empty(reader.Bookmarks);
+    }
+
+    [Fact]
+    public void Unclosed_Bookmark_Extends_To_End_Of_Paragraph()
+    {
+        var p = new Paragraph();
+        p.Runs.Add(new Run { BookmarkStart = "unclosed" });
+        p.AddText("paragraph content");
+        // BookmarkEnd 빠짐 — 자동으로 단락 끝까지 확장되어야 함
+
+        var bytes = WriteDoc(DocWith(p));
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.Single(reader.Bookmarks);
+        Assert.Equal("unclosed", reader.Bookmarks[0].Name);
+    }
+
     [Fact]
     public void Mixed_Style_Runs_In_Single_Paragraph_RoundTrip()
     {
