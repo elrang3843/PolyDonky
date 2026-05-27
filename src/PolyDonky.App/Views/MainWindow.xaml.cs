@@ -2583,26 +2583,26 @@ public partial class MainWindow : Window
         var doc = _viewModel.Document;
         var sb = new System.Text.StringBuilder();
         if (!string.IsNullOrEmpty(_viewModel.CurrentFilePath))
-            sb.AppendLine($"파일: {_viewModel.CurrentFilePath}").AppendLine();
+            sb.AppendFormat(SR.DocInfoFileLabel, _viewModel.CurrentFilePath).AppendLine().AppendLine();
 
-        sb.AppendLine($"매크로 포함 여부: {(doc.HasMacroCapsule ? "예 ⚠" : "아니오")}");
-        sb.AppendLine($"디지털 서명 보존: {(doc.HasDigitalSignatureCapsule ? "예 🔏" : "아니오")}");
-        sb.AppendLine($"보존된 fidelity capsule 항목 수: {doc.FidelityCapsules.Count}");
+        sb.AppendFormat(SR.DocInfoMacroLine, doc.HasMacroCapsule ? SR.DocInfoYesMacro : SR.DocInfoNo).AppendLine();
+        sb.AppendFormat(SR.DocInfoSignatureLine, doc.HasDigitalSignatureCapsule ? SR.DocInfoYesSignature : SR.DocInfoNo).AppendLine();
+        sb.AppendFormat(SR.DocInfoCapsuleCountLine, doc.FidelityCapsules.Count).AppendLine();
 
         if (doc.FidelityCapsules.Count > 0)
         {
-            sb.AppendLine().AppendLine("보존된 데이터 (round-trip 충실도):");
+            sb.AppendLine().AppendLine(SR.DocInfoPreservedListHeader);
             int max = 30;  // 너무 길어지지 않게 상한
             int i = 0;
             foreach (var kv in doc.FidelityCapsules)
             {
-                if (i++ >= max) { sb.AppendLine($"  … (외 {doc.FidelityCapsules.Count - max} 항목)"); break; }
-                sb.AppendLine($"  {kv.Key} ({kv.Value.Length:N0} bytes)");
+                if (i++ >= max) { sb.AppendFormat(SR.DocInfoTruncated, doc.FidelityCapsules.Count - max).AppendLine(); break; }
+                sb.AppendFormat(SR.DocInfoEntryFormat, kv.Key, kv.Value.Length).AppendLine();
             }
-            sb.AppendLine().AppendLine("주의: 이 데이터는 PolyDonky 가 파싱·실행하지 않고 원본 그대로 보존만 합니다.");
+            sb.AppendLine().AppendLine(SR.DocInfoSafetyNote);
         }
 
-        System.Windows.MessageBox.Show(this, sb.ToString(), "문서 정보",
+        System.Windows.MessageBox.Show(this, sb.ToString(), SR.DocInfoDialogTitle,
             System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
     }
 

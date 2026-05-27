@@ -399,7 +399,14 @@ public sealed class HwpxWriter : IDocumentWriter
         _pendingFootnotes = document.Footnotes;
         _pendingEndnotes  = document.Endnotes;
 
-        using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
+        // FidelityCapsules 복원을 위해 일단 MemoryStream 에 ZIP 을 만들고,
+        // 사후 ZipArchive(Update) 로 hwpx/* 캡슐을 주입한 다음 output 으로 복사한다.
+        // (Create 모드는 archive.Entries 열거를 지원하지 않아서 충돌 검사 불가.)
+        var hasCapsules = document.FidelityCapsules.Any(kv => kv.Key.StartsWith("hwpx/", StringComparison.Ordinal));
+        var buffer = hasCapsules ? new MemoryStream() : null;
+        var target = buffer ?? output;
+
+        var archive = new ZipArchive(target, ZipArchiveMode.Create, leaveOpen: true);
         WriteRawText(archive, HwpxPaths.Mimetype, HwpxPaths.MimetypeContent, CompressionLevel.NoCompression);
         WriteContainerXml(archive);
         WriteContainerRdf(archive, document);
@@ -431,6 +438,35 @@ public sealed class HwpxWriter : IDocumentWriter
             WriteSectionXml(archive, i, document.Sections[i], ctx);
         if (cnt == 0)
             WriteSectionXml(archive, 0, new Section(), ctx);
+
+        archive.Dispose();
+        if (buffer is not null)
+        {
+            RestoreFidelityCapsules(buffer, document);
+            buffer.Position = 0;
+            buffer.CopyTo(output);
+        }
+    }
+
+    // FidelityCapsules 안 "hwpx/<path>" 키 → ZIP entry "<path>" 로 복원.
+    // 이미 같은 path 가 archive 에 있으면 skip (현재 writer 가 생성한 표준 part 가 우선).
+    // 다른 prefix (msdoc/, ooxml/, hancom/) 항목은 다른 코덱 소관이므로 무시.
+    private static void RestoreFidelityCapsules(MemoryStream packageBuffer, PolyDonkyument document)
+    {
+        const string prefix = "hwpx/";
+        packageBuffer.Position = 0;
+        using var archive = new ZipArchive(packageBuffer, ZipArchiveMode.Update, leaveOpen: true);
+        var existing = new HashSet<string>(archive.Entries.Select(e => e.FullName), StringComparer.Ordinal);
+        foreach (var kv in document.FidelityCapsules)
+        {
+            if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var path = kv.Key.Substring(prefix.Length);
+            if (path.Length == 0 || existing.Contains(path)) continue;
+            var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
+            using var s = entry.Open();
+            s.Write(kv.Value, 0, kv.Value.Length);
+            existing.Add(path);
+        }
     }
 
     // ── static XML helpers ───────────────────────────────────────────────────

@@ -33,6 +33,7 @@ namespace PolyDonky.App.Properties
         internal static string MenuFilePreview       => Get(nameof(MenuFilePreview));
         internal static string MenuFilePrint         => Get(nameof(MenuFilePrint));
         internal static string MenuFilePreviewPrint  => Get(nameof(MenuFilePreviewPrint));
+        internal static string MenuFileDocumentInfo  => Get(nameof(MenuFileDocumentInfo));
         internal static string MenuFileClose         => Get(nameof(MenuFileClose));
         internal static string MenuFileExit          => Get(nameof(MenuFileExit));
 
@@ -126,6 +127,27 @@ namespace PolyDonky.App.Properties
         internal static string StatusBusyConvertProgress => Get(nameof(StatusBusyConvertProgress));
         internal static string StatusConvertedAndOpened => Get(nameof(StatusConvertedAndOpened));
         internal static string StatusSavedAndConverted  => Get(nameof(StatusSavedAndConverted));
+
+        // ── 상태 표시줄 — fidelity capsule (활성 콘텐츠 / 보존 데이터) ────
+        internal static string StatusMacroIncluded         => Get(nameof(StatusMacroIncluded));
+        internal static string StatusMacroIncludedTooltip  => Get(nameof(StatusMacroIncludedTooltip));
+        internal static string StatusDigitalSignature      => Get(nameof(StatusDigitalSignature));
+        internal static string StatusDigitalSignatureTooltip => Get(nameof(StatusDigitalSignatureTooltip));
+
+        // ── 문서 정보 다이얼로그 (fidelity capsule 뷰) ───────────────────
+        internal static string DocInfoDialogTitle          => Get(nameof(DocInfoDialogTitle));
+        internal static string DocInfoFileLabel            => Get(nameof(DocInfoFileLabel));
+        internal static string DocInfoMacroLine            => Get(nameof(DocInfoMacroLine));
+        internal static string DocInfoSignatureLine        => Get(nameof(DocInfoSignatureLine));
+        internal static string DocInfoCapsuleCountLine     => Get(nameof(DocInfoCapsuleCountLine));
+        internal static string DocInfoYesMacro             => Get(nameof(DocInfoYesMacro));
+        internal static string DocInfoYesSignature         => Get(nameof(DocInfoYesSignature));
+        internal static string DocInfoNo                   => Get(nameof(DocInfoNo));
+        internal static string DocInfoPreservedListHeader  => Get(nameof(DocInfoPreservedListHeader));
+        internal static string DocInfoEntryFormat          => Get(nameof(DocInfoEntryFormat));
+        internal static string DocInfoTruncated            => Get(nameof(DocInfoTruncated));
+        internal static string DocInfoSafetyNote           => Get(nameof(DocInfoSafetyNote));
+
         internal static string DlgConvertOnOpenTitle    => Get(nameof(DlgConvertOnOpenTitle));
         internal static string DlgConvertOnOpenPrompt   => Get(nameof(DlgConvertOnOpenPrompt));
         internal static string DlgConvertOnSaveTitle    => Get(nameof(DlgConvertOnSaveTitle));
