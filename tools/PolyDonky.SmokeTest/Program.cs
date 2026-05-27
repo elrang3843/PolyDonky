@@ -60,6 +60,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_DIB (atom)"
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_WMF (uncompressed)", DocBinaryPhase3e7BlipWmfUncompressed);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_EMF (zlib deflate)", DocBinaryPhase3e7BlipEmfDeflate);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3f OfficeArtBStoreContainer FBSE → BLIP 인덱스", DocBinaryPhase3fBStoreFbse);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3f-2 PICF FOPT pib → BStore lookup", DocBinaryPhase3f2PicfPibReferencesBStore);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3a-2 필드 instr (HYPERLINK / PAGE)", DocBinaryPhase3a2FieldInstr);
 
 return harness.Finish();
 
@@ -4116,6 +4118,269 @@ static void DocBinaryPhase3fBStoreFbse()
             reader.BStoreImages[1].Data[0] == 0x11 && reader.BStoreImages[1].Data[1] == 0x22 &&
             reader.BStoreImages[1].Data[2] == 0x33 && reader.BStoreImages[1].Data[3] == 0x44,
             "BLIP #2 bytes = 11 22 33 44");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3f-2 — PICF body 가 인라인 BLIP 없이 OfficeArtFOPT pib (property ID 260, fBid=1) 만 가지고
+// BStore index 를 가리키는 케이스. 본문 picture marker 의 ImageBlock 이 BStore[0] 의 데이터로 채워져야 함.
+static void DocBinaryPhase3f2PicfPibReferencesBStore()
+{
+    // 본문 텍스트 "Before\x01After\r" (Phase 3e-2 와 동일 구조).
+    const string text = "BeforeAfter\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락.
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 3 runs ("Before", "\x01", "After\r"). \x01 의 CHPX 에 sprmCPicLocation = 0.
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x218);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Data stream PICF — 인라인 BLIP 없이 OfficeArtFOPT(0xF00B) 만.
+    //   bytes [0..3]  lcb = 18
+    //   bytes [4..11] OfficeArtFOPT header (verInst=(propCount=1<<4)|recVer=3 = 0x13, recType=0xF00B, recLen=6)
+    //   bytes [12..17] pib property: opid=(260|0x4000)=0x4104, op=1 (1-based BStore index)
+    var dataStream = new byte[18];
+    BitConverter.TryWriteBytes(dataStream.AsSpan(0),  (int)18);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(4),  (ushort)0x0013);  // recInst=1, recVer=3
+    BitConverter.TryWriteBytes(dataStream.AsSpan(6),  (ushort)0xF00B);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(8),  (uint)6);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(12), (ushort)0x4104); // propId=260, fBid=1
+    BitConverter.TryWriteBytes(dataStream.AsSpan(14), (uint)1);        // BStore index 1
+
+    // Table stream — CLX + BTE + DggContainer/BStoreContainer/FBSE × 1 (image bytes = CC DD EE FF).
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // DggContainer — BStoreContainer 안 FBSE × 1, embedded BLIP_PNG, image data = CC DD EE FF.
+    int dggStart = (int)tblMs.Position;
+    Span<byte> b2 = stackalloc byte[2];
+    // DggContainer
+    BitConverter.TryWriteBytes(b2, (ushort)0x000F); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)0xF000); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b4, (uint)81);       tblMs.Write(b4);      // BStoreContainer(8) + FBSE(73) = 81
+    // BStoreContainer
+    BitConverter.TryWriteBytes(b2, (ushort)0x001F); tblMs.Write(b2);      // cBlips=1
+    BitConverter.TryWriteBytes(b2, (ushort)0xF001); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b4, (uint)73);       tblMs.Write(b4);
+    // FBSE
+    BitConverter.TryWriteBytes(b2, (ushort)0x0062); tblMs.Write(b2);      // recVer=2, recInst=6 (PNG)
+    BitConverter.TryWriteBytes(b2, (ushort)0xF007); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b4, (uint)(36 + 29)); tblMs.Write(b4);
+    tblMs.Write(new byte[36]);                                            // FBSE body fixed 36 byte
+    // Embedded BLIP_PNG
+    BitConverter.TryWriteBytes(b2, (ushort)0x6E00); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b2, (ushort)0xF01E); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b4, (uint)21);       tblMs.Write(b4);
+    tblMs.Write(new byte[16]);                                            // UID
+    tblMs.WriteByte(0xFF);                                                // tag
+    tblMs.Write(new byte[] { 0xCC, 0xDD, 0xEE, 0xFF }, 0, 4);
+    int dggLen = (int)tblMs.Position - dggStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0312), (uint)dggStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0316), (uint)dggLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 3, $"blocks.Count >= 3 (got {blocks.Count})");
+        SmokeHarness.True(blocks[1] is ImageBlock, "blocks[1] = ImageBlock");
+        var img = (ImageBlock)blocks[1];
+        SmokeHarness.Equal("image/png", img.MediaType, "MediaType = image/png (BStore[0])");
+        SmokeHarness.Equal(4, img.Data.Length, "Data.Length = 4");
+        SmokeHarness.True(
+            img.Data[0] == 0xCC && img.Data[1] == 0xDD &&
+            img.Data[2] == 0xEE && img.Data[3] == 0xFF,
+            "Data bytes = CC DD EE FF (BStore 인덱스 1 의 BLIP)");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3a-2 — 필드 instr 파싱. HYPERLINK → Run.Url, PAGE/NUMPAGES/DATE/... → Run.Field.
+//   본문: "X<0x13>HYPERLINK \"https://example.com\"<0x14>here<0x15>Y<0x13>PAGE<0x14>3<0x15>\r"
+//   결과 단락: [Run("X"), Run("here", Url=URL), Run("Y"), Run("3", Field=Page)]
+static void DocBinaryPhase3a2FieldInstr()
+{
+    const string instr1 = "HYPERLINK \"https://example.com\"";
+    const string instr2 = "PAGE";
+    // text 구성:
+    //   "X" + 0x13 + instr1 + 0x14 + "here" + 0x15 +
+    //   "Y" + 0x13 + instr2 + 0x14 + "3"    + 0x15 + "\r"
+    string text =
+        "X" +
+        "" + instr1 + "" + "here" + "" +
+        "Y" +
+        "" + instr2 + "" + "3"    + "" +
+        "\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락 ([0x200, 0x200 + ccp*2)).
+    int cpara = 1;
+    int paraEndFc = 0x200 + ccp * 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)paraEndFc);
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 빈 (1 run 전체 paragraph 범위).
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)paraEndFc);
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream.
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)paraEndFc); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)paraEndFc); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+        SmokeHarness.True(blocks.Count >= 1, $"blocks.Count >= 1 (got {blocks.Count})");
+        SmokeHarness.True(blocks[0] is Paragraph, $"blocks[0] = Paragraph");
+        var para = (Paragraph)blocks[0];
+
+        // 결과 텍스트 = "XhereY3" (필드 instr 폐기됨, 결과만 보존).
+        SmokeHarness.Equal("XhereY3", para.GetPlainText(), "단락 plain text");
+
+        // Run 분할은 (스타일 + Url + Field) 경계마다. 같은 스타일 + 같은 (Url=null/Field=null) 인
+        // "X" / "Y" 는 인접한 다른 (Url 또는 Field) 의 Run 과만 break. URL/Field 가 바뀌는 지점에서 break.
+        // 예상: X | here(Url) | Y | 3(Field=Page)
+        SmokeHarness.Equal(4, para.Runs.Count, $"Runs.Count = 4 (got {para.Runs.Count})");
+        SmokeHarness.Equal("X",    para.Runs[0].Text, "Run[0].Text = X");
+        SmokeHarness.True(para.Runs[0].Url is null && para.Runs[0].Field is null, "Run[0] 일반");
+
+        SmokeHarness.Equal("here", para.Runs[1].Text, "Run[1].Text = here");
+        SmokeHarness.Equal("https://example.com", para.Runs[1].Url, "Run[1].Url = URL");
+
+        SmokeHarness.Equal("Y",    para.Runs[2].Text, "Run[2].Text = Y");
+        SmokeHarness.True(para.Runs[2].Url is null && para.Runs[2].Field is null, "Run[2] 일반");
+
+        SmokeHarness.Equal("3",    para.Runs[3].Text, "Run[3].Text = 3");
+        SmokeHarness.Equal(FieldType.Page, para.Runs[3].Field, "Run[3].Field = Page");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }

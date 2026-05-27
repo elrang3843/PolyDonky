@@ -100,10 +100,10 @@ public class DocBinaryReader
             var fmt = FormatStyles.Build(wd, table, fib);
             // Phase 3e-2 — Data stream (선택적, 이미지 PICF 가 여기에). 없으면 null.
             fmt.DataStream = ReadAll(root, "Data");
+            // Phase 3f — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출 (BuildDocument 보다 먼저 — PICF 의 pib 참조 해석에 필요).
+            fmt.BStoreImages = ParseBStoreImages(table, fib);
+            BStoreImages = fmt.BStoreImages;
             var doc = BuildDocument(text, fcs, fmt);
-
-            // Phase 3f — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출.
-            BStoreImages = ParseBStoreImages(table, fib);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc);
@@ -406,6 +406,14 @@ public class DocBinaryReader
         //   [MS-DOC] §2.8.25 — 0x13 field begin, 0x14 separator, 0x15 end. 중첩 필드는 1-level
         //   단순화 (대부분의 실문서에서 충분).
         int fieldMode = 0;
+        // Phase 3a-2 — 활성 필드 instr / result 범위 추적.
+        //   fieldInstr: 0x13 ~ 0x14 사이 누적된 instr 문자 (HYPERLINK "url", PAGE, DATE 등).
+        //   resultStartFc: 0x14 직후 fc — result 영역의 시작.
+        //   activeUrl / activeFieldType: instr 파싱 결과 — result 영역의 각 fc 에 매핑됨.
+        StringBuilder? fieldInstr = null;
+        int        resultStartFc  = -1;
+        string?    activeUrl      = null;
+        FieldType? activeFieldType = null;
         // Phase 3c — 다음 처리할 섹션 boundary 의 인덱스. SectionBoundaryCps[1..] 가 본문 내 break.
         //          [0]=0 은 시작, [last]=ccpText 는 본문 끝. 단락이 boundary 를 넘으면 새 Section.
         int nextSecIdx = 1;
@@ -447,12 +455,29 @@ public class DocBinaryReader
                     break;
                 case '\u0013':  // field begin → field code 모드 (폐기)
                     fieldMode = 1;
+                    fieldInstr = new StringBuilder();
+                    resultStartFc  = -1;
+                    activeUrl      = null;
+                    activeFieldType = null;
                     break;
                 case '\u0014':  // field separator → field result 모드 (포함)
                     fieldMode = 2;
+                    if (fieldInstr is not null)
+                    {
+                        var (t, u) = ParseFieldInstr(fieldInstr.ToString());
+                        activeFieldType = t;
+                        activeUrl       = u;
+                    }
+                    resultStartFc = fc;
                     break;
                 case '\u0015':  // field end → 일반 모드 복귀
+                    if (resultStartFc >= 0)
+                        fmt.AddFieldRange(resultStartFc, fc, activeUrl, activeFieldType);
                     fieldMode = 0;
+                    fieldInstr = null;
+                    resultStartFc  = -1;
+                    activeUrl      = null;
+                    activeFieldType = null;
                     break;
                 case '\u0001':  // picture marker (inline image)
                     // Phase 3e   — char-walk 중 picture marker 만나면 현재 단락 flush 후 ImageBlock 삽입.
@@ -470,7 +495,7 @@ public class DocBinaryReader
                         int? picFc = fmt.GetPictureFc(fc);
                         if (picFc.HasValue && fmt.DataStream is not null)
                         {
-                            var extracted = TryExtractImage(fmt.DataStream, picFc.Value);
+                            var extracted = TryExtractImage(fmt.DataStream, picFc.Value, fmt.BStoreImages);
                             if (extracted.HasValue)
                             {
                                 img.MediaType = extracted.Value.MediaType;
@@ -489,11 +514,13 @@ public class DocBinaryReader
                     break;
                 case '\t':
                 case '\n':
-                    if (fieldMode != 1) { paraChars.Add(c); paraFcs.Add(fc); }
+                    if (fieldMode == 1) fieldInstr?.Append(c);
+                    else { paraChars.Add(c); paraFcs.Add(fc); }
                     break;
                 default:
                     if (c < 0x20) break;
-                    if (fieldMode != 1) { paraChars.Add(c); paraFcs.Add(fc); }
+                    if (fieldMode == 1) fieldInstr?.Append(c);
+                    else { paraChars.Add(c); paraFcs.Add(fc); }
                     break;
             }
         }
@@ -582,7 +609,45 @@ public class DocBinaryReader
         paraFcs.Clear();
     }
 
-    // 단일 셀 단락 만들기 — Phase 1 의 Run 분할 알고리즘 재사용.
+    // Phase 3a-2 — 필드 instr 파싱.
+    //   "HYPERLINK \"https://example.com\""  → (null, "https://example.com")
+    //   "HYPERLINK \"url\" \\o \"tooltip\""   → (null, "url")
+    //   "PAGE \\* MERGEFORMAT"               → (FieldType.Page, null)
+    //   "NUMPAGES"                            → (FieldType.NumPages, null)
+    //   기타 미지원 instr → (null, null)
+    private static (FieldType? Type, string? Url) ParseFieldInstr(string instr)
+    {
+        var s = instr.TrimStart();
+        if (s.Length == 0) return (null, null);
+
+        if (s.StartsWith("HYPERLINK", StringComparison.OrdinalIgnoreCase))
+        {
+            int q1 = s.IndexOf('"');
+            if (q1 < 0) return (null, null);
+            int q2 = s.IndexOf('"', q1 + 1);
+            if (q2 <= q1) return (null, null);
+            return (null, s.Substring(q1 + 1, q2 - q1 - 1));
+        }
+
+        // 첫 토큰 = 필드 종류. " " / "\t" / "\\" 로 끝.
+        int wordEnd = 0;
+        while (wordEnd < s.Length && !char.IsWhiteSpace(s[wordEnd]) && s[wordEnd] != '\\')
+            wordEnd++;
+        var head = s[..wordEnd].ToUpperInvariant();
+        return head switch
+        {
+            "PAGE"     => (FieldType.Page,     (string?)null),
+            "NUMPAGES" => (FieldType.NumPages, (string?)null),
+            "DATE"     => (FieldType.Date,     (string?)null),
+            "TIME"     => (FieldType.Time,     (string?)null),
+            "AUTHOR"   => (FieldType.Author,   (string?)null),
+            "TITLE"    => (FieldType.Title,    (string?)null),
+            _          => ((FieldType?)null,   (string?)null),
+        };
+    }
+
+    // 단일 셀 단락 만들기 — Phase 1 의 Run 분할 알고리즘 재사용. Phase 3a-2 — URL/FieldType 도
+    // run break 기준에 포함시켜 fmt.GetFieldAtFc 의 결과를 Run.Url / Run.Field 에 매핑.
     private static Paragraph BuildParaFromChars(
         List<char> chars, List<int> fcs, int paraIstd, ParagraphStyle? ps, FormatStyles fmt)
     {
@@ -590,22 +655,37 @@ public class DocBinaryReader
         if (ps is not null) para.Style = ps;
         if (chars.Count == 0) return para;
 
-        RunStyle? curStyle = null;
+        RunStyle?  curStyle = null;
+        string?    curUrl   = null;
+        FieldType? curField = null;
         var curText = new StringBuilder();
+
+        void Flush()
+        {
+            if (curText.Length == 0 || curStyle is null) return;
+            var run = new Run { Text = curText.ToString(), Style = curStyle };
+            if (curUrl is { Length: > 0 }) run.Url = curUrl;
+            if (curField is not null)      run.Field = curField;
+            para.Runs.Add(run);
+            curText.Clear();
+        }
+
         for (int i = 0; i < chars.Count; i++)
         {
             var rs = fmt.GetRunStyle(fcs[i], paraIstd) ?? new RunStyle();
-            if (curStyle is null || !RunStyleEquals(curStyle, rs))
+            var (url, field) = fmt.GetFieldAtFc(fcs[i]);
+            bool styleBreak = curStyle is null || !RunStyleEquals(curStyle, rs);
+            bool fieldBreak = !string.Equals(curUrl, url, StringComparison.Ordinal) || curField != field;
+            if (styleBreak || fieldBreak)
             {
-                if (curText.Length > 0 && curStyle is not null)
-                    para.AddText(curText.ToString(), curStyle);
+                Flush();
                 curStyle = rs;
-                curText.Clear();
+                curUrl   = url;
+                curField = field;
             }
             curText.Append(chars[i]);
         }
-        if (curText.Length > 0 && curStyle is not null)
-            para.AddText(curText.ToString(), curStyle);
+        Flush();
         return para;
     }
 
@@ -741,7 +821,9 @@ public class DocBinaryReader
     // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
     // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw byte 가 인라인. signature 위치부터
     // PICF 끝까지를 image data 로 본다.
-    private static (string MediaType, byte[] Data)? TryExtractImage(byte[] data, int fcPic)
+    private static (string MediaType, byte[] Data)? TryExtractImage(
+        byte[] data, int fcPic,
+        IReadOnlyList<(string MediaType, byte[] Data)>? bstore)
     {
         if (fcPic < 0 || fcPic + 4 > data.Length) return null;
         int lcb = BitConverter.ToInt32(data, fcPic);
@@ -750,8 +832,8 @@ public class DocBinaryReader
         int start = fcPic + 4;                 // lcb 이후
         int picEnd = Math.Min(fcPic + lcb, data.Length);
 
-        // Phase 3e-6 — OfficeArt 컨테이너 우선 시도.
-        var fromOa = TryExtractFromOfficeArt(data, start, picEnd, depth: 0);
+        // Phase 3e-6 — OfficeArt 컨테이너 우선 시도. Phase 3f-2 — bstore 도 함께 넘겨 pib 참조 해석.
+        var fromOa = TryExtractFromOfficeArt(data, start, picEnd, bstore, depth: 0);
         if (fromOa.HasValue) return fromOa;
 
         int end = picEnd - 8;  // signature 최소 8 byte 여유
@@ -817,7 +899,9 @@ public class DocBinaryReader
     //         MetafileHeader: cbSize(4) + rcBounds(16) + ptSize(8) + cbSave(4) + compression(1) + filter(1).
     //         compression == 0xFE: raw. compression == 0x00: zlib 압축 — ZLibStream 으로 풀어 원본 복원.
     private static (string MediaType, byte[] Data)? TryExtractFromOfficeArt(
-        byte[] data, int start, int end, int depth)
+        byte[] data, int start, int end,
+        IReadOnlyList<(string MediaType, byte[] Data)>? bstore,
+        int depth)
     {
         if (depth > 8) return null;  // 손상된 입력에서 무한 재귀 방지
         int pos = start;
@@ -836,7 +920,7 @@ public class DocBinaryReader
 
             if (recVer == 0xF)
             {
-                var child = TryExtractFromOfficeArt(data, dataStart, dataEnd, depth + 1);
+                var child = TryExtractFromOfficeArt(data, dataStart, dataEnd, bstore, depth + 1);
                 if (child.HasValue) return child;
             }
             else
@@ -903,6 +987,30 @@ public class DocBinaryReader
                         catch
                         {
                             return null;  // 손상된 zlib — fallback 양보.
+                        }
+                    }
+                }
+
+                // Phase 3f-2 — OfficeArtFOPT (0xF00B) property block 안의 pib (property ID 260)
+                //   를 1-based BLIP index 로 해석해 bstore 에서 lookup.
+                //   각 property = opid(2) + op(4):
+                //     opid bits 0..13 = propId, bit 14 = fBid, bit 15 = fComplex
+                if (recType == 0xF00B && bstore is { Count: > 0 })
+                {
+                    int propCount = recInst;
+                    int avail = (dataEnd - dataStart) / 6;
+                    if (propCount > avail) propCount = avail;
+                    for (int i = 0; i < propCount; i++)
+                    {
+                        int off = dataStart + i * 6;
+                        ushort opid = BitConverter.ToUInt16(data, off);
+                        uint   op   = BitConverter.ToUInt32(data, off + 2);
+                        int  propId = opid & 0x3FFF;
+                        bool fBid   = (opid & 0x4000) != 0;
+                        if (propId == 260 && fBid)
+                        {
+                            int idx = (int)op;
+                            if (idx >= 1 && idx <= bstore.Count) return bstore[idx - 1];
                         }
                     }
                 }
@@ -980,7 +1088,7 @@ public class DocBinaryReader
                 int blipStart = dataStart + 36 + cbName;
                 if (blipStart < dataEnd)
                 {
-                    var blip = TryExtractFromOfficeArt(data, blipStart, dataEnd, depth: 0);
+                    var blip = TryExtractFromOfficeArt(data, blipStart, dataEnd, bstore: null, depth: 0);
                     if (blip.HasValue) sink.Add(blip.Value);
                 }
             }
@@ -1323,6 +1431,32 @@ public class DocBinaryReader
         public byte[] TableBytes { get; }
         // Phase 3e-2 — Data stream (이미지 PICF 가 들어 있는 OLE2 stream). null = 없음.
         public byte[]? DataStream { get; set; }
+        // Phase 3f-2 — OfficeArtBStoreContainer 에서 추출한 공유 BLIP 목록. 1-based 인덱스.
+        // PICF body 안의 OfficeArtFOPT pib (property ID 260) 가 이 인덱스를 참조.
+        public IReadOnlyList<(string MediaType, byte[] Data)>? BStoreImages { get; set; }
+
+        // Phase 3a-2 — 필드 범위 (fcStart ≤ fc < fcEnd 의 result text 에 Url/FieldType 적용).
+        //   char-walk 가 0x13(field begin) / 0x14(separator) / 0x15(field end) 를 처리하면서
+        //   instr (0x13 ~ 0x14 사이) 를 파싱해 HYPERLINK URL 또는 FieldType (PAGE/DATE/...) 을 결정,
+        //   result 영역 (0x14 ~ 0x15 사이) 의 fc 범위에 매핑한다.
+        private readonly List<(int FcStart, int FcEnd, string? Url, FieldType? Type)> _fieldRanges = new();
+
+        public void AddFieldRange(int fcStart, int fcEnd, string? url, FieldType? type)
+        {
+            if (fcEnd > fcStart && (url is not null || type is not null))
+                _fieldRanges.Add((fcStart, fcEnd, url, type));
+        }
+
+        public (string? Url, FieldType? Type) GetFieldAtFc(int fc)
+        {
+            // 범위는 작은 수 — 평탄한 linear scan 으로 충분.
+            for (int i = _fieldRanges.Count - 1; i >= 0; i--)
+            {
+                var r = _fieldRanges[i];
+                if (fc >= r.FcStart && fc < r.FcEnd) return (r.Url, r.Type);
+            }
+            return (null, null);
+        }
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
         // PAPX 는 (istd, sprms) 가 페어로 필요하므로 별도 캐시.
