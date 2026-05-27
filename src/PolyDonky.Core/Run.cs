@@ -83,6 +83,16 @@ public enum FieldType
     Keywords,
     /// <summary>문서 코멘트 (MS Word COMMENTS — 메타데이터의 설명 문자열, 주석 annotation 과 다름).</summary>
     Comments,
+    /// <summary>일련 번호 — 그림/표 등 카테고리별 자동 카운터 (MS Word SEQ). 인스트 인자 (카테고리명) 는 현재 비보존.</summary>
+    Seq,
+    /// <summary>책갈피 참조 (MS Word REF). 인스트 인자 (책갈피 이름) 는 현재 비보존 — 결과 텍스트만 유지.</summary>
+    Ref,
+    /// <summary>특정 스타일 텍스트 참조 (MS Word STYLEREF). 인스트 인자 (스타일명) 는 현재 비보존.</summary>
+    StyleRef,
+    /// <summary>외부 파일/범위 인클루드 (MS Word INCLUDETEXT). 인스트 인자 (파일 경로) 는 현재 비보존.</summary>
+    IncludeText,
+    /// <summary>조건부 표시 (MS Word IF). 평가된 결과 텍스트만 유지.</summary>
+    If,
 }
 
 /// <summary>이모지 인라인 이미지의 기준선 정렬.</summary>
