@@ -9,10 +9,12 @@ namespace PolyDonky.Convert.Doc;
 /// <summary>
 /// IWPF → RTF (Rich Text Format) 변환기.
 /// 지원: 글자 서식·단락 서식·위첨자/아래첨자·들여쓰기·리스트·이미지·표·메타데이터·
-///       도형(\shp, 위치·크기·종류·색상 아웃라인)·OLE 개체(OpaqueBlock 재출력 또는 플레이스홀더)·
+///       도형(\shp, 위치·크기·종류·색상 아웃라인)·OLE 개체(OpaqueBlock 재출력 또는 플레이스holder)·
 ///       하이퍼링크(\field HYPERLINK)·자동 필드(PAGE/NUMPAGES/DATE/TIME/AUTHOR/TITLE 등)·
 ///       책갈피(\*\bkmkstart / \*\bkmkend)·변경추적(\revised / \deleted + \revtbl)·
-///       각주·미주(\chftn / \footnote [\ftnalt])·주석(\chatn / \annotation + \atnauthor / \atndate).
+///       각주·미주(\chftn / \footnote [\ftnalt])·주석(\chatn / \annotation + \atnauthor / \atndate)·
+///       페이지 설정(\paperw / \paperh / \margl-r-t-b / \landscape / \titlepg / \facingp)·
+///       머리말·꼬리말(\header / \footer, Left·Center·Right 슬롯 stacked 출력).
 /// v1.0.0 이후 계획: \shp 전체 속성(그림자·3D·꼭짓점 경로 등) + OLE 데이터 완전 직렬화.
 /// </summary>
 public class DocWriter
@@ -65,9 +67,22 @@ public class DocWriter
 
         WriteInfo(doc.Metadata, sb);
 
-        foreach (var sec in doc.Sections)
+        // 페이지 설정 — 첫 번째 섹션의 PageSettings 를 문서 레벨 \paperw/\paperh/\margXX 로 출력.
+        if (doc.Sections.Count > 0)
+            WriteDocumentPageSetup(doc.Sections[0].Page, sb);
+
+        for (int i = 0; i < doc.Sections.Count; i++)
+        {
+            var sec = doc.Sections[i];
+
+            // 섹션 속성 — 머리말/꼬리말은 \sectd 다음, 본문 단락보다 앞.
+            if (i > 0) sb.Append(@"\sect\sectd").AppendLine();
+            WriteSectionProperties(sec.Page, sb);
+            WriteHeaderFooter(sec.Page, sb);
+
             foreach (var blk in sec.Blocks)
                 WriteBlock(blk, sb, inTable: false);
+        }
 
         sb.Append('}');
 
@@ -197,6 +212,76 @@ public class DocWriter
         var mo = meta.Modified;
         sb.Append($@"{{\revtim\yr{mo.Year}\mo{mo.Month}\dy{mo.Day}\hr{mo.Hour}\min{mo.Minute}\sec{mo.Second}}}");
         sb.AppendLine("}");
+    }
+
+    // ── 페이지 설정 / 섹션 속성 ────────────────────────────────────────────────
+
+    /// <summary>문서 전체 페이지 크기·여백을 emit (\paperw, \paperh, \margl/r/t/b, \landscape).</summary>
+    private static void WriteDocumentPageSetup(PageSettings page, StringBuilder sb)
+    {
+        // PageOrientation 에 따라 자동 swap — EffectiveWidth/Height 사용
+        int paperW = T(page.EffectiveWidthMm);
+        int paperH = T(page.EffectiveHeightMm);
+        sb.Append($@"\paperw{paperW}\paperh{paperH}");
+        sb.Append($@"\margl{T(page.MarginLeftMm)}\margr{T(page.MarginRightMm)}");
+        sb.Append($@"\margt{T(page.MarginTopMm)}\margb{T(page.MarginBottomMm)}");
+        if (page.MarginHeaderMm > 0) sb.Append($@"\headery{T(page.MarginHeaderMm)}");
+        if (page.MarginFooterMm > 0) sb.Append($@"\footery{T(page.MarginFooterMm)}");
+        if (page.Orientation == PageOrientation.Landscape) sb.Append(@"\landscape");
+        if (page.DifferentOddEven) sb.Append(@"\facingp");
+        sb.AppendLine();
+    }
+
+    /// <summary>섹션 속성 — \sectd 다음에 페이지 설정·다단·첫페이지/홀짝 다름 플래그·헤더/푸터 거리 emit.</summary>
+    private static void WriteSectionProperties(PageSettings page, StringBuilder sb)
+    {
+        sb.Append(@"\sectd");
+        // 섹션마다 페이지 크기·여백 반복 — Word 의 multi-section 호환을 위해
+        sb.Append($@"\pgwsxn{T(page.EffectiveWidthMm)}\pghsxn{T(page.EffectiveHeightMm)}");
+        sb.Append($@"\marglsxn{T(page.MarginLeftMm)}\margrsxn{T(page.MarginRightMm)}");
+        sb.Append($@"\margtsxn{T(page.MarginTopMm)}\margbsxn{T(page.MarginBottomMm)}");
+        if (page.MarginHeaderMm > 0) sb.Append($@"\headery{T(page.MarginHeaderMm)}");
+        if (page.MarginFooterMm > 0) sb.Append($@"\footery{T(page.MarginFooterMm)}");
+        if (page.Orientation == PageOrientation.Landscape) sb.Append(@"\lndscpsxn");
+        if (page.DifferentFirstPage) sb.Append(@"\titlepg");
+        if (page.ColumnCount > 1)
+        {
+            sb.Append($@"\cols{page.ColumnCount}");
+            if (page.ColumnGapMm > 0) sb.Append($@"\colsx{T(page.ColumnGapMm)}");
+        }
+        sb.AppendLine();
+    }
+
+    // ── 머리말 / 꼬리말 ────────────────────────────────────────────────────────
+
+    /// <summary>섹션의 머리말·꼬리말을 RTF 그룹으로 emit. Left/Center/Right 슬롯은 정렬 단락으로 stacked 출력.
+    /// 향후 개선: 단일 단락만 들어 있을 때 tab-stop 기반 single-line 레이아웃으로 합칠 수 있음.</summary>
+    private void WriteHeaderFooter(PageSettings page, StringBuilder sb)
+    {
+        if (!page.Header.IsEmpty) WriteHeaderFooterGroup("header", page.Header, sb);
+        if (!page.Footer.IsEmpty) WriteHeaderFooterGroup("footer", page.Footer, sb);
+    }
+
+    private void WriteHeaderFooterGroup(string kind, HeaderFooterContent content, StringBuilder sb)
+    {
+        sb.Append('{').Append('\\').Append(kind).Append(' ');
+
+        WriteSlotParagraphs(content.Left,   Alignment.Left,   sb);
+        WriteSlotParagraphs(content.Center, Alignment.Center, sb);
+        WriteSlotParagraphs(content.Right,  Alignment.Right,  sb);
+
+        sb.Append('}').AppendLine();
+    }
+
+    private void WriteSlotParagraphs(HeaderFooterSlot slot, Alignment align, StringBuilder sb)
+    {
+        if (slot.IsEmpty) return;
+        foreach (var src in slot.Paragraphs)
+        {
+            var p = src.Clone();
+            p.Style.Alignment = align;  // 슬롯 정렬을 단락 정렬보다 우선
+            WriteParagraph(p, sb, inTable: false);
+        }
     }
 
     // ── 블록 디스패치 ───────────────────────────────────────────────────────────

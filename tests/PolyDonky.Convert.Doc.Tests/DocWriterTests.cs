@@ -463,4 +463,191 @@ public class DocWriterTests
         Assert.Contains(@"\chatn", rtf);
         Assert.Contains("anon",    rtf);
     }
+
+    // ── 페이지 설정 ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Default_A4_Portrait_Page_Settings_Are_Emitted()
+    {
+        var doc = DocWith(Paragraph.Of("body"));
+        var rtf = WriteRtf(doc);
+
+        // A4 portrait: 210×297mm → 11905×16838 twips (constant 56.692)
+        Assert.Contains(@"\paperw11905",  rtf);
+        Assert.Contains(@"\paperh16838",  rtf);
+        Assert.Contains(@"\margl",        rtf);
+        Assert.Contains(@"\margr",        rtf);
+        Assert.Contains(@"\margt",        rtf);
+        Assert.Contains(@"\margb",        rtf);
+        Assert.Contains(@"\sectd",        rtf);
+        Assert.DoesNotContain(@"\landscape",  rtf);
+        Assert.DoesNotContain(@"\lndscpsxn",  rtf);
+    }
+
+    [Fact]
+    public void Landscape_Orientation_Emits_Landscape_Keyword()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.Orientation = PageOrientation.Landscape;
+        sec.Blocks.Add(Paragraph.Of("x"));
+        doc.Sections.Add(sec);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"\landscape", rtf);
+        Assert.Contains(@"\lndscpsxn", rtf);
+        // 가로 모드에서 EffectiveWidth = HeightMm, EffectiveHeight = WidthMm
+        Assert.Contains(@"\paperw16838", rtf);  // 297mm
+        Assert.Contains(@"\paperh11905", rtf);  // 210mm
+    }
+
+    [Fact]
+    public void Custom_Margins_Emit_Twip_Values()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.MarginLeftMm   = 30;
+        sec.Page.MarginRightMm  = 15;
+        sec.Page.MarginTopMm    = 25;
+        sec.Page.MarginBottomMm = 18;
+        sec.Blocks.Add(Paragraph.Of("x"));
+        doc.Sections.Add(sec);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"\margl1701", rtf);   // 30mm
+        Assert.Contains(@"\margr850",  rtf);   // 15mm
+        Assert.Contains(@"\margt1417", rtf);   // 25mm
+        Assert.Contains(@"\margb1020", rtf);   // 18mm
+    }
+
+    [Fact]
+    public void Different_First_Page_Emits_Titlepg_In_Section()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.DifferentFirstPage = true;
+        sec.Blocks.Add(Paragraph.Of("x"));
+        doc.Sections.Add(sec);
+
+        Assert.Contains(@"\titlepg", WriteRtf(doc));
+    }
+
+    [Fact]
+    public void Different_Odd_Even_Emits_Facingp_At_Document_Level()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.DifferentOddEven = true;
+        sec.Blocks.Add(Paragraph.Of("x"));
+        doc.Sections.Add(sec);
+
+        Assert.Contains(@"\facingp", WriteRtf(doc));
+    }
+
+    [Fact]
+    public void Multi_Column_Section_Emits_Cols_And_Colsx()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.ColumnCount = 2;
+        sec.Page.ColumnGapMm = 10;
+        sec.Blocks.Add(Paragraph.Of("x"));
+        doc.Sections.Add(sec);
+
+        var rtf = WriteRtf(doc);
+        Assert.Contains(@"\cols2",  rtf);
+        Assert.Contains(@"\colsx",  rtf);
+    }
+
+    [Fact]
+    public void Multiple_Sections_Emit_Sect_Separator()
+    {
+        var doc = new PolyDonkyument();
+        var s1 = new Section();
+        s1.Blocks.Add(Paragraph.Of("first"));
+        var s2 = new Section();
+        s2.Blocks.Add(Paragraph.Of("second"));
+        doc.Sections.Add(s1);
+        doc.Sections.Add(s2);
+
+        var rtf = WriteRtf(doc);
+
+        int first = rtf.IndexOf("first",  StringComparison.Ordinal);
+        int sect  = rtf.IndexOf(@"\sect\sectd", StringComparison.Ordinal);
+        int second = rtf.IndexOf("second", StringComparison.Ordinal);
+        Assert.True(first  > 0);
+        Assert.True(sect   > first);
+        Assert.True(second > sect);
+    }
+
+    // ── 머리말 / 꼬리말 ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Header_With_Center_Slot_Emits_Header_Group()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.Header.Center.Paragraphs.Add(Paragraph.Of("페이지 머리말"));
+        sec.Blocks.Add(Paragraph.Of("본문"));
+        doc.Sections.Add(sec);
+
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"{\header", rtf);
+        Assert.Contains(@"\qc",      rtf);  // Center 슬롯은 가운데 정렬
+    }
+
+    [Fact]
+    public void Footer_With_Three_Slots_Emits_All_Alignments()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.Footer.Left.Paragraphs.Add(Paragraph.Of("LEFT"));
+        sec.Page.Footer.Center.Paragraphs.Add(Paragraph.Of("MID"));
+        sec.Page.Footer.Right.Paragraphs.Add(Paragraph.Of("RIGHT"));
+        sec.Blocks.Add(Paragraph.Of("body"));
+        doc.Sections.Add(sec);
+
+        var rtf = WriteRtf(doc);
+        int footer = rtf.IndexOf(@"{\footer", StringComparison.Ordinal);
+        Assert.True(footer > 0);
+        string ft = rtf[footer..];
+        Assert.Contains("LEFT",  ft);
+        Assert.Contains("MID",   ft);
+        Assert.Contains("RIGHT", ft);
+        // 슬롯별 정렬 control word 확인
+        Assert.Contains(@"\ql",  ft);
+        Assert.Contains(@"\qc",  ft);
+        Assert.Contains(@"\qr",  ft);
+    }
+
+    [Fact]
+    public void Header_Empty_Does_Not_Emit_Header_Group()
+    {
+        var doc = DocWith(Paragraph.Of("x"));
+        var rtf = WriteRtf(doc);
+        Assert.DoesNotContain(@"{\header", rtf);
+        Assert.DoesNotContain(@"{\footer", rtf);
+    }
+
+    [Fact]
+    public void Header_Paragraph_With_Page_Field_Is_Preserved()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        var hp = new Paragraph();
+        hp.AddText("Page ");
+        hp.Runs.Add(new Run { Text = "1", Field = FieldType.Page });
+        sec.Page.Header.Center.Paragraphs.Add(hp);
+        sec.Blocks.Add(Paragraph.Of("body"));
+        doc.Sections.Add(sec);
+
+        var rtf = WriteRtf(doc);
+        int header = rtf.IndexOf(@"{\header", StringComparison.Ordinal);
+        Assert.True(header > 0);
+        string h = rtf[header..];
+        Assert.Contains(@"\fldinst PAGE", h);
+    }
 }

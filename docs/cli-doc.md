@@ -1,12 +1,12 @@
 # PolyDonky.Convert.Doc — CLI 사용 설명서
 
-RTF (Rich Text Format) 문서를 IWPF 로 가져오거나,
+RTF (Rich Text Format) 와 Word 97-2003 OLE2 바이너리(`.doc`) 문서를 IWPF 로 가져오거나,
 IWPF 를 RTF 로 내보내는 명령줄 변환기입니다.
 CLAUDE.md §3 의 **외부 변환 모듈 분리 원칙**에 따라 메인 앱에서 분리된 독립 실행 파일입니다.
 
-> **참고** 이 변환기의 이름(`Convert.Doc`)은 향후 Word 97-2003 바이너리 `.doc` 파일 지원을
-> 염두에 두고 붙여진 이름입니다. 현재(v1.0.0 이전)는 **RTF** 만 처리합니다.
-> `.doc` OLE2 바이너리 지원은 v1.0.0 이후에 추가될 예정입니다.
+> **참고** `.doc` (Word 97-2003 OLE2 바이너리) 는 현재 **import 만** 지원합니다.
+> IWPF → `.doc` 바이너리 출력은 v1.0.0 이후 자체 OLE2 writer (`OpenMcdf` 기반) 로 추가될 예정이며,
+> 그 전까지 IWPF 의 외부 출력은 RTF 만 제공합니다.
 
 ---
 
@@ -29,8 +29,8 @@ CLAUDE.md §3 의 **외부 변환 모듈 분리 원칙**에 따라 메인 앱에
 | 항목 | 내용 |
 |------|------|
 | 실행 파일 | `PolyDonky.Convert.Doc.exe` (Windows) |
-| 대상 포맷 | RTF (Rich Text Format), 텍스트·서식·배경색 지원 |
-| 방향 | `.rtf → .iwpf` (import), `.iwpf → .rtf` (export) |
+| 대상 포맷 | RTF (Rich Text Format), Word 97-2003 OLE2 바이너리 (`.doc`) |
+| 방향 | `.rtf → .iwpf`, `.doc → .iwpf` (import), `.iwpf → .rtf` (export) |
 
 ---
 
@@ -49,6 +49,7 @@ PolyDonky.Convert.Doc --help    | -h | /?
 | 입력 | 출력 | 설명 |
 |------|------|------|
 | `*.rtf` | `*.iwpf` | **import** — RTF 를 IWPF 로 변환 |
+| `*.doc` | `*.iwpf` | **import** — Word 97-2003 OLE2 바이너리를 IWPF 로 변환 (VBA 매크로·디지털 서명·OLE 임베드는 fidelity capsule 로 격리 저장) |
 | `*.iwpf` | `*.rtf` | **export** — IWPF 를 RTF 로 변환 |
 
 ---
@@ -79,25 +80,46 @@ PolyDonky.Convert.Doc --help    | -h | /?
 
 RTF 는 Word 97 이상 및 대부분의 워드프로세서에서 호환되는 텍스트 기반 포맷입니다.
 
-| 기능 | 지원 |
-|------|------|
-| 텍스트·단락 | ✅ |
-| 글자 서식 (굵기·이탤릭·밑줄·크기·색상) | ✅ |
-| 배경색 (하이라이트) | ✅ — RTF 의 강점 |
-| 표 | ✅ |
-| 이미지 | ✅ |
-| 머리말·꼬리말 | ✅ |
+| 기능 | Import (`.rtf → .iwpf`) | Export (`.iwpf → .rtf`) |
+|------|:---:|:---:|
+| 텍스트·단락 | ✅ | ✅ |
+| 글자 서식 (굵기·이탤릭·밑줄·취소선·크기·색상) | ✅ | ✅ |
+| 위첨자·아래첨자 | ✅ | ✅ |
+| 배경색 (하이라이트) | ✅ | ✅ |
+| 들여쓰기·줄 간격·문단 간격 | ✅ | ✅ |
+| 표 (병합·정렬·테두리·패딩) | ✅ | ✅ |
+| 이미지 (PNG/JPEG/BMP 인라인) | ✅ | ✅ |
+| 도형 (`\shp` outline) | ✅ | ✅ |
+| OLE 개체 (OpaqueBlock) | ✅ | ✅ |
+| 메타데이터 (제목·저자·생성/수정 시각) | ✅ | ✅ |
+| 하이퍼링크 (`\field HYPERLINK`) | ✅ | ✅ |
+| 자동 필드 (PAGE / NUMPAGES / DATE / TIME / AUTHOR / TITLE 등 16종) | ✅ | ✅ |
+| 책갈피 (`\*\bkmkstart` / `\*\bkmkend`) | ✅ | ✅ |
+| 각주·미주 (`\chftn` / `\footnote` / `\ftnalt`) | ✅ | ✅ |
+| 주석 (`\chatn` / `\annotation` + `\atnauthor` / `\atndate`) | ✅ | ✅ |
+| 변경추적 (`\revised` / `\deleted` + `\revtbl`) | ✅ | ✅ |
+| 페이지 설정 (크기·여백·가로/세로·다단·첫페이지/홀짝 다름) | ✅ | ✅ |
+| 머리말·꼬리말 (Left/Center/Right 슬롯) | ✅ | ✅ |
 
 ---
 
 ## 진행 표시
 
+RTF import:
 ```
 PROGRESS:0:RTF 읽는 중
 PROGRESS:80:IWPF 로 변환 중
 PROGRESS:100:완료
 ```
 
+DOC (Word 97-2003 OLE2) import:
+```
+PROGRESS:0:DOC (Word 97-2003 binary) 읽는 중
+PROGRESS:80:IWPF 로 변환 중
+PROGRESS:100:완료
+```
+
+RTF export:
 ```
 PROGRESS:0:IWPF 읽는 중
 PROGRESS:50:RTF 로 변환 중
@@ -133,10 +155,10 @@ PolyDonky.Convert.Doc 문서.rtf 문서.iwpf --debug
 | 항목 | 상태 |
 |------|------|
 | RTF import / export | ✅ 현재 지원 |
-| `.doc` (Word 97-2003 OLE2 바이너리) | ⏳ v1.0.0 이후 지원 예정 |
-| 수식·도형 (RTF 기반) | 현재 구현 중 |
-
-`.doc` OLE2 바이너리 지원이 추가되면 이 문서가 갱신됩니다.
+| `.doc` (Word 97-2003 OLE2 바이너리) import | ✅ 현재 지원 — VBA 매크로·디지털 서명·OLE 임베드·미인식 root storage 는 IWPF fidelity capsule 로 격리 저장 |
+| `.iwpf → .doc` (OLE2 바이너리 export) | ⏳ v1.0.0 이후 — `OpenMcdf` 기반 자체 writer 로 추가 예정 |
+| 수식 (`\equation` 표기) | ⏳ v1.0.0 이후 |
+| `\shp` 그림자·3D·꼭짓점 경로 등 고급 도형 속성 | ⏳ v1.0.0 이후 |
 
 ---
 
