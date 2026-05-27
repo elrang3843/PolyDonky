@@ -139,7 +139,7 @@ public class DocBinaryReader
             ApplyHeaderFooter(wd, table, fib, doc, fmt);
 
             // Phase 3g — 각주/미주 sub-document 텍스트 추출 후 doc.Footnotes / doc.Endnotes 에 매핑.
-            ApplyFootnotesAndEndnotes(wd, table, fib, doc);
+            ApplyFootnotesAndEndnotes(wd, table, fib, doc, fmt);
             // Phase 3j-2 — comment author/date 메타 (ATRDPre10 + SttbfRMark) 를 CommentEntry 에 매핑.
             ApplyCommentsMetadata(table, fib, doc.Comments, fmt.RMarkAuthors);
 
@@ -1737,7 +1737,7 @@ public class DocBinaryReader
     //   [+ccpEdn)                                                     : 미주
     // PlcfFndTxt / PlcfEdnTxt 의 aCP 배열이 각 영역 안의 sub-story 경계 (separator + 각 항목).
     // 빈/공백 sub-story (separator) 는 자동 skip.
-    private static void ApplyFootnotesAndEndnotes(byte[] wd, byte[] table, Fib fib, PolyDonkyument doc)
+    private static void ApplyFootnotesAndEndnotes(byte[] wd, byte[] table, Fib fib, PolyDonkyument doc, FormatStyles fmt)
     {
         // 각주 영역.
         if (fib.CcpFtn > 0 && fib.LcbPlcffndTxt >= 8)
@@ -1747,7 +1747,7 @@ public class DocBinaryReader
             ExtractStoriesInto(wd, table, fib,
                 (int)fib.FcPlcffndTxt, (int)fib.LcbPlcffndTxt,
                 ftnBase, ftnEnd,
-                doc.Footnotes, idPrefix: "fn");
+                doc.Footnotes, idPrefix: "fn", fmt);
         }
 
         // 미주 영역 (본문 + 각주 + 헤더/푸터 + 주석 뒤).
@@ -1758,7 +1758,7 @@ public class DocBinaryReader
             ExtractStoriesInto(wd, table, fib,
                 (int)fib.FcPlcfendTxt, (int)fib.LcbPlcfendTxt,
                 ednBase, ednEnd,
-                doc.Endnotes, idPrefix: "en");
+                doc.Endnotes, idPrefix: "en", fmt);
         }
 
         // Phase 3j — 주석 영역 (본문 + 각주 + 헤더/푸터 뒤).
@@ -1768,7 +1768,7 @@ public class DocBinaryReader
             int atnEnd  = atnBase + (int)fib.CcpAtn;
             ExtractCommentsInto(wd, table, fib,
                 (int)fib.FcPlcfAtnTxt, (int)fib.LcbPlcfAtnTxt,
-                atnBase, atnEnd, doc.Comments);
+                atnBase, atnEnd, doc.Comments, fmt);
         }
     }
 
@@ -1813,11 +1813,12 @@ public class DocBinaryReader
 
     // Phase 3j — PlcfAtnTxt 의 sub-story 들에서 코멘트 텍스트 추출 후 CommentEntry 로 sink 에 추가.
     //   ExtractStoriesInto 의 CommentEntry 변종 (FootnoteEntry vs CommentEntry 가 서로 호환 안 되어 별도 helper).
+    // Phase 3m-2 — plain text 변환 대신 BuildSubdocParagraphs 로 Run-rich 단락 추출.
     private static void ExtractCommentsInto(
         byte[] wd, byte[] table, Fib fib,
         int plcStart, int plcLen,
         int subBase, int subEnd,
-        IList<CommentEntry> sink)
+        IList<CommentEntry> sink, FormatStyles fmt)
     {
         if (plcStart < 0 || plcStart + plcLen > table.Length) return;
         int n = plcLen / 4 - 1;
@@ -1831,26 +1832,26 @@ public class DocBinaryReader
             int cpStart = subBase + cps[i];
             int cpEnd   = subBase + cps[i + 1];
             if (cpEnd <= cpStart || cpEnd > subEnd) continue;
-            var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
-            var cleaned = CleanSubdocText(raw);
-            if (string.IsNullOrEmpty(cleaned)) continue;
+            var paras = BuildSubdocParagraphs(wd, table, fib, cpStart, cpEnd, fmt);
+            // 빈 sub-story (separator) skip.
+            if (paras.Count == 0 || paras.All(p => string.IsNullOrWhiteSpace(p.GetPlainText()))) continue;
             var entry = new CommentEntry { Id = $"cmt{sink.Count + 1}" };
-            entry.Blocks.Add(Paragraph.Of(cleaned));
+            foreach (var pa in paras) entry.Blocks.Add(pa);
             sink.Add(entry);
         }
     }
 
     // PlcfTxt 형식의 aCP 배열을 walk 해서 각 sub-story 의 텍스트를 추출, FootnoteEntry 로 sink 에 추가.
     //   aCP[0] 는 separator (보통 빈 텍스트), 1.. 부터 실제 항목.
-    //   빈 sub-story 는 skip.
+    //   빈 sub-story 는 skip. Phase 3m-2 — Run-rich BuildSubdocParagraphs 사용.
     private static void ExtractStoriesInto(
         byte[] wd, byte[] table, Fib fib,
         int plcStart, int plcLen,
         int subBase, int subEnd,
-        IList<FootnoteEntry> sink, string idPrefix)
+        IList<FootnoteEntry> sink, string idPrefix, FormatStyles fmt)
     {
         if (plcStart < 0 || plcStart + plcLen > table.Length) return;
-        int n = plcLen / 4 - 1;  // sub-story 수
+        int n = plcLen / 4 - 1;
         if (n <= 0) return;
         var cps = new int[n + 1];
         for (int i = 0; i <= n; i++)
@@ -1861,14 +1862,10 @@ public class DocBinaryReader
             int cpStart = subBase + cps[i];
             int cpEnd   = subBase + cps[i + 1];
             if (cpEnd <= cpStart || cpEnd > subEnd) continue;
-            var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
-            var cleaned = CleanSubdocText(raw);
-            if (string.IsNullOrEmpty(cleaned)) continue;
-            var entry = new FootnoteEntry
-            {
-                Id = $"{idPrefix}{sink.Count + 1}",
-            };
-            entry.Blocks.Add(Paragraph.Of(cleaned));
+            var paras = BuildSubdocParagraphs(wd, table, fib, cpStart, cpEnd, fmt);
+            if (paras.Count == 0 || paras.All(p => string.IsNullOrWhiteSpace(p.GetPlainText()))) continue;
+            var entry = new FootnoteEntry { Id = $"{idPrefix}{sink.Count + 1}" };
+            foreach (var pa in paras) entry.Blocks.Add(pa);
             sink.Add(entry);
         }
     }
