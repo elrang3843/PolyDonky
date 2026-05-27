@@ -87,6 +87,15 @@ public class DocBinaryReader
     /// <summary>Phase 3n — 매크로 프로젝트 존재 여부. UI 에서 "이 문서에는 매크로가 있습니다" 경고에 사용.</summary>
     public bool HasMacros => MacroProject is not null;
 
+    /// <summary>
+    /// Phase 3n-2 — 디지털 서명 storage (보통 <c>_SignaturesV1</c>) 의 격리된 raw bytes.
+    /// CLAUDE.md §"전자서명은 수정 시 효력 깨짐 — 보존 증적으로만 별도 관리" — 절대 검증·수정 X.
+    /// </summary>
+    public DigitalSignatureInfo? DigitalSignature { get; private set; }
+
+    /// <summary>Phase 3n-2 — 디지털 서명 존재 여부. UI 에서 "이 문서는 서명되었습니다" 표시에 사용.</summary>
+    public bool HasDigitalSignature => DigitalSignature is not null;
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -151,6 +160,8 @@ public class DocBinaryReader
             OleEmbeds = ParseOleEmbeds(root);
             // Phase 3n — VBA 매크로 프로젝트 격리 저장 (절대 실행 X, fidelity 보존만).
             MacroProject = ParseMacroProject(root);
+            // Phase 3n-2 — 디지털 서명 격리 저장 (절대 검증·수정 X, 보존 증적용).
+            DigitalSignature = ParseDigitalSignature(root);
             var doc = BuildDocument(text, fcs, fmt, OleEmbeds);
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
@@ -3417,6 +3428,34 @@ public class DocBinaryReader
         return null;
     }
 
+    // Phase 3n-2 — 디지털 서명 storage 격리 저장. 같은 패턴 (recursive raw bytes 보존).
+    //   알려진 entry 이름: "_SignaturesV1" (Office 2003 XML 서명), "_DigitalSignature" (older 변종, stream).
+    private static DigitalSignatureInfo? ParseDigitalSignature(OpenMcdf.RootStorage root)
+    {
+        // Storage 형식 (XML 서명 — 가장 일반적).
+        foreach (var candidate in new[] { "_SignaturesV1", "_signatures" })
+        {
+            if (!root.TryOpenStorage(candidate, out var sigRoot)) continue;
+            var streams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            ReadStorageRecursive(sigRoot, "", streams);
+            if (streams.Count > 0) return new DigitalSignatureInfo(candidate, streams);
+        }
+        // Stream 형식 (구형 binary 서명) — root 의 단독 stream 으로 존재.
+        foreach (var candidate in new[] { "_DigitalSignature", "\x01CompObj_DigitalSignature" })
+        {
+            if (!root.TryOpenStream(candidate, out var stm)) continue;
+            using var s = stm;
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            var bytes = ms.ToArray();
+            if (bytes.Length == 0) continue;
+            return new DigitalSignatureInfo(
+                candidate,
+                new Dictionary<string, byte[]> { [candidate] = bytes });
+        }
+        return null;
+    }
+
     // 임의 storage 의 모든 stream 을 path-prefixed key 로 dict 에 저장. sub-storage 는 재귀.
     private static void ReadStorageRecursive(
         OpenMcdf.Storage storage, string prefix, Dictionary<string, byte[]> sink)
@@ -3502,5 +3541,15 @@ public sealed record OleEmbedEntry(
 /// <param name="StorageName">root 안의 매크로 storage 이름 (보통 "Macros", 드물게 "_VBA_PROJECT_CUR").</param>
 /// <param name="Streams">매크로 storage 내 모든 stream path → raw bytes 사전. sub-storage 는 "Sub/Stream" path 로 표현.</param>
 public sealed record MacroProjectInfo(
+    string StorageName,
+    IReadOnlyDictionary<string, byte[]> Streams);
+
+/// <summary>
+/// Phase 3n-2 — 디지털 서명 정보의 격리된 raw bytes. 절대 검증·수정하지 않으며 보존 증적용.
+/// CLAUDE.md §"전자서명은 수정 시 효력 깨짐 — 보존 증적으로만 별도 관리".
+/// </summary>
+/// <param name="StorageName">root 안의 서명 entry 이름 (보통 "_SignaturesV1" storage, 또는 "_DigitalSignature" stream).</param>
+/// <param name="Streams">서명 storage 내 모든 stream path → raw bytes 사전. stream 단독이면 단일 entry.</param>
+public sealed record DigitalSignatureInfo(
     string StorageName,
     IReadOnlyDictionary<string, byte[]> Streams);

@@ -85,6 +85,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3l-2 본문 0x01 + sprmCFOle2 �
 harness.Run("DOC (Word 97-2003 binary) — Phase 3l-3 Ole10Native wrapper 풀기", DocBinaryPhase3l3Ole10NativeUnwrap);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n VBA 매크로 프로젝트 격리 저장", DocBinaryPhase3nMacroProject);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n 매크로 없음 (HasMacros=false)", DocBinaryPhase3nNoMacros);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3n-2 디지털 서명 격리 저장", DocBinaryPhase3n2DigitalSignature);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3n-2 서명 없음 (HasDigitalSignature=false)", DocBinaryPhase3n2NoDigitalSignature);
 
 return harness.Finish();
 
@@ -7035,6 +7037,63 @@ static void DocBinaryPhase3nNoMacros()
         reader.Read(fs);
         SmokeHarness.True(!reader.HasMacros, "HasMacros = false (Macros storage 없음)");
         SmokeHarness.True(reader.MacroProject is null, "MacroProject is null");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3n-2 — 디지털 서명 격리 저장. _SignaturesV1 storage 의 raw bytes 보존.
+static void DocBinaryPhase3n2DigitalSignature()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+    // 합성: _SignaturesV1/{origSigs, sigStore} 두 stream.
+    var enc = Encoding.UTF8;
+    byte[] origSigs = enc.GetBytes("<Signatures xmlns=\"...\"></Signatures>");
+    byte[] sigStore = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE };
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            var sigs = root.CreateStorage("_SignaturesV1");
+            using (var s = sigs.CreateStream("origSigs")) s.Write(origSigs);
+            using (var s = sigs.CreateStream("sigStore")) s.Write(sigStore);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.True(reader.HasDigitalSignature, "HasDigitalSignature = true");
+        SmokeHarness.True(reader.DigitalSignature is not null, "DigitalSignature != null");
+        SmokeHarness.Equal("_SignaturesV1", reader.DigitalSignature!.StorageName, "StorageName");
+        SmokeHarness.True(reader.DigitalSignature.Streams.ContainsKey("origSigs"), "Streams contains origSigs");
+        SmokeHarness.True(reader.DigitalSignature.Streams.ContainsKey("sigStore"), "Streams contains sigStore");
+        SmokeHarness.True(reader.DigitalSignature.Streams["origSigs"].SequenceEqual(origSigs),
+            "origSigs bytes 일치 (raw 보존)");
+        SmokeHarness.True(reader.DigitalSignature.Streams["sigStore"].SequenceEqual(sigStore),
+            "sigStore bytes 일치 (raw 보존)");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3n2NoDigitalSignature()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+        SmokeHarness.True(!reader.HasDigitalSignature, "HasDigitalSignature = false");
+        SmokeHarness.True(reader.DigitalSignature is null, "DigitalSignature is null");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
