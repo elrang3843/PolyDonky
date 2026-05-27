@@ -89,6 +89,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3n-2 디지털 서명 격리 �
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n-2 서명 없음 (HasDigitalSignature=false)", DocBinaryPhase3n2NoDigitalSignature);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n-3 알려지지 않은 root storage catch-all", DocBinaryPhase3n3PreservedRootStorages);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3n-3 알려진 카테고리만 (PreservedRootStorages empty)", DocBinaryPhase3n3OnlyKnownStorages);
+harness.Run("IWPF — FidelityCapsules ZIP 보존 round-trip", IwpfFidelityCapsulesRoundtrip);
 
 return harness.Finish();
 
@@ -7163,6 +7164,46 @@ static void DocBinaryPhase3n3OnlyKnownStorages()
         SmokeHarness.True(reader.HasMacros, "Phase 3n: Macros captured");
         SmokeHarness.Equal(0, reader.PreservedRootStorages.Count,
             "PreservedRootStorages empty (알려진 카테고리만 — 중복 보존 X)");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// IWPF fidelity capsule round-trip — PolyDonkyument.FidelityCapsules 에 넣은 raw bytes 가
+// 생성된 IWPF ZIP 안의 fidelity/capsules/<path> 로 그대로 보존되는지.
+static void IwpfFidelityCapsulesRoundtrip()
+{
+    var doc = new PolyDonkyument();
+    doc.Sections.Add(new Section { Blocks = { Paragraph.Of("Hi") } });
+    var macroBytes = Encoding.UTF8.GetBytes("ID=\"{ABC}\"");
+    var sigBytes   = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF };
+    var dsBytes    = new byte[] { 0x01, 0x02, 0x03 };
+    doc.FidelityCapsules["msdoc/macros/Macros/PROJECT"]      = macroBytes;
+    doc.FidelityCapsules["msdoc/signatures/_SignaturesV1/origSigs"] = sigBytes;
+    doc.FidelityCapsules["msdoc/preserved/MsoDataStore/Props"]      = dsBytes;
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.iwpf");
+    try
+    {
+        using (var ofs = File.Create(tmp))
+            new PolyDonky.Iwpf.IwpfWriter().Write(doc, ofs);
+
+        // ZIP 직접 열어 fidelity 파트 검사.
+        using var zip = System.IO.Compression.ZipFile.OpenRead(tmp);
+        byte[] ReadEntry(string path)
+        {
+            var e = zip.GetEntry(path);
+            SmokeHarness.True(e is not null, $"ZIP entry '{path}' exists");
+            using var es = e!.Open();
+            using var ms = new MemoryStream();
+            es.CopyTo(ms);
+            return ms.ToArray();
+        }
+        var macro = ReadEntry("fidelity/capsules/msdoc/macros/Macros/PROJECT");
+        SmokeHarness.True(macro.SequenceEqual(macroBytes), "macros capsule bytes 일치");
+        var sig = ReadEntry("fidelity/capsules/msdoc/signatures/_SignaturesV1/origSigs");
+        SmokeHarness.True(sig.SequenceEqual(sigBytes), "signature capsule bytes 일치");
+        var ds = ReadEntry("fidelity/capsules/msdoc/preserved/MsoDataStore/Props");
+        SmokeHarness.True(ds.SequenceEqual(dsBytes), "preserved storage capsule bytes 일치");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }

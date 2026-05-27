@@ -98,6 +98,18 @@ public sealed class IwpfWriter : IDocumentWriter
                 AddPart(archive, manifest, IwpfPaths.SecurityWriteLock, IwpfMediaTypes.Json, writeLockBytes);
             }
 
+            // 5b. fidelity/capsules/ — 코덱이 format-specific 보존 데이터를 넣은 경우.
+            //     DOC 의 매크로 / 디지털 서명 / 미인식 root storage 등이 여기로 매핑.
+            //     키 = capsule 내부 상대 경로 (예: "msdoc/macros/PROJECT").
+            foreach (var capsule in document.FidelityCapsules)
+            {
+                if (capsule.Value is null || capsule.Value.Length == 0) continue;
+                AddPart(archive, manifest,
+                    IwpfPaths.FidelityCapsulesDir + capsule.Key,
+                    IwpfMediaTypes.OctetStream,
+                    capsule.Value);
+            }
+
             // 6. manifest.json — 항상 마지막. 본문 파트의 해시가 모두 결정된 뒤에 작성한다.
             var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonDefaults.Options);
             WriteEntry(archive, IwpfPaths.Manifest, manifestBytes);
