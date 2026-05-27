@@ -49,6 +49,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3c 섹션 분할 (PlcfSed)", Do
 harness.Run("DOC (Word 97-2003 binary) — Phase 3d 헤더·푸터 (PlcfHdd + subdoc text)", DocBinaryPhase3dHeaderFooter);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3c-2 SEPX 페이지 크기·여백", DocBinaryPhase3c2SepxPageProps);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e 이미지 placeholder (0x01)", DocBinaryPhase3eImagePlaceholder);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-2 이미지 PNG 데이터 추출 (PICF + Data stream)", DocBinaryPhase3e2ImageData);
 
 return harness.Finish();
 
@@ -3104,6 +3105,126 @@ static void DocBinaryPhase3eImagePlaceholder()
             $"blocks[2] = Paragraph (got {blocks[2].GetType().Name})");
         SmokeHarness.Equal("After", ((Paragraph)blocks[2]).GetPlainText(),
             "blocks[2] = 'After'");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3e2ImageData()
+{
+    // 본문 "Before\x01After\r" + Data stream 의 PICF + PNG signature.
+    //   CHPX FKP 의 \x01 char run 에 sprmCPicLocation = fcPic (Data stream 내 PICF 위치).
+    //   PICF: lcb=20, body 16 byte = PNG signature(8) + dummy(8).
+    //   결과: ImageBlock.MediaType = "image/png", Data 의 처음 8 byte = PNG signature.
+    const string text = "BeforeAfter\r";  // 0x01 박은 후 12 chars
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 3 runs:
+    //   run 0: [0x200, 0x20C) "Before" — 빈 CHPX
+    //   run 1: [0x20C, 0x20E) "\x01"   — sprmCPicLocation = fcPic = 0
+    //   run 2: [0x20E, 0x218) "After\r" — 빈 CHPX
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x218);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    // ChpxInFkp[0]: cb=0
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    // ChpxInFkp[1]: cb=6, sprmCPicLocation(2)=0x6A03 + op(4)=0
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;  // fcPic = 0 (Data stream 내)
+    // ChpxInFkp[2]: cb=0
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Data stream: PICF (lcb=20 + 16 byte body), 처음 8 byte = PNG signature
+    var dataStream = new byte[20];
+    BitConverter.TryWriteBytes(dataStream.AsSpan(0), (int)20);  // lcb
+    // PICF body 시작 byte 4. PNG signature 박음.
+    byte[] pngSig = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+    Buffer.BlockCopy(pngSig, 0, dataStream, 4, 8);
+    // 나머지 dataStream[12..19] = 0 (dummy)
+
+    // Table stream
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 3, $"blocks.Count >= 3 (got {blocks.Count})");
+        SmokeHarness.True(blocks[1] is ImageBlock, "blocks[1] = ImageBlock");
+        var img = (ImageBlock)blocks[1];
+        SmokeHarness.Equal("image/png", img.MediaType, "MediaType = image/png");
+        SmokeHarness.True(img.Data.Length >= 8, $"Data.Length >= 8 (got {img.Data.Length})");
+        SmokeHarness.True(
+            img.Data[0] == 0x89 && img.Data[1] == 0x50 && img.Data[2] == 0x4E && img.Data[3] == 0x47,
+            $"Data 의 처음 4 byte = PNG signature (got {img.Data[0]:X2}{img.Data[1]:X2}{img.Data[2]:X2}{img.Data[3]:X2})");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
