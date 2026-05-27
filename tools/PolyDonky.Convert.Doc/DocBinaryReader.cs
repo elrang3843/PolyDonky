@@ -350,6 +350,10 @@ public class DocBinaryReader
         // Phase 2h — itap level 별 누적 상태. itap=0 면 stack 비어 있음, itap=1 면 외곽 표 한 개,
         //          itap=2 면 외곽+내부 두 개.
         var tableStack = new Stack<TableState>();
+        // Phase 3a — 필드 처리 상태. 0=일반, 1=field code (폐기), 2=field result (포함).
+        //   [MS-DOC] §2.8.25 — 0x13 field begin, 0x14 separator, 0x15 end. 중첩 필드는 1-level
+        //   단순화 (대부분의 실문서에서 충분).
+        int fieldMode = 0;
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -361,17 +365,26 @@ public class DocBinaryReader
             {
                 case '\r':
                 case '\f':
+                    // 단락 경계에서 fieldMode 강제 reset — 정상 Word 는 단락 안에 0x15 가 있어
+                    // 단락 경계에서 이미 0 이지만, 0x15 누락된 손상 파일/합성 입력 안전성.
+                    fieldMode = 0;
                     FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
                     break;
                 case '\v':
                     paraChars.Add('\n'); paraFcs.Add(fc);
                     break;
-                case '\u0007':  // cell mark — 단락 빌드 시 itap>=1 면 셀 분리에 사용.
+                case '\u0007':  // cell mark
                     paraChars.Add('\u0007'); paraFcs.Add(fc);
                     break;
-                case '\u0013':  // field begin
-                case '\u0014':  // field separator
-                case '\u0015':  // field end
+                case '\u0013':  // field begin → field code 모드 (폐기)
+                    fieldMode = 1;
+                    break;
+                case '\u0014':  // field separator → field result 모드 (포함)
+                    fieldMode = 2;
+                    break;
+                case '\u0015':  // field end → 일반 모드 복귀
+                    fieldMode = 0;
+                    break;
                 case '\u0002':  // footnote ref
                 case '\u0005':  // comment ref
                 case '\u0008':  // drawing
@@ -379,11 +392,11 @@ public class DocBinaryReader
                     break;
                 case '\t':
                 case '\n':
-                    paraChars.Add(c); paraFcs.Add(fc);
+                    if (fieldMode != 1) { paraChars.Add(c); paraFcs.Add(fc); }
                     break;
                 default:
                     if (c < 0x20) break;
-                    paraChars.Add(c); paraFcs.Add(fc);
+                    if (fieldMode != 1) { paraChars.Add(c); paraFcs.Add(fc); }
                     break;
             }
         }
