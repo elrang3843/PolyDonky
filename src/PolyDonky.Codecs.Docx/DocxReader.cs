@@ -30,7 +30,33 @@ public sealed class DocxReader : IDocumentReader
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        using var package = WordprocessingDocument.Open(input, isEditable: false);
+        // OpenXml 패키지 + fidelity capsule 스캔 양쪽에서 input 을 읽으므로 한 번 버퍼링.
+        byte[] buffered;
+        if (input is MemoryStream srcMs && srcMs.TryGetBuffer(out var seg))
+        {
+            buffered = seg.Array!.AsSpan(seg.Offset, seg.Count).ToArray();
+        }
+        else
+        {
+            using var tempMs = new MemoryStream();
+            input.CopyTo(tempMs);
+            buffered = tempMs.ToArray();
+        }
+        var document = ReadCore(buffered);
+
+        // fidelity capsule — 알려지지 않은 OOXML 파트 (vbaProject.bin / customXml/* / _xmlsignatures/*
+        // / word/embeddings/* 등) 를 raw bytes 로 보존 → IWPF round-trip 손실 0%.
+        using (var zipStream = new MemoryStream(buffered, writable: false))
+        {
+            AddOoxmlFidelityCapsules(document, zipStream);
+        }
+        return document;
+    }
+
+    private static PolyDonkyument ReadCore(byte[] buffered)
+    {
+        using var inStream = new MemoryStream(buffered, writable: false);
+        using var package = WordprocessingDocument.Open(inStream, isEditable: false);
         var mainPart = package.MainDocumentPart
             ?? throw new InvalidDataException("DOCX package has no main document part.");
         var body = mainPart.Document?.Body
@@ -71,6 +97,49 @@ public sealed class DocxReader : IDocumentReader
         ReadCoreProperties(package, document.Metadata);
         ReadFootnotesAndEndnotes(mainPart, document, ctx);
         return document;
+    }
+
+    // ZIP 안에서 DocxReader 가 직접 다루지 않는 모든 OOXML 파트를 PolyDonkyument.FidelityCapsules
+    // 로 raw bytes 보존. round-trip 시 vbaProject.bin / customXml/* / _xmlsignatures/* /
+    // word/embeddings/* 같은 데이터가 IWPF 안으로 그대로 옮겨진다.
+    private static void AddOoxmlFidelityCapsules(PolyDonkyument document, Stream zipStream)
+    {
+        using var archive = new System.IO.Compression.ZipArchive(
+            zipStream, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;  // 디렉터리 항목
+            if (IsKnownOoxmlPart(entry.FullName)) continue;
+            using var es = entry.Open();
+            using var bms = new MemoryStream();
+            es.CopyTo(bms);
+            document.FidelityCapsules[$"ooxml/{entry.FullName}"] = bms.ToArray();
+        }
+    }
+
+    // DocxReader 가 이미 흡수한 표준 OOXML 파트들. 그 외는 fidelity capsule 로 보존.
+    private static bool IsKnownOoxmlPart(string path)
+    {
+        if (path == "[Content_Types].xml")  return true;
+        if (path == "_rels/.rels")          return true;
+        if (path.StartsWith("docProps/",       StringComparison.Ordinal)) return true;
+        if (path.StartsWith("word/theme/",     StringComparison.Ordinal)) return true;
+        if (path.StartsWith("word/_rels/",     StringComparison.Ordinal)) return true;
+        if (path.StartsWith("word/media/",     StringComparison.Ordinal)) return true;
+        switch (path)
+        {
+            case "word/document.xml":
+            case "word/styles.xml":
+            case "word/footnotes.xml":
+            case "word/endnotes.xml":
+            case "word/numbering.xml":
+            case "word/settings.xml":
+            case "word/fontTable.xml":
+            case "word/webSettings.xml":
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static void ReadFootnotesAndEndnotes(MainDocumentPart mainPart, PolyDonkyument document, ReadContext ctx)

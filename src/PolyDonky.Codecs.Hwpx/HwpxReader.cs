@@ -115,12 +115,42 @@ public sealed class HwpxReader : IDocumentReader
                 document.Sections.Add(new Section());
             }
 
+            // fidelity capsule — HwpxReader 가 직접 다루지 않는 ZIP 파트들 (Scripts/* 매크로,
+            // BinData/* 인덱스 외 보조 데이터, 변종 META-INF 등) 을 raw bytes 로 보존.
+            AddHwpxFidelityCapsules(document, archive);
+
             return document;
         }
         finally
         {
             buffered?.Dispose();
         }
+    }
+
+    // ZIP 안 알려지지 않은 HWPX 파트 (Scripts/*, 보조 메타 등) 를 fidelity capsule 로 보존.
+    private static void AddHwpxFidelityCapsules(PolyDonkyument document, ZipArchive archive)
+    {
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;
+            if (IsKnownHwpxPart(entry.FullName)) continue;
+            using var es = entry.Open();
+            using var bms = new MemoryStream();
+            es.CopyTo(bms);
+            document.FidelityCapsules[$"hwpx/{entry.FullName}"] = bms.ToArray();
+        }
+    }
+
+    private static bool IsKnownHwpxPart(string path)
+    {
+        if (string.Equals(path, "mimetype", StringComparison.Ordinal)) return true;
+        if (path.StartsWith("META-INF/",        StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.StartsWith("Contents/",        StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.StartsWith("Preview/",         StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.StartsWith("BinData/",         StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(path, "settings.xml", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(path, "version.xml",  StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     /// <summary>

@@ -163,11 +163,69 @@ public sealed class HwpReader : IDocumentReader
             var header  = ParseFileHeader(root);
             var docInfo = ParseDocInfo(root, header.IsCompressed);
             var body    = ParseBodyText(root, header.IsCompressed);
-            return BuildDocument(docInfo, body, root);
+            var document = BuildDocument(docInfo, body, root);
+
+            // fidelity capsule — HwpReader 가 직접 다루지 않는 root storage 들 (Scripts, DocOptions
+            // 일부, 사용자 정의 storage) 을 raw bytes 로 보존. IWPF round-trip 시 손실 0%.
+            AddHwpFidelityCapsules(document, root);
+            return document;
         }
         finally
         {
             try { File.Delete(tmpPath); } catch { }
+        }
+    }
+
+    // ── Fidelity capsule (active/unknown root storages) ─────────────────────
+
+    private static readonly HashSet<string> KnownHwpRootEntries = new(StringComparer.Ordinal)
+    {
+        // HWP 5.x core streams/storages.
+        "FileHeader", "DocInfo", "BodyText",
+        "BinData", "PrvText", "PrvImage", "DocOptions",
+        "\x05HwpSummaryInformation",
+        // OLE2 표준 (Microsoft 인터넷 호환 메타데이터) — 우리는 안 쓰지만 표준 part.
+        "\x05DocumentSummaryInformation", "\x05SummaryInformation",
+    };
+
+    // 알려지지 않은 root storage / stream 을 fidelity capsule 로 격리 보존.
+    //   Scripts (매크로) / 사용자 정의 storage / 한컴 비공개 확장 등이 IWPF round-trip 시 손실 없이 옮겨진다.
+    private static void AddHwpFidelityCapsules(PolyDonkyument document, RootStorage root)
+    {
+        foreach (var entry in root.EnumerateEntries())
+        {
+            if (KnownHwpRootEntries.Contains(entry.Name)) continue;
+            if (root.TryOpenStorage(entry.Name, out var storage))
+            {
+                CollectStorageRecursive(storage, $"hancom/{entry.Name}", document.FidelityCapsules);
+            }
+            else if (root.TryOpenStream(entry.Name, out var stm))
+            {
+                using var s = stm;
+                using var ms = new MemoryStream();
+                s.CopyTo(ms);
+                document.FidelityCapsules[$"hancom/{entry.Name}"] = ms.ToArray();
+            }
+        }
+    }
+
+    private static void CollectStorageRecursive(
+        OpenMcdf.Storage storage, string prefix, IDictionary<string, byte[]> sink)
+    {
+        foreach (var entry in storage.EnumerateEntries())
+        {
+            string path = $"{prefix}/{entry.Name}";
+            if (storage.TryOpenStream(entry.Name, out var stm))
+            {
+                using var s = stm;
+                using var ms = new MemoryStream();
+                s.CopyTo(ms);
+                sink[path] = ms.ToArray();
+            }
+            else if (storage.TryOpenStorage(entry.Name, out var child))
+            {
+                CollectStorageRecursive(child, path, sink);
+            }
         }
     }
 
