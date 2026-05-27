@@ -41,6 +41,14 @@ public sealed class Run
     /// null 이면 인자가 없거나 의미상 비어 있는 필드 (PAGE, DATE 등).</summary>
     public string? FieldArg { get; set; }
 
+    /// <summary>변경추적 — 이 Run 은 새로 삽입된 텍스트 (insert revision mark).
+    /// 렌더링 측에서 보통 색상 강조 또는 밑줄로 표시. DOCX <c>w:ins</c> / Word sprmCFRMarkIns 와 매핑.</summary>
+    public bool IsInsertedRevision { get; set; }
+
+    /// <summary>변경추적 — 이 Run 은 삭제된 텍스트 (delete revision mark).
+    /// 렌더링 측에서 보통 strikethrough + 색상 강조로 표시. DOCX <c>w:del</c> / Word sprmCFRMarkDel 와 매핑.</summary>
+    public bool IsDeletedRevision { get; set; }
+
     /// <summary>루비 주석 텍스트 (한자 위 후리가나 등). null 이면 루비 없음.
     /// HTML <c>&lt;ruby&gt;&lt;rb&gt;base&lt;/rb&gt;&lt;rt&gt;annotation&lt;/rt&gt;&lt;/ruby&gt;</c>
     /// 에서 rt 콘텐츠를 여기에 저장, 베이스 텍스트는 Text 에 저장.</summary>
@@ -60,6 +68,8 @@ public sealed class Run
         EndnoteId         = EndnoteId,
         Field             = Field,
         FieldArg          = FieldArg,
+        IsInsertedRevision = IsInsertedRevision,
+        IsDeletedRevision  = IsDeletedRevision,
         RubyText          = RubyText,
     };
 }
