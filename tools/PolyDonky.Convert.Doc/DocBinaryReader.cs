@@ -792,6 +792,8 @@ public class DocBinaryReader
         string?    curUrl   = null;
         FieldType? curField = null;
         string?    curArg   = null;
+        bool       curIns   = false;
+        bool       curDel   = false;
         var curText = new StringBuilder();
 
         void Flush()
@@ -801,6 +803,8 @@ public class DocBinaryReader
             if (curUrl is { Length: > 0 }) run.Url = curUrl;
             if (curField is not null)      run.Field = curField;
             if (curArg is { Length: > 0 }) run.FieldArg = curArg;
+            if (curIns) run.IsInsertedRevision = true;
+            if (curDel) run.IsDeletedRevision  = true;
             para.Runs.Add(run);
             curText.Clear();
         }
@@ -829,19 +833,23 @@ public class DocBinaryReader
                 }
             }
 
-            var rs = fmt.GetRunStyle(fc, paraIstd) ?? new RunStyle();
+            var (rsOrNull, ins, del) = fmt.GetRunStyle(fc, paraIstd);
+            var rs = rsOrNull ?? new RunStyle();
             var (url, field, arg) = fmt.GetFieldAtFc(fc);
             bool styleBreak = curStyle is null || !RunStyleEquals(curStyle, rs);
             bool fieldBreak = !string.Equals(curUrl, url, StringComparison.Ordinal)
                             || curField != field
                             || !string.Equals(curArg, arg, StringComparison.Ordinal);
-            if (styleBreak || fieldBreak)
+            bool revBreak   = curIns != ins || curDel != del;
+            if (styleBreak || fieldBreak || revBreak)
             {
                 Flush();
                 curStyle = rs;
                 curUrl   = url;
                 curField = field;
                 curArg   = arg;
+                curIns   = ins;
+                curDel   = del;
             }
             curText.Append(c);
         }
@@ -2220,33 +2228,40 @@ public class DocBinaryReader
 
         // Phase 1f — paraIstd 가 -1 아니면 단락 스타일의 STD chpxSprms 를 먼저 적용한 뒤
         // 직접 CHPX 로 override. Heading 의 폰트/크기/굵게 등이 자동 상속된다.
-        public RunStyle? GetRunStyle(int charFc, int paraIstd)
+        // Phase 3h — sprmCFRMarkIns / sprmCFRMarkDel 도 동시에 추출해 revision flags 반환.
+        public (RunStyle? Style, bool Inserted, bool Deleted) GetRunStyle(int charFc, int paraIstd)
         {
             var rs = new RunStyle();
+            var info = new RunRevInfo();
             bool touched = false;
 
             // 1. Phase 1g — 단락 스타일의 istdBase 체인을 따라 root → leaf 순으로 STD CHPX sprms 적용.
-            //    예: Heading 1 의 폰트가 Normal 의 폰트 패밀리를 상속.
             foreach (int chainIstd in ResolveStyleChain(paraIstd))
             {
                 if (_styles[chainIstd]?.ChpxSprms is { Length: > 0 } chainChpx)
-                    touched |= ApplyRunSprms(chainChpx, rs);
+                    touched |= ApplyRunSprms(chainChpx, rs, info);
             }
 
             // 2. 직접 CHPX FKP sprms (override).
             var direct = LoadChpx(charFc);
             if (direct is { Length: > 0 })
-                touched |= ApplyRunSprms(direct, rs);
+                touched |= ApplyRunSprms(direct, rs, info);
 
-            return touched ? rs : null;
+            return (touched ? rs : null, info.Inserted, info.Deleted);
         }
 
-        private bool ApplyRunSprms(byte[] grpprl, RunStyle rs)
+        // Revision flags 를 lambda 캡처용으로 box 한 holder.
+        private sealed class RunRevInfo { public bool Inserted; public bool Deleted; }
+
+        private bool ApplyRunSprms(byte[] grpprl, RunStyle rs, RunRevInfo info)
         {
             bool touched = false;
             WalkSprms(grpprl, (sprm, operand) =>
             {
-                if (ApplyRunSprm(sprm, operand, rs)) touched = true;
+                // Phase 3h — revision sprms (1-byte bool).
+                if (sprm == 0x0801 && operand.Length >= 1)      { info.Inserted = operand[0] != 0; touched = true; }
+                else if (sprm == 0x0807 && operand.Length >= 1) { info.Deleted  = operand[0] != 0; touched = true; }
+                else if (ApplyRunSprm(sprm, operand, rs))                                             touched = true;
             });
             return touched;
         }
