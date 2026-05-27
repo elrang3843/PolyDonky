@@ -52,6 +52,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3e 이미지 placeholder (0x01)
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-2 이미지 PNG 데이터 추출 (PICF + Data stream)", DocBinaryPhase3e2ImageData);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-3 WMF placeable header 인식", DocBinaryPhase3e3WmfImage);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-3 DIB BITMAPINFOHEADER 인식", DocBinaryPhase3e3DibImage);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-4 표 셀 안 inline 이미지", DocBinaryPhase3e4ImageInTableCell);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-5 EMF EMR_HEADER 인식", DocBinaryPhase3e5EmfImage);
 
 return harness.Finish();
 
@@ -3453,6 +3455,250 @@ static void DocBinaryPhase3e3DibImage()
         SmokeHarness.True(
             img.Data[0] == 0x28 && img.Data[1] == 0x00 && img.Data[2] == 0x00 && img.Data[3] == 0x00,
             $"Data 의 처음 4 byte = BITMAPINFOHEADER biSize=40 (got {img.Data[0]:X2}{img.Data[1]:X2}{img.Data[2]:X2}{img.Data[3]:X2})");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3e4ImageInTableCell()
+{
+    // 1행 1셀 표 + 셀 안 inline 이미지 (Phase 2a 표 + Phase 3e-2 PNG 추출 합성).
+    //   본문 텍스트 (이상): "X\x01Y\x07\rEnd\r" — 9 chars
+    //   파라 1 (InTable=1, !TTP): "X\x01Y\x07" + \r → 셀 1개 ["X", Img, "Y"]
+    //   파라 2: "End"
+    const string text = "XY\rEnd\r";  // 0x01·0x07·\r·E·n·d·\r — 9 chars
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 2 단락.
+    //   Para 1: fc [0x200, 0x20A), istd=0, sprmPFInTable=1
+    //   Para 2: fc [0x20A, 0x212), istd=0
+    int cpara = 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)0x20A);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 8), (int)0x212);
+    int papx0Off = 200, papx1Off = 220;
+    wd[fcPapxFkp + 12 + 0 * 13] = (byte)(papx0Off / 2);
+    wd[fcPapxFkp + 12 + 1 * 13] = (byte)(papx1Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0); p += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0x2416); p += 2;  // sprmPFInTable
+    wd[p++] = 1;
+    p = fcPapxFkp + papx1Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 3 runs:
+    //   run 0: fc [0x200, 0x202) "X" — 빈 CHPX
+    //   run 1: fc [0x202, 0x204) "\x01" — sprmCPicLocation = fcPic = 0
+    //   run 2: fc [0x204, 0x212) "Y\x07\rEnd\r" — 빈 CHPX
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x202);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x204);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x212);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Data stream: PICF lcb=20, PNG signature at offset 4.
+    var dataStream = new byte[20];
+    BitConverter.TryWriteBytes(dataStream.AsSpan(0), (int)20);
+    byte[] pngSig = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+    Buffer.BlockCopy(pngSig, 0, dataStream, 4, 8);
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 2, $"blocks.Count >= 2 (got {blocks.Count})");
+        SmokeHarness.True(blocks[0] is PolyDonky.Core.Table, $"blocks[0] = Table (got {blocks[0].GetType().Name})");
+        var tbl = (PolyDonky.Core.Table)blocks[0];
+        SmokeHarness.Equal(1, tbl.Rows.Count, "Rows.Count = 1");
+        SmokeHarness.Equal(1, tbl.Rows[0].Cells.Count, "Cells.Count = 1");
+        var cellBlocks = tbl.Rows[0].Cells[0].Blocks;
+        SmokeHarness.Equal(3, cellBlocks.Count, $"cell.Blocks.Count = 3 (got {cellBlocks.Count})");
+        SmokeHarness.True(cellBlocks[0] is Paragraph, $"cell[0] = Paragraph (got {cellBlocks[0].GetType().Name})");
+        SmokeHarness.True(cellBlocks[1] is ImageBlock,  $"cell[1] = ImageBlock (got {cellBlocks[1].GetType().Name})");
+        SmokeHarness.True(cellBlocks[2] is Paragraph, $"cell[2] = Paragraph (got {cellBlocks[2].GetType().Name})");
+        SmokeHarness.Equal("X", ((Paragraph)cellBlocks[0]).GetPlainText(), "cell[0] 텍스트 = X");
+        SmokeHarness.Equal("Y", ((Paragraph)cellBlocks[2]).GetPlainText(), "cell[2] 텍스트 = Y");
+        var img = (ImageBlock)cellBlocks[1];
+        SmokeHarness.Equal("image/png", img.MediaType, "셀 안 이미지 MediaType = image/png");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3e5EmfImage()
+{
+    // Phase 3e-2 와 동일 구조 — Data stream 의 PICF 안에 EMF EMR_HEADER 박는다.
+    //   iType=1 (01 00 00 00) + nSize + zero RECTL + dSignature " EMF" at offset 40.
+    //   결과: ImageBlock.MediaType = "image/emf".
+    const string text = "BeforeAfter\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x218);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Data stream: lcb=60, EMR_HEADER 시작.
+    //   offset 4..7 : iType = 01 00 00 00
+    //   offset 8..11: nSize = 88 (any)
+    //   offset 12..43: RECTL × 2 (zeros)
+    //   offset 44..47: dSignature " EMF"
+    //   offset 48..63: filler
+    var dataStream = new byte[64];
+    BitConverter.TryWriteBytes(dataStream.AsSpan(0), (int)60);
+    BitConverter.TryWriteBytes(dataStream.AsSpan(4), (int)1);     // iType = 1 (EMR_HEADER)
+    BitConverter.TryWriteBytes(dataStream.AsSpan(8), (int)88);    // nSize
+    dataStream[44] = 0x20; dataStream[45] = 0x45; dataStream[46] = 0x4D; dataStream[47] = 0x46;  // " EMF"
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 3, $"blocks.Count >= 3 (got {blocks.Count})");
+        SmokeHarness.True(blocks[1] is ImageBlock, "blocks[1] = ImageBlock");
+        var img = (ImageBlock)blocks[1];
+        SmokeHarness.Equal("image/emf", img.MediaType, "MediaType = image/emf");
+        SmokeHarness.True(img.Data.Length >= 44, $"Data.Length >= 44 (got {img.Data.Length})");
+        SmokeHarness.True(
+            img.Data[0] == 0x01 && img.Data[1] == 0 && img.Data[2] == 0 && img.Data[3] == 0 &&
+            img.Data[40] == 0x20 && img.Data[41] == 0x45 && img.Data[42] == 0x4D && img.Data[43] == 0x46,
+            "Data 의 EMR_HEADER iType=1 + dSignature \" EMF\" @ offset 40");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }

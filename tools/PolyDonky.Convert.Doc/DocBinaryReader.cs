@@ -433,9 +433,11 @@ public class DocBinaryReader
                     fieldMode = 0;
                     break;
                 case '\u0001':  // picture marker (inline image)
-                    // Phase 3e — 본문(itap=0) 의 picture marker 만나면 현재 단락 flush 후 ImageBlock
-                    // placeholder 삽입. 표 안의 inline image 및 실제 PICF/Data stream 추출은 후속.
-                    if (tableStack.Count == 0 && fieldMode != 1)
+                    // Phase 3e   — char-walk 중 picture marker 만나면 현재 단락 flush 후 ImageBlock 삽입.
+                    // Phase 3e-2 — CHPX 의 sprmCPicLocation + Data stream 에서 실제 이미지 추출.
+                    // Phase 3e-4 — 표 안 inline image 도 처리. FlushParagraph 가 partial paragraph 를
+                    //              cellBlocks 에 누적하되 \x07 가 없으면 cell 마감 X — 순서 보존.
+                    if (fieldMode != 1)
                     {
                         FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
                         var img = new ImageBlock
@@ -443,7 +445,6 @@ public class DocBinaryReader
                             Description = "[image]",
                             MediaType   = "application/octet-stream",
                         };
-                        // Phase 3e-2 — CHPX 의 sprmCPicLocation + Data stream 에서 실제 이미지 시도.
                         int? picFc = fmt.GetPictureFc(fc);
                         if (picFc.HasValue && fmt.DataStream is not null)
                         {
@@ -454,7 +455,10 @@ public class DocBinaryReader
                                 img.Data      = extracted.Value.Data;
                             }
                         }
-                        section.Blocks.Add(img);
+                        if (tableStack.Count > 0)
+                            tableStack.Peek().CellBlocks.Add(img);
+                        else
+                            section.Blocks.Add(img);
                     }
                     break;
                 case '\u0002':  // footnote ref
@@ -707,6 +711,7 @@ public class DocBinaryReader
     //             0x12 AppName.
     // Phase 3e-2 — PICF 영역 안에서 PNG/JPEG/GIF signature 검색 후 raw byte 추출.
     // Phase 3e-3 — WMF placeable header + DIB BITMAPINFOHEADER 추가.
+    // Phase 3e-5 — EMF EMR_HEADER (iType=1 + " EMF" dSignature@40) 추가.
     // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
     // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw byte 가 인라인. signature 위치부터
     // PICF 끝까지를 image data 로 본다.
@@ -734,6 +739,13 @@ public class DocBinaryReader
             // Phase 3e-3 — Placeable WMF header: D7 CD C6 9A 00 00 (§Placeable Metafile)
             if (data[i] == 0xD7 && data[i + 1] == 0xCD && data[i + 2] == 0xC6 && data[i + 3] == 0x9A)
                 return ("image/wmf", SliceTo(data, i, fcPic + lcb));
+            // Phase 3e-5 — EMF EMR_HEADER record:
+            //   bytes 0..3  : iType (= 1, EMR_HEADER)         = 01 00 00 00
+            //   bytes 40..43: dSignature " EMF" (0x464D4520)  = 20 45 4D 46
+            if (i + 44 <= data.Length &&
+                data[i] == 0x01 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 0 &&
+                data[i + 40] == 0x20 && data[i + 41] == 0x45 && data[i + 42] == 0x4D && data[i + 43] == 0x46)
+                return ("image/emf", SliceTo(data, i, fcPic + lcb));
             // Phase 3e-3 — DIB BITMAPINFOHEADER heuristic:
             //   byte 0..3 = 0x28 0x00 0x00 0x00 (biSize=40)
             //   byte 12..13 = biPlanes (LE) = 1
