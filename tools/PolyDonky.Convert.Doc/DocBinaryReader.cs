@@ -788,9 +788,12 @@ public class DocBinaryReader
     //     recLen            (uint   LE): 헤더 다음 데이터 길이.
     //   recVer == 0xF → container, 자식 레코드 재귀.
     //   BLIP atom:
-    //     0xF01D BLIP_JPEG, 0xF01E BLIP_PNG, 0xF02A BLIP_JPEGCMYK.
-    //     body = UID(16) [+ UID2(16) if (recInstance & 1) == 1] + tag(1) + image bytes.
-    //   (WMF/EMF/DIB BLIP 은 추가 metafile header 가 있어 후속 단계에서 처리; 현재는 PNG/JPEG 만.)
+    //     - Bitmap BLIP (0xF01D BLIP_JPEG, 0xF01E BLIP_PNG, 0xF01F BLIP_DIB, 0xF02A BLIP_JPEGCMYK):
+    //         body = UID(16) [+ UID2(16) if (recInstance & 1) == 1] + tag(1) + image bytes.
+    //     - Metafile BLIP (0xF01A BLIP_EMF, 0xF01B BLIP_WMF) — Phase 3e-7:
+    //         body = UID(16) [+ UID2(16)] + OfficeArtMetafileHeader(34) + image bytes (raw 또는 zlib).
+    //         MetafileHeader: cbSize(4) + rcBounds(16) + ptSize(8) + cbSave(4) + compression(1) + filter(1).
+    //         compression == 0xFE: raw. compression == 0x00: zlib 압축 — ZLibStream 으로 풀어 원본 복원.
     private static (string MediaType, byte[] Data)? TryExtractFromOfficeArt(
         byte[] data, int start, int end, int depth)
     {
@@ -816,23 +819,70 @@ public class DocBinaryReader
             }
             else
             {
-                string? mime = recType switch
+                // Bitmap BLIP — UID(16) [+ UID2(16)] + tag(1) + image data.
+                string? bitmapMime = recType switch
                 {
-                    0xF01D => "image/jpeg",  // BLIP_JPEG (RGB)
-                    0xF01E => "image/png",   // BLIP_PNG
-                    0xF02A => "image/jpeg",  // BLIP_JPEGCMYK — image/jpeg 로 통합
+                    0xF01D => "image/jpeg",   // BLIP_JPEG (RGB)
+                    0xF01E => "image/png",    // BLIP_PNG
+                    0xF01F => "image/x-dib",  // BLIP_DIB
+                    0xF02A => "image/jpeg",   // BLIP_JPEGCMYK
                     _      => null,
                 };
-                if (mime is not null)
+                if (bitmapMime is not null)
                 {
-                    int hdrExtra = 16 + 1;                          // primary UID + tag
-                    if ((recInst & 1) == 1) hdrExtra += 16;         // secondary UID
+                    int hdrExtra = 16 + 1;
+                    if ((recInst & 1) == 1) hdrExtra += 16;
                     int imgStart = dataStart + hdrExtra;
                     if (imgStart >= dataEnd) return null;
                     int imgLen = dataEnd - imgStart;
                     var img = new byte[imgLen];
                     Buffer.BlockCopy(data, imgStart, img, 0, imgLen);
-                    return (mime, img);
+                    return (bitmapMime, img);
+                }
+
+                // Metafile BLIP — UID(16) [+ UID2(16)] + OfficeArtMetafileHeader(34) + image bytes.
+                string? mfMime = recType switch
+                {
+                    0xF01A => "image/emf",   // BLIP_EMF
+                    0xF01B => "image/wmf",   // BLIP_WMF
+                    _      => null,
+                };
+                if (mfMime is not null)
+                {
+                    int hdrUids = 16;
+                    if ((recInst & 1) == 1) hdrUids += 16;
+                    int mfHdrStart = dataStart + hdrUids;
+                    if (mfHdrStart + 34 > dataEnd) return null;
+                    uint cbSize = BitConverter.ToUInt32(data, mfHdrStart + 0);
+                    byte compression = data[mfHdrStart + 32];
+                    int imgStart = mfHdrStart + 34;
+                    if (imgStart > dataEnd) return null;
+                    int storedLen = dataEnd - imgStart;
+
+                    if (compression == 0xFE)
+                    {
+                        // 비압축 — cbSize 만큼 또는 남은 만큼.
+                        int len = Math.Min(storedLen, (int)Math.Min(cbSize, int.MaxValue));
+                        var raw = new byte[len];
+                        Buffer.BlockCopy(data, imgStart, raw, 0, len);
+                        return (mfMime, raw);
+                    }
+                    if (compression == 0x00)
+                    {
+                        try
+                        {
+                            using var src = new MemoryStream(data, imgStart, storedLen, writable: false);
+                            using var zs  = new System.IO.Compression.ZLibStream(
+                                src, System.IO.Compression.CompressionMode.Decompress);
+                            using var dst = new MemoryStream();
+                            zs.CopyTo(dst);
+                            return (mfMime, dst.ToArray());
+                        }
+                        catch
+                        {
+                            return null;  // 손상된 zlib — fallback 양보.
+                        }
+                    }
                 }
             }
             pos = dataEnd;
