@@ -43,6 +43,14 @@ namespace PolyDonky.Convert.Doc;
 /// </summary>
 public class DocBinaryReader
 {
+    /// <summary>
+    /// Phase 3f — 마지막 Read 에서 추출한 OfficeArtBStoreContainer 의 BLIP 목록.
+    /// FBSE 가 가리키는 공유 이미지들. 인라인 PICF 와 무관하게 문서 전역에서 참조 가능한 자원.
+    /// 향후 단계에서 PICF 의 BSE-index 참조 해석에 사용할 인덱스 — 1-based.
+    /// </summary>
+    public IReadOnlyList<(string MediaType, byte[] Data)> BStoreImages { get; private set; }
+        = Array.Empty<(string, byte[])>();
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -94,6 +102,9 @@ public class DocBinaryReader
             fmt.DataStream = ReadAll(root, "Data");
             var doc = BuildDocument(text, fcs, fmt);
 
+            // Phase 3f — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출.
+            BStoreImages = ParseBStoreImages(table, fib);
+
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc);
 
@@ -140,7 +151,11 @@ public class DocBinaryReader
         uint   CcpFtn,
         uint   CcpHdd,
         uint   FcPlcfHdd,
-        uint   LcbPlcfHdd);
+        uint   LcbPlcfHdd,
+        // Phase 3f — OfficeArtDggContainer (fcDggInfo @ 0x0312, lcbDggInfo @ 0x0316).
+        //            Table stream 의 이 영역이 OfficeArtBStoreContainer 를 포함해 문서 전역 BLIP store 를 담는다.
+        uint   FcDggInfo,
+        uint   LcbDggInfo);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -201,10 +216,17 @@ public class DocBinaryReader
         uint fcPlcfHdd  = BitConverter.ToUInt32(wd, 0x00F2);
         uint lcbPlcfHdd = BitConverter.ToUInt32(wd, 0x00F6);
 
+        // Phase 3f — OfficeArtDggContainer offsets (FibRgFcLcb97 §2.5.5 pair 79):
+        //   fcDggInfo @ 0x0312, lcbDggInfo @ 0x0316
+        //   FIB 가 너무 작아 이 offset 까지 없으면 0/0 (BStore 없음) 으로 간주.
+        uint fcDggInfo  = wd.Length >= 0x0316 ? BitConverter.ToUInt32(wd, 0x0312) : 0u;
+        uint lcbDggInfo = wd.Length >= 0x031A ? BitConverter.ToUInt32(wd, 0x0316) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
-                       ccpFtn, ccpHdd, fcPlcfHdd, lcbPlcfHdd);
+                       ccpFtn, ccpHdd, fcPlcfHdd, lcbPlcfHdd,
+                       fcDggInfo, lcbDggInfo);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -888,6 +910,82 @@ public class DocBinaryReader
             pos = dataEnd;
         }
         return null;
+    }
+
+    // Phase 3f — OfficeArtDggContainer (Table stream) → OfficeArtBStoreContainer (0xF001) →
+    //            OfficeArtFBSE atoms (0xF007) → 임베드된 BLIP 추출 후 인덱스 작성.
+    //   FBSE body (36 byte fixed): btWin32 / btMacOS / rgbUid(16) / tag(2) / size(4) / cRef(4) /
+    //                              foDelay(4) / unused1(1) / cbName(1) / unused2(1) / unused3(1)
+    //   이후 nameData(cbName byte) 다음에 임베드 BLIP 가 옵션으로 위치.
+    //   foDelay 가 별도 stream 의 BLIP 을 가리키는 케이스 (없는 경우 0xFFFFFFFF) 는 후속 단계.
+    private static IReadOnlyList<(string MediaType, byte[] Data)> ParseBStoreImages(byte[] table, Fib fib)
+    {
+        if (fib.LcbDggInfo == 0) return Array.Empty<(string, byte[])>();
+        int start = (int)fib.FcDggInfo;
+        long endL  = (long)start + fib.LcbDggInfo;
+        if (start < 0 || endL > table.Length) return Array.Empty<(string, byte[])>();
+        int end = (int)endL;
+
+        var list = new List<(string, byte[])>();
+        WalkForBStore(table, start, end, list, depth: 0);
+        return list;
+    }
+
+    // DggContainer (0xF000) 안에서 BStoreContainer (0xF001) 를 찾아 FBSE 들을 처리.
+    private static void WalkForBStore(byte[] data, int start, int end, List<(string, byte[])> sink, int depth)
+    {
+        if (depth > 8) return;
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort verInst = BitConverter.ToUInt16(data, pos);
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint   recLen  = BitConverter.ToUInt32(data, pos + 4);
+            int dataStart  = pos + 8;
+            long dataEnd64 = (long)dataStart + recLen;
+            if (dataEnd64 > end || dataEnd64 < dataStart) return;
+            int dataEnd = (int)dataEnd64;
+            int recVer = verInst & 0x000F;
+
+            if (recType == 0xF001)
+            {
+                // BStoreContainer (container 0xF001). 자식 FBSE 처리.
+                ExtractFbses(data, dataStart, dataEnd, sink);
+            }
+            else if (recVer == 0xF)
+            {
+                // 다른 컨테이너 — DggContainer / OptContainer 등 — 재귀로 BStore 탐색.
+                WalkForBStore(data, dataStart, dataEnd, sink, depth + 1);
+            }
+            pos = dataEnd;
+        }
+    }
+
+    // BStoreContainer 안의 FBSE atom 들을 walk 하며 임베드 BLIP 추출.
+    private static void ExtractFbses(byte[] data, int start, int end, List<(string, byte[])> sink)
+    {
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint   recLen  = BitConverter.ToUInt32(data, pos + 4);
+            int dataStart  = pos + 8;
+            long dataEnd64 = (long)dataStart + recLen;
+            if (dataEnd64 > end || dataEnd64 < dataStart) return;
+            int dataEnd = (int)dataEnd64;
+
+            if (recType == 0xF007 && dataStart + 36 <= dataEnd)
+            {
+                byte cbName = data[dataStart + 33];
+                int blipStart = dataStart + 36 + cbName;
+                if (blipStart < dataEnd)
+                {
+                    var blip = TryExtractFromOfficeArt(data, blipStart, dataEnd, depth: 0);
+                    if (blip.HasValue) sink.Add(blip.Value);
+                }
+            }
+            pos = dataEnd;
+        }
     }
 
     // Phase 3c-2 — SEPX (Section Properties Exception) 의 sprm 들을 Section.Page 에 매핑.

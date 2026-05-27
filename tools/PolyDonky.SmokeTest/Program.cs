@@ -59,6 +59,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3e-6 OfficeArt BLIP_JPEG (atom)
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_DIB (atom)", DocBinaryPhase3e7BlipDib);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_WMF (uncompressed)", DocBinaryPhase3e7BlipWmfUncompressed);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-7 OfficeArt BLIP_EMF (zlib deflate)", DocBinaryPhase3e7BlipEmfDeflate);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3f OfficeArtBStoreContainer FBSE → BLIP 인덱스", DocBinaryPhase3fBStoreFbse);
 
 return harness.Finish();
 
@@ -3962,6 +3963,161 @@ static byte[] BuildBlipEmfDeflateStream(byte[] payload)
     d[61] = 0xFE;  // filter
     Buffer.BlockCopy(compressed, 0, d, 62, compressed.Length);
     return d;
+}
+
+// Phase 3f — OfficeArtDggContainer / BStoreContainer / FBSE 들에서 공유 BLIP 추출 검증.
+//
+// Table stream 안에 다음 구조 박는다:
+//   DggContainer (0xF000, container)
+//     BStoreContainer (0xF001, container, recInst = cBlips = 2)
+//       FBSE #1 (0xF007, atom) — embedded BLIP_PNG, image data = AA BB CC DD
+//       FBSE #2 (0xF007, atom) — embedded BLIP_PNG, image data = 11 22 33 44
+// FIB.fcDggInfo / lcbDggInfo 가 이 DggContainer 영역을 가리킨다.
+//
+// 결과: reader.BStoreImages = [(image/png, AABBCCDD), (image/png, 11223344)].
+static void DocBinaryPhase3fBStoreFbse()
+{
+    const string text = "Body\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    // PAPX FKP — 1 단락.
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    // CHPX FKP — 빈.
+    int crun = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4), (int)(0x200 + ccp * 2));
+    int chpx0Off = 64;
+    wd[fcChpxFkp + 4 * (crun + 1) + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + chpx0Off] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    // Table stream — CLX, BTE, 그리고 DggContainer.
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+
+    // ── DggContainer 합성 ─────────────────────────────────────────────
+    // FBSE(73) = header(8) + body(36) + embedded BLIP_PNG(29)
+    //   embedded BLIP_PNG(29) = header(8) + UID(16) + tag(1) + image(4)
+    // BStoreContainer body = 2 * 73 = 146 → total = 154
+    // DggContainer body = 154 → total = 162
+    int dggStart = (int)tblMs.Position;
+
+    Span<byte> b2 = stackalloc byte[2];
+
+    // DggContainer header
+    BitConverter.TryWriteBytes(b2, (ushort)0x000F); tblMs.Write(b2);   // recVer=0xF (container), recInst=0
+    BitConverter.TryWriteBytes(b2, (ushort)0xF000); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b4, (uint)154);      tblMs.Write(b4);
+
+    // BStoreContainer header
+    BitConverter.TryWriteBytes(b2, (ushort)0x002F); tblMs.Write(b2);   // recInst=2 (cBlips), recVer=0xF
+    BitConverter.TryWriteBytes(b2, (ushort)0xF001); tblMs.Write(b2);
+    BitConverter.TryWriteBytes(b4, (uint)146);      tblMs.Write(b4);
+
+    static byte[] BuildFbseWithPng(byte[] imageBytes)
+    {
+        var f = new byte[8 + 36 + 29];
+        // FBSE header
+        BitConverter.TryWriteBytes(f.AsSpan(0), (ushort)0x0062);   // recVer=2, recInst=msoblipPNG(6)
+        BitConverter.TryWriteBytes(f.AsSpan(2), (ushort)0xF007);
+        BitConverter.TryWriteBytes(f.AsSpan(4), (uint)(36 + 29));  // recLen = 65
+        // [8..43] FBSE body 36 byte: 모두 0 (btWin32, btMacOS, rgbUid, tag, size, cRef, foDelay,
+        //                                    unused1, cbName=0, unused2, unused3).
+        // [44..51] 임베드 BLIP_PNG header (8 byte)
+        BitConverter.TryWriteBytes(f.AsSpan(44), (ushort)0x6E00);  // recInst=0x6E0, recVer=0
+        BitConverter.TryWriteBytes(f.AsSpan(46), (ushort)0xF01E);
+        BitConverter.TryWriteBytes(f.AsSpan(48), (uint)21);
+        // [52..67] UID = 16 zeros
+        f[68] = 0xFF;                                              // tag
+        Buffer.BlockCopy(imageBytes, 0, f, 69, 4);
+        return f;
+    }
+
+    var fbse1 = BuildFbseWithPng(new byte[] { 0xAA, 0xBB, 0xCC, 0xDD });
+    var fbse2 = BuildFbseWithPng(new byte[] { 0x11, 0x22, 0x33, 0x44 });
+    tblMs.Write(fbse1, 0, fbse1.Length);
+    tblMs.Write(fbse2, 0, fbse2.Length);
+
+    int dggLen = (int)tblMs.Position - dggStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+    // Phase 3f — FIB fcDggInfo / lcbDggInfo
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0312), (uint)dggStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0316), (uint)dggLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.Equal(2, reader.BStoreImages.Count,
+            $"BStoreImages.Count = 2 (got {reader.BStoreImages.Count})");
+        SmokeHarness.Equal("image/png", reader.BStoreImages[0].MediaType, "BLIP #1 MediaType");
+        SmokeHarness.Equal("image/png", reader.BStoreImages[1].MediaType, "BLIP #2 MediaType");
+        SmokeHarness.Equal(4, reader.BStoreImages[0].Data.Length, "BLIP #1 Data.Length");
+        SmokeHarness.Equal(4, reader.BStoreImages[1].Data.Length, "BLIP #2 Data.Length");
+        SmokeHarness.True(
+            reader.BStoreImages[0].Data[0] == 0xAA && reader.BStoreImages[0].Data[1] == 0xBB &&
+            reader.BStoreImages[0].Data[2] == 0xCC && reader.BStoreImages[0].Data[3] == 0xDD,
+            "BLIP #1 bytes = AA BB CC DD");
+        SmokeHarness.True(
+            reader.BStoreImages[1].Data[0] == 0x11 && reader.BStoreImages[1].Data[1] == 0x22 &&
+            reader.BStoreImages[1].Data[2] == 0x33 && reader.BStoreImages[1].Data[3] == 0x44,
+            "BLIP #2 bytes = 11 22 33 44");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
 }
 
 // minimal Word 97-2003 WordDocument + 0Table stream bytes 합성.
