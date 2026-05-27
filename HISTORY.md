@@ -45,6 +45,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Added
+- **DOC (Word 97-2003 binary) ingest — Phase 3b 페이지 break**: PAPX `sprmPFPageBreakBefore` (0x2407, 1-byte) → `ParagraphStyle.ForcePageBreakBefore`. `ApplyParagraphSprm` 의 단일 case 추가로 단락 앞 강제 페이지 분할 매핑.
 - **DOC (Word 97-2003 binary) ingest — Phase 3a 필드 결과 보존**: 본문 내 `0x13` (field begin) / `0x14` (field separator) / `0x15` (field end) 제어 문자를 인식해 단순 폐기 대신 모드 기반 처리. field code (0x13~0x14 사이) 는 폐기하고 field result (0x14~0x15 사이) 만 본문에 보존. 단락 경계(`\r`/`\f`)에서 `fieldMode` 를 강제 reset 해 손상된 (0x15 누락) 파일에서도 다음 단락 텍스트가 폐기되지 않도록 안전성 강화. `[MS-DOC]` §2.8.25 단순화 (1-level 중첩만 지원).
 - **DOC (Word 97-2003 binary) ingest — Phase 2h 중첩 표**: `sprmPItap` (0x6649, spra=3 4-byte signed) 의 nesting level 추출. `BuildDocument` 의 흐름이 `Stack<TableState>` 기반으로 일반화 — 단락의 `itap` level 에 따라 push/pop, `FinalizeStack(targetDepth)` 가 pop 한 표를 부모 셀의 `CellBlocks` 에 `Block` 으로 추가하거나 (`itap=0` 도달 시) `section.Blocks` 에 직접 추가. `currentCellParas: List<Paragraph>` 를 `TableState.CellBlocks: List<Block>` 으로 일반화해 단락 + 중첩 Table 둘 다 셀 안에 자연스럽게 들어감. `sprmPItap` 가 명시되지 않은 합성/legacy 케이스 호환을 위해 `InTable=true`/`IsTtp=true` 면 `itap=1` 로 자동 추론. `SplitIntoCells` 의 빈 단락 추가 로직 정리.
 - **DOC (Word 97-2003 binary) ingest — Phase 2g 셀 안 멀티-단락**: 한 셀이 여러 단락을 보유할 수 있도록 `SplitIntoCells` 흐름 변경. `currentCellParas: List<Paragraph>` 상태가 셀의 누적 단락을 보존; `0x07` cell mark 가 단락 안에 등장하면 그 시점까지의 누적 단락 + 현재 텍스트 단락을 `TableCell.Blocks` 에 묶어 셀 finalize. `0x07` 없는 단락은 셀의 중간 단락으로 누적만. 기존 "한 셀 = 한 단락" 가정 제거.
