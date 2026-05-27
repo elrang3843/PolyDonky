@@ -36,6 +36,11 @@ public sealed class Run
     /// <summary>인라인 필드 종류. null 이면 필드가 아닌 일반 텍스트 Run.</summary>
     public FieldType? Field { get; set; }
 
+    /// <summary>필드 인스트의 핵심 인자 — SEQ 의 카테고리명, REF 의 책갈피명, STYLEREF 의 스타일명,
+    /// INCLUDETEXT 의 경로 등. HYPERLINK 의 URL 은 별도로 <c>Url</c> 에 저장.
+    /// null 이면 인자가 없거나 의미상 비어 있는 필드 (PAGE, DATE 등).</summary>
+    public string? FieldArg { get; set; }
+
     /// <summary>루비 주석 텍스트 (한자 위 후리가나 등). null 이면 루비 없음.
     /// HTML <c>&lt;ruby&gt;&lt;rb&gt;base&lt;/rb&gt;&lt;rt&gt;annotation&lt;/rt&gt;&lt;/ruby&gt;</c>
     /// 에서 rt 콘텐츠를 여기에 저장, 베이스 텍스트는 Text 에 저장.</summary>
@@ -54,6 +59,7 @@ public sealed class Run
         FootnoteId        = FootnoteId,
         EndnoteId         = EndnoteId,
         Field             = Field,
+        FieldArg          = FieldArg,
         RubyText          = RubyText,
     };
 }
