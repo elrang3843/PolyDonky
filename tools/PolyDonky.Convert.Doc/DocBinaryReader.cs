@@ -368,6 +368,9 @@ public class DocBinaryReader
         var doc     = new PolyDonkyument();
         var section = new Section();
         doc.Sections.Add(section);
+        // Phase 3c-2 — 첫 section 에 첫 SED 의 SEPX 적용.
+        if (fmt.SectionFcSepx.Count > 0)
+            ApplySepx(section, fmt.TableBytes, fmt.SectionFcSepx[0]);
 
         var paraChars = new List<char>();
         var paraFcs   = new List<int>();
@@ -406,6 +409,9 @@ public class DocBinaryReader
                         FinalizeStack(section, tableStack, targetDepth: 0);
                         section = new Section();
                         doc.Sections.Add(section);
+                        // Phase 3c-2 — 새 section 의 SEPX 적용. nextSecIdx 가 새 section 의 index.
+                        if (nextSecIdx < fmt.SectionFcSepx.Count)
+                            ApplySepx(section, fmt.TableBytes, fmt.SectionFcSepx[nextSecIdx]);
                         nextSecIdx++;
                     }
                     break;
@@ -673,6 +679,83 @@ public class DocBinaryReader
     // PIDSI 코드: 0x02 Title · 0x03 Subject · 0x04 Author · 0x05 Keywords · 0x06 Comments ·
     //             0x08 LastSavedBy · 0x09 RevisionNumber · 0x0C CreateTime · 0x0D LastSavedTime ·
     //             0x12 AppName.
+    // Phase 3c-2 — SEPX (Section Properties Exception) 의 sprm 들을 Section.Page 에 매핑.
+    // SED 의 fcSepx 가 Table stream 내 SEPX 위치. 0xFFFFFFFF/음수 → 적용 안 함 (default).
+    // SEPX layout (§2.9.249): cb(2) + grpprl(cb byte).
+    private static void ApplySepx(Section section, byte[] table, int fcSepx)
+    {
+        if (fcSepx < 0 || fcSepx == unchecked((int)0xFFFFFFFF)) return;
+        if (fcSepx + 2 > table.Length) return;
+        int cb = BitConverter.ToUInt16(table, fcSepx);
+        if (cb <= 0 || fcSepx + 2 + cb > table.Length) return;
+        var grpprl = new byte[cb];
+        Buffer.BlockCopy(table, fcSepx + 2, grpprl, 0, cb);
+
+        WalkSprmsTopLevel(grpprl, (sprm, operand) =>
+        {
+            // [MS-DOC] section sprm — sgc=4. 흔한 페이지 속성:
+            //   sprmSDxaPage   0xB016 (spra=5, 2-byte unsigned) — page width (twips)
+            //   sprmSDyaPage   0xB017                            — page height
+            //   sprmSDxaLeft   0xB02C                            — margin left
+            //   sprmSDxaRight  0xB02D                            — margin right
+            //   sprmSDyaTop    0xB02E (signed)                   — margin top
+            //   sprmSDyaBottom 0xB02F (signed)                   — margin bottom
+            const double TwipsToMm = 1.0 / 56.692;
+            switch (sprm)
+            {
+                case 0xB016 when operand.Length >= 2:
+                    section.Page.WidthMm  = BitConverter.ToUInt16(operand, 0) * TwipsToMm; break;
+                case 0xB017 when operand.Length >= 2:
+                    section.Page.HeightMm = BitConverter.ToUInt16(operand, 0) * TwipsToMm; break;
+                case 0xB02C when operand.Length >= 2:
+                    section.Page.MarginLeftMm   = BitConverter.ToUInt16(operand, 0) * TwipsToMm; break;
+                case 0xB02D when operand.Length >= 2:
+                    section.Page.MarginRightMm  = BitConverter.ToUInt16(operand, 0) * TwipsToMm; break;
+                case 0xB02E when operand.Length >= 2:
+                    section.Page.MarginTopMm    = BitConverter.ToInt16(operand, 0)  * TwipsToMm; break;
+                case 0xB02F when operand.Length >= 2:
+                    section.Page.MarginBottomMm = BitConverter.ToInt16(operand, 0)  * TwipsToMm; break;
+            }
+        });
+    }
+
+    // FormatStyles 의 nested WalkSprms 는 private. 동일 알고리즘을 본 클래스 scope 에서 재사용.
+    // (spra 비트로 operand 크기 결정; sprmTDefTable 류만 2-byte cb 변형.)
+    private static void WalkSprmsTopLevel(byte[] sprms, Action<ushort, byte[]> onSprm)
+    {
+        int i = 0;
+        while (i + 2 <= sprms.Length)
+        {
+            ushort sprm = BitConverter.ToUInt16(sprms, i);
+            i += 2;
+            int spra = (sprm >> 13) & 0x07;
+            int operandSize;
+            switch (spra)
+            {
+                case 0: case 1: operandSize = 1; break;
+                case 2: case 4: case 5: operandSize = 2; break;
+                case 3: operandSize = 4; break;
+                case 7: operandSize = 3; break;
+                case 6:
+                    if (i >= sprms.Length) return;
+                    if (sprm == 0xD608 || sprm == 0xD605 || sprm == 0xC615)
+                    {
+                        if (i + 2 > sprms.Length) return;
+                        operandSize = BitConverter.ToUInt16(sprms, i);
+                        i += 2;
+                    }
+                    else { operandSize = sprms[i]; i += 1; }
+                    break;
+                default: return;
+            }
+            if (i + operandSize > sprms.Length) return;
+            var operand = new byte[operandSize];
+            Buffer.BlockCopy(sprms, i, operand, 0, operandSize);
+            i += operandSize;
+            onSprm(sprm, operand);
+        }
+    }
+
     // Phase 3d — 헤더/푸터 sub-document 영역의 텍스트 추출 후 doc.Sections[0] 에 매핑.
     // Word 의 본문 다음에 footnote, 그 다음 header/footer subdocument 가 위치.
     // PlcfHdd 의 aCP[n+1] 이 영역 내 sub-story 들의 경계. 본 단계는 첫 두 sub-story 만
@@ -692,8 +775,16 @@ public class DocBinaryReader
         for (int i = 0; i <= n; i++)
             subCps[i] = BitConverter.ToInt32(table, plcStart + i * 4);
 
-        // 첫 sub-story → Header.Center, 두 번째 → Footer.Center (단순 매핑).
-        for (int i = 0; i < n && i < 2; i++)
+        // Phase 3d-2 — [MS-DOC] §2.8.7 PlcfHdd 의 sub-story 순서 (section 별 6 stories block):
+        //   index%6 == 0 : even page footer
+        //   index%6 == 1 : odd page footer  ← 일반 푸터
+        //   index%6 == 2 : even page header
+        //   index%6 == 3 : odd page header  ← 일반 헤더
+        //   index%6 == 4 : first page footer
+        //   index%6 == 5 : first page header
+        // IWPF 의 Page.Header/Footer 는 단일 슬롯이라 odd 만 매핑 (fallback: even → first).
+        // 첫 섹션의 6 stories 만 처리.
+        for (int i = 0; i < Math.Min(n, 6); i++)
         {
             int cpStart = hddBase + subCps[i];
             int cpEnd   = hddBase + subCps[i + 1];
@@ -701,8 +792,19 @@ public class DocBinaryReader
             var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
             var cleaned = CleanSubdocText(raw);
             if (string.IsNullOrEmpty(cleaned)) continue;
-            var slot = i == 0 ? doc.Sections[0].Page.Header.Center : doc.Sections[0].Page.Footer.Center;
-            slot.Paragraphs.Add(Paragraph.Of(cleaned));
+
+            var page = doc.Sections[0].Page;
+            switch (i)
+            {
+                case 1: case 0: case 4:  // odd footer (1) / even (0) / first (4) — odd 우선, 비어 있으면 fallback
+                    if (page.Footer.Center.IsEmpty)
+                        page.Footer.Center.Paragraphs.Add(Paragraph.Of(cleaned));
+                    break;
+                case 3: case 2: case 5:  // odd header (3) / even (2) / first (5)
+                    if (page.Header.Center.IsEmpty)
+                        page.Header.Center.Paragraphs.Add(Paragraph.Of(cleaned));
+                    break;
+            }
         }
     }
 
@@ -905,20 +1007,25 @@ public class DocBinaryReader
         // Phase 1e — STSH (Style Sheet) 의 STD 배열. istd → sti/stk/name. null = 빈 슬롯.
         private readonly IReadOnlyList<StyleDef?> _styles;
         // Phase 3c — PlcfSed 에서 추출한 section 경계 CP. 0 부터 시작, 마지막 = ccpText.
-        //   n+1 entries. 그 중 cps[1..n-1] 가 본문 내 섹션 break 위치 (마지막은 본문 끝).
         public IReadOnlyList<int> SectionBoundaryCps { get; }
+        // Phase 3c-2 — 각 section 의 SED (fcSepx). null = 빈 SED (default 속성 사용).
+        public IReadOnlyList<int> SectionFcSepx { get; }
+        // Phase 3c-2 — SEPX 적용에 필요하므로 보존.
+        public byte[] TableBytes { get; }
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
         // PAPX 는 (istd, sprms) 가 페어로 필요하므로 별도 캐시.
         private readonly Dictionary<(int Pn, int RgIdx), (int Istd, byte[] Sprms)?> _papxCache = new();
         private readonly Dictionary<(int Pn, int RgIdx), byte[]?> _chpxCache = new();
 
-        private FormatStyles(byte[] wd, List<BteEntry> papx, List<BteEntry> chpx,
+        private FormatStyles(byte[] wd, byte[] table, List<BteEntry> papx, List<BteEntry> chpx,
                              IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles,
-                             IReadOnlyList<int> sectionCps)
+                             IReadOnlyList<int> sectionCps, IReadOnlyList<int> sectionFcSepx)
         {
             _wd = wd; _papxBte = papx; _chpxBte = chpx; _fonts = fonts; _styles = styles;
             SectionBoundaryCps = sectionCps;
+            SectionFcSepx = sectionFcSepx;
+            TableBytes = table;
         }
 
         public static FormatStyles Build(byte[] wd, byte[] table, Fib fib)
@@ -927,21 +1034,27 @@ public class DocBinaryReader
             var chpx   = ReadBte(table, (int)fib.FcPlcfBteChpx, (int)fib.LcbPlcfBteChpx);
             var fonts  = ReadSttbfFfn(table, (int)fib.FcSttbfFfn, (int)fib.LcbSttbfFfn);
             var styles = ReadStsh(table, (int)fib.FcStshf, (int)fib.LcbStshf);
-            var sectionCps = ReadPlcfSed(table, (int)fib.FcPlcfSed, (int)fib.LcbPlcfSed);
-            return new FormatStyles(wd, papx, chpx, fonts, styles, sectionCps);
+            var (sectionCps, sectionFcSepx) = ReadPlcfSed(table, (int)fib.FcPlcfSed, (int)fib.LcbPlcfSed);
+            return new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx);
         }
 
         // [MS-DOC] §2.8.31 PlcfSed — aCP[n+1] (각 4 byte CP) + aSed[n] (각 12 byte SED).
-        // lcb = 4*(n+1) + 12*n = 16n + 4. 본 단계에서는 CP 만 추출 (SED 의 SEPX 내용은 후속).
-        private static IReadOnlyList<int> ReadPlcfSed(byte[] table, int fc, int lcb)
+        // SED layout (§2.9.241): fn(2) + fcSepx(4) + fnMpr(2) + fcMpr(4) = 12 byte.
+        // Phase 3c-2 — fcSepx 만 추출 (SEPX 위치). 0xFFFFFFFF (-1) 면 SEPX 없음 (default).
+        private static (IReadOnlyList<int>, IReadOnlyList<int>) ReadPlcfSed(byte[] table, int fc, int lcb)
         {
-            if (lcb < 4 || fc < 0 || fc + lcb > table.Length) return Array.Empty<int>();
+            if (lcb < 4 || fc < 0 || fc + lcb > table.Length)
+                return (Array.Empty<int>(), Array.Empty<int>());
             int n = (lcb - 4) / 16;
-            if (n <= 0) return Array.Empty<int>();
-            var cps = new int[n + 1];
+            if (n <= 0) return (Array.Empty<int>(), Array.Empty<int>());
+            var cps   = new int[n + 1];
+            var fcSepx = new int[n];
             for (int i = 0; i <= n; i++)
                 cps[i] = BitConverter.ToInt32(table, fc + i * 4);
-            return cps;
+            int sedBase = fc + (n + 1) * 4;
+            for (int i = 0; i < n; i++)
+                fcSepx[i] = BitConverter.ToInt32(table, sedBase + i * 12 + 2);  // fcSepx @ offset 2
+            return (cps, fcSepx);
         }
 
         // Phase 1f — (istd, ParagraphStyle?, InTable, IsTtp) — Phase 1 기본.
