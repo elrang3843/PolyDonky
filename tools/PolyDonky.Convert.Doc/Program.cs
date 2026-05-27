@@ -133,8 +133,13 @@ try
     else if (isDocImport)
     {
         ConverterProgress.Write(0, "DOC (Word 97-2003 binary) 읽는 중");
+        var docReader = new DocBinaryReader();
         using (var fs = File.OpenRead(inPath))
-            doc = new DocBinaryReader().Read(fs);
+            doc = docReader.Read(fs);
+
+        // Phase 3n/3n-2/3n-3 — fidelity capsule 에 매크로 / 디지털 서명 / 미인식 root storage 적재.
+        //   IWPF 패키지의 fidelity/capsules/msdoc/ 아래로 저장됨.
+        AddDocFidelityCapsules(doc, docReader);
 
         ConverterProgress.Write(80, "IWPF 로 변환 중");
         using (var ofs = File.Create(outPath))
@@ -206,4 +211,28 @@ static void PrintHelp()
     Console.WriteLine("  3  지원하지 않는 변환 쌍");
     Console.WriteLine("  4  입출력 실패");
     Console.WriteLine("  5  변환 실패");
+}
+
+// Phase 3n + 3n-2 + 3n-3 — DOC 의 활성/미인식 콘텐츠를 IWPF fidelity/capsules/msdoc/ 아래로 매핑.
+//   Macros          → msdoc/macros/<storageName>/<path>
+//   DigitalSignature → msdoc/signatures/<storageName>/<path>
+//   PreservedRootStorages → msdoc/preserved/<storageName>/<path>
+// 절대 파싱·실행하지 않으며 raw bytes 그대로 ZIP 안에 격리 저장.
+static void AddDocFidelityCapsules(PolyDonkyument doc, DocBinaryReader reader)
+{
+    if (reader.MacroProject is { } macros)
+    {
+        foreach (var kv in macros.Streams)
+            doc.FidelityCapsules[$"msdoc/macros/{macros.StorageName}/{kv.Key}"] = kv.Value;
+    }
+    if (reader.DigitalSignature is { } sig)
+    {
+        foreach (var kv in sig.Streams)
+            doc.FidelityCapsules[$"msdoc/signatures/{sig.StorageName}/{kv.Key}"] = kv.Value;
+    }
+    foreach (var storage in reader.PreservedRootStorages)
+    {
+        foreach (var kv in storage.Streams)
+            doc.FidelityCapsules[$"msdoc/preserved/{storage.Name}/{kv.Key}"] = kv.Value;
+    }
 }

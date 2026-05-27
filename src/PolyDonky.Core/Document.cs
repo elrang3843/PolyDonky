@@ -28,6 +28,15 @@ public sealed class PolyDonkyument
     /// <summary>문서 수준 리뷰어 코멘트 목록. Run.CommentId 가 여기 CommentEntry.Id 를 참조한다.</summary>
     public IList<CommentEntry> Comments { get; set; } = new List<CommentEntry>();
 
+    /// <summary>
+    /// IWPF fidelity capsule 의 raw bytes. 키는 <c>fidelity/capsules/</c> 아래의 상대 경로 (예:
+    /// <c>"msdoc/macros/Macros/PROJECT"</c>, <c>"msdoc/signatures/_SignaturesV1/origSigs"</c>,
+    /// <c>"msdoc/preserved/MsoDataStore/Properties"</c>). 코덱이 format-specific 보존 데이터를
+    /// 여기에 넣으면 IwpfWriter 가 ZIP 안의 적절한 경로로 그대로 복사한다 (절대 파싱·실행하지 않음).
+    /// 비어 있으면 capsule 파트는 생성하지 않는다.
+    /// </summary>
+    public IDictionary<string, byte[]> FidelityCapsules { get; set; } = new Dictionary<string, byte[]>();
+
     /// <summary>비어 있지 않은 단일 섹션 단일 문단을 가진 최소 문서를 생성한다.</summary>
     public static PolyDonkyument Empty()
     {
