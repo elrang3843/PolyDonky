@@ -487,8 +487,11 @@ public partial class PageFormatWindow : Window
         try
         {
             var ff = new FontFamily(name);
-            _focusedRtb?.Selection.ApplyPropertyValue(
-                WpfDoc.TextElement.FontFamilyProperty, ff);
+            if (_focusedRtb is { } rtb)
+                Services.SelectionFormatApplier.ApplyRunStyleChange(
+                    rtb.Selection,
+                    WpfDoc.TextElement.FontFamilyProperty, ff,
+                    s => s.FontFamily = name);
             _focusedRtb?.Focus();
         }
         catch (ArgumentException) { }
@@ -549,10 +552,13 @@ public partial class PageFormatWindow : Window
         var sel = _focusedRtb.Selection;
         var td = sel.GetPropertyValue(WpfDoc.Inline.TextDecorationsProperty) as TextDecorationCollection;
         bool hasStrike = td?.Any(d => d.Location == TextDecorationLocation.Strikethrough) == true;
+        bool willHaveStrike = !hasStrike;
         var newDec = new TextDecorationCollection(
             hasStrike ? (td!.Where(d => d.Location != TextDecorationLocation.Strikethrough))
                       : (td ?? Enumerable.Empty<TextDecoration>()).Append(TextDecorations.Strikethrough[0]));
-        sel.ApplyPropertyValue(WpfDoc.Inline.TextDecorationsProperty, newDec);
+        Services.SelectionFormatApplier.ApplyRunStyleChange(
+            sel, WpfDoc.Inline.TextDecorationsProperty, newDec,
+            s => s.Strikethrough = willHaveStrike);
         _focusedRtb.Focus();
     }
 
@@ -572,8 +578,11 @@ public partial class PageFormatWindow : Window
 
     private void ApplyFontSize(double pt)
     {
-        _focusedRtb?.Selection.ApplyPropertyValue(
-            WpfDoc.TextElement.FontSizeProperty, pt * 96.0 / 72.0);
+        if (_focusedRtb is { } rtb)
+            Services.SelectionFormatApplier.ApplyRunStyleChange(
+                rtb.Selection,
+                WpfDoc.TextElement.FontSizeProperty, pt * 96.0 / 72.0,
+                s => s.FontSizePt = pt);
         _focusedRtb?.Focus();
     }
 
@@ -591,8 +600,11 @@ public partial class PageFormatWindow : Window
             var c = dlg.Color;
             _hfFontColor    = WpfMedia.Color.FromArgb(c.A, c.R, c.G, c.B);
             HFColorBar.Fill = new SolidColorBrush(_hfFontColor);
-            _focusedRtb.Selection.ApplyPropertyValue(
-                WpfDoc.TextElement.ForegroundProperty, new SolidColorBrush(_hfFontColor));
+            var pdColor = new PolyDonky.Core.Color(_hfFontColor.R, _hfFontColor.G, _hfFontColor.B, _hfFontColor.A);
+            Services.SelectionFormatApplier.ApplyRunStyleChange(
+                _focusedRtb.Selection,
+                WpfDoc.TextElement.ForegroundProperty, new SolidColorBrush(_hfFontColor),
+                s => s.Foreground = pdColor);
             _focusedRtb.Focus();
         }
     }
