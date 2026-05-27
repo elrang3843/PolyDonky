@@ -108,6 +108,9 @@ public class DocBinaryReader
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc);
 
+            // Phase 3g — 각주/미주 sub-document 텍스트 추출 후 doc.Footnotes / doc.Endnotes 에 매핑.
+            ApplyFootnotesAndEndnotes(wd, table, fib, doc);
+
             // 메타데이터 (best-effort)
             var summary = ReadAll(root, "SummaryInformation");
             if (summary is { Length: > 0 })
@@ -155,7 +158,17 @@ public class DocBinaryReader
         // Phase 3f — OfficeArtDggContainer (fcDggInfo @ 0x0312, lcbDggInfo @ 0x0316).
         //            Table stream 의 이 영역이 OfficeArtBStoreContainer 를 포함해 문서 전역 BLIP store 를 담는다.
         uint   FcDggInfo,
-        uint   LcbDggInfo);
+        uint   LcbDggInfo,
+        // Phase 3g — Footnote / Endnote sub-document.
+        //   FibRgLw97: ccpAtn @ 0x005C, ccpEdn @ 0x0060.
+        //   FibRgFcLcb97 pair 3: fcPlcffndTxt @ 0x00B2, lcbPlcffndTxt @ 0x00B6.
+        //   FibRgFcLcb97 pair 23: fcPlcfendTxt @ 0x0152, lcbPlcfendTxt @ 0x0156.
+        uint   CcpAtn,
+        uint   CcpEdn,
+        uint   FcPlcffndTxt,
+        uint   LcbPlcffndTxt,
+        uint   FcPlcfendTxt,
+        uint   LcbPlcfendTxt);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -222,11 +235,23 @@ public class DocBinaryReader
         uint fcDggInfo  = wd.Length >= 0x0316 ? BitConverter.ToUInt32(wd, 0x0312) : 0u;
         uint lcbDggInfo = wd.Length >= 0x031A ? BitConverter.ToUInt32(wd, 0x0316) : 0u;
 
+        // Phase 3g — Footnote / Endnote sub-document fields.
+        //   FibRgLw97: ccpAtn @ 0x005C, ccpEdn @ 0x0060.
+        //   FibRgFcLcb97 pair 3: fcPlcffndTxt @ 0x00B2, lcbPlcffndTxt @ 0x00B6.
+        //   FibRgFcLcb97 pair 23: fcPlcfendTxt @ 0x0152, lcbPlcfendTxt @ 0x0156.
+        uint ccpAtn        = wd.Length >= 0x0060 ? BitConverter.ToUInt32(wd, 0x005C) : 0u;
+        uint ccpEdn        = wd.Length >= 0x0064 ? BitConverter.ToUInt32(wd, 0x0060) : 0u;
+        uint fcPlcffndTxt  = wd.Length >= 0x00B6 ? BitConverter.ToUInt32(wd, 0x00B2) : 0u;
+        uint lcbPlcffndTxt = wd.Length >= 0x00BA ? BitConverter.ToUInt32(wd, 0x00B6) : 0u;
+        uint fcPlcfendTxt  = wd.Length >= 0x0156 ? BitConverter.ToUInt32(wd, 0x0152) : 0u;
+        uint lcbPlcfendTxt = wd.Length >= 0x015A ? BitConverter.ToUInt32(wd, 0x0156) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
                        ccpFtn, ccpHdd, fcPlcfHdd, lcbPlcfHdd,
-                       fcDggInfo, lcbDggInfo);
+                       fcDggInfo, lcbDggInfo,
+                       ccpAtn, ccpEdn, fcPlcffndTxt, lcbPlcffndTxt, fcPlcfendTxt, lcbPlcfendTxt);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -1222,6 +1247,72 @@ public class DocBinaryReader
                         page.Header.Center.Paragraphs.Add(Paragraph.Of(cleaned));
                     break;
             }
+        }
+    }
+
+    // Phase 3g — 각주/미주 sub-document 추출. WordDocument 의 sub-document 순서:
+    //   [0, ccpText)                                                  : 본문
+    //   [ccpText, +ccpFtn)                                            : 각주
+    //   [+ccpHdd)                                                     : 헤더/푸터
+    //   [+ccpAtn)                                                     : 주석 (comment)
+    //   [+ccpEdn)                                                     : 미주
+    // PlcfFndTxt / PlcfEdnTxt 의 aCP 배열이 각 영역 안의 sub-story 경계 (separator + 각 항목).
+    // 빈/공백 sub-story (separator) 는 자동 skip.
+    private static void ApplyFootnotesAndEndnotes(byte[] wd, byte[] table, Fib fib, PolyDonkyument doc)
+    {
+        // 각주 영역.
+        if (fib.CcpFtn > 0 && fib.LcbPlcffndTxt >= 8)
+        {
+            int ftnBase = (int)fib.CcpText;
+            int ftnEnd  = ftnBase + (int)fib.CcpFtn;
+            ExtractStoriesInto(wd, table, fib,
+                (int)fib.FcPlcffndTxt, (int)fib.LcbPlcffndTxt,
+                ftnBase, ftnEnd,
+                doc.Footnotes, idPrefix: "fn");
+        }
+
+        // 미주 영역 (본문 + 각주 + 헤더/푸터 + 주석 뒤).
+        if (fib.CcpEdn > 0 && fib.LcbPlcfendTxt >= 8)
+        {
+            int ednBase = (int)(fib.CcpText + fib.CcpFtn + fib.CcpHdd + fib.CcpAtn);
+            int ednEnd  = ednBase + (int)fib.CcpEdn;
+            ExtractStoriesInto(wd, table, fib,
+                (int)fib.FcPlcfendTxt, (int)fib.LcbPlcfendTxt,
+                ednBase, ednEnd,
+                doc.Endnotes, idPrefix: "en");
+        }
+    }
+
+    // PlcfTxt 형식의 aCP 배열을 walk 해서 각 sub-story 의 텍스트를 추출, FootnoteEntry 로 sink 에 추가.
+    //   aCP[0] 는 separator (보통 빈 텍스트), 1.. 부터 실제 항목.
+    //   빈 sub-story 는 skip.
+    private static void ExtractStoriesInto(
+        byte[] wd, byte[] table, Fib fib,
+        int plcStart, int plcLen,
+        int subBase, int subEnd,
+        IList<FootnoteEntry> sink, string idPrefix)
+    {
+        if (plcStart < 0 || plcStart + plcLen > table.Length) return;
+        int n = plcLen / 4 - 1;  // sub-story 수
+        if (n <= 0) return;
+        var cps = new int[n + 1];
+        for (int i = 0; i <= n; i++)
+            cps[i] = BitConverter.ToInt32(table, plcStart + i * 4);
+
+        for (int i = 0; i < n; i++)
+        {
+            int cpStart = subBase + cps[i];
+            int cpEnd   = subBase + cps[i + 1];
+            if (cpEnd <= cpStart || cpEnd > subEnd) continue;
+            var raw = ExtractSubdocText(wd, table, fib, cpStart, cpEnd);
+            var cleaned = CleanSubdocText(raw);
+            if (string.IsNullOrEmpty(cleaned)) continue;
+            var entry = new FootnoteEntry
+            {
+                Id = $"{idPrefix}{sink.Count + 1}",
+            };
+            entry.Blocks.Add(Paragraph.Of(cleaned));
+            sink.Add(entry);
         }
     }
 
