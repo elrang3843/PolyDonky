@@ -83,6 +83,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3m-2 footnote/endnote/comment R
 harness.Run("DOC (Word 97-2003 binary) — Phase 3l 임베드 OLE (ObjectPool)", DocBinaryPhase3lObjectPool);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3l-2 본문 0x01 + sprmCFOle2 → OLE placeholder", DocBinaryPhase3l2OlePicMarker);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3l-3 Ole10Native wrapper 풀기", DocBinaryPhase3l3Ole10NativeUnwrap);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3n VBA 매크로 프로젝트 격리 저장", DocBinaryPhase3nMacroProject);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3n 매크로 없음 (HasMacros=false)", DocBinaryPhase3nNoMacros);
 
 return harness.Finish();
 
@@ -6963,6 +6965,76 @@ static void DocBinaryPhase3l3Ole10NativeUnwrap()
         // Streams 사전은 원본 wrapper 보존 (round-trip 위해).
         SmokeHarness.True(ole.Streams.TryGetValue("Ole10Native", out var rawWrap) && rawWrap.SequenceEqual(wrap),
             "Streams['Ole10Native'] 는 원본 wrapper");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3n — VBA 매크로 프로젝트 격리 저장. Macros/PROJECT + Macros/VBA/_VBA_PROJECT + Macros/VBA/Module1
+// 합성 후 reader.MacroProject 가 path-keyed 사전으로 raw bytes 보존하는지 확인.
+static void DocBinaryPhase3nMacroProject()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+
+    byte[] projectStream    = Encoding.GetEncoding(1252).GetBytes("ID=\"{ABCDEF}\"\r\n");
+    byte[] vbaProjectStream = { 0xCC, 0x61, 0xFF, 0xFF };  // VBA stream sentinel (dummy)
+    byte[] moduleStream     = Encoding.GetEncoding(1252).GetBytes("Sub Hello()\r\nMsgBox \"x\"\r\nEnd Sub\r\n");
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            var macros = root.CreateStorage("Macros");
+            using (var s = macros.CreateStream("PROJECT")) s.Write(projectStream);
+            var vba = macros.CreateStorage("VBA");
+            using (var s = vba.CreateStream("_VBA_PROJECT")) s.Write(vbaProjectStream);
+            using (var s = vba.CreateStream("Module1"))      s.Write(moduleStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.True(reader.HasMacros, "HasMacros = true");
+        SmokeHarness.True(reader.MacroProject is not null, "MacroProject != null");
+        SmokeHarness.Equal("Macros", reader.MacroProject!.StorageName, "StorageName = Macros");
+
+        // path-keyed sub-storage 경로.
+        SmokeHarness.True(reader.MacroProject.Streams.ContainsKey("PROJECT"),
+            "Streams contains 'PROJECT'");
+        SmokeHarness.True(reader.MacroProject.Streams.ContainsKey("VBA/_VBA_PROJECT"),
+            "Streams contains 'VBA/_VBA_PROJECT'");
+        SmokeHarness.True(reader.MacroProject.Streams.ContainsKey("VBA/Module1"),
+            "Streams contains 'VBA/Module1'");
+
+        // 원본 bytes 보존 — 변형·실행 없음.
+        SmokeHarness.True(reader.MacroProject.Streams["PROJECT"].SequenceEqual(projectStream),
+            "PROJECT bytes 일치");
+        SmokeHarness.True(reader.MacroProject.Streams["VBA/_VBA_PROJECT"].SequenceEqual(vbaProjectStream),
+            "_VBA_PROJECT bytes 일치");
+        SmokeHarness.True(reader.MacroProject.Streams["VBA/Module1"].SequenceEqual(moduleStream),
+            "Module1 bytes 일치");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+static void DocBinaryPhase3nNoMacros()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+        SmokeHarness.True(!reader.HasMacros, "HasMacros = false (Macros storage 없음)");
+        SmokeHarness.True(reader.MacroProject is null, "MacroProject is null");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
