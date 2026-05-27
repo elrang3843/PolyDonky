@@ -139,7 +139,7 @@ public class DocBinaryReader
             fmt.SetBookmarks(Bookmarks);
             // Phase 3l — ObjectPool sub-storage 들에서 임베드 OLE 객체 추출.
             OleEmbeds = ParseOleEmbeds(root);
-            var doc = BuildDocument(text, fcs, fmt);
+            var doc = BuildDocument(text, fcs, fmt, OleEmbeds);
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
             ApplyFloatingShapeImages(doc);
@@ -521,7 +521,8 @@ public class DocBinaryReader
     //          단락 내 각 char 의 FC 로 CHPX 를 조회해 같은 RunStyle 끼리 묶어 Run 분할.
     // Phase 2h — 중첩 표 지원을 위해 Stack<TableState> 기반으로 흐름 일반화.
     // 각 단락의 itap level 에 따라 stack push/pop, level=0 면 본문, level>=1 면 해당 깊이의 표.
-    private static PolyDonkyument BuildDocument(string raw, int[] fcs, FormatStyles fmt)
+    private static PolyDonkyument BuildDocument(string raw, int[] fcs, FormatStyles fmt,
+        IReadOnlyList<OleEmbedEntry> OleEmbeds)
     {
         var doc     = new PolyDonkyument();
         var section = new Section();
@@ -533,6 +534,8 @@ public class DocBinaryReader
         var paraChars = new List<char>();
         var paraFcs   = new List<int>();
         int lastFc    = 0;
+        // Phase 3l-2 — sprmCFOle2 가 set 된 0x01 만날 때마다 OleEmbeds 와 1:1 매칭하기 위한 counter.
+        int oleSeenCount = 0;
         // Phase 2h — itap level 별 누적 상태. itap=0 면 stack 비어 있음, itap=1 면 외곽 표 한 개,
         //          itap=2 면 외곽+내부 두 개.
         var tableStack = new Stack<TableState>();
@@ -632,27 +635,43 @@ public class DocBinaryReader
                     activeFieldType = null;
                     activeFieldArg  = null;
                     break;
-                case '\u0001':  // picture marker (inline image)
-                    // Phase 3e   — char-walk 중 picture marker 만나면 현재 단락 flush 후 ImageBlock 삽입.
-                    // Phase 3e-2 — CHPX 의 sprmCPicLocation + Data stream 에서 실제 이미지 추출.
-                    // Phase 3e-4 — 표 안 inline image 도 처리. FlushParagraph 가 partial paragraph 를
-                    //              cellBlocks 에 누적하되 \x07 가 없으면 cell 마감 X — 순서 보존.
+                case '\u0001':  // picture marker (inline image OR OLE embed if sprmCFOle2 set)
+                    // Phase 3e — char-walk 중 picture marker 만나면 현재 단락 flush 후 ImageBlock 삽입.
+                    // Phase 3l-2 — sprmCFOle2 가 set 이면 임베드 OLE 객체 placeholder 로 변환.
+                    //   OleEmbeds 와 char-walk 순서로 1:1 매칭 (counter oleSeenCount).
                     if (fieldMode != 1)
                     {
                         FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
-                        var img = new ImageBlock
+                        bool isOle = fmt.GetCharIsOle(fc);
+                        ImageBlock img;
+                        if (isOle)
                         {
-                            Description = "[image]",
-                            MediaType   = "application/octet-stream",
-                        };
-                        int? picFc = fmt.GetPictureFc(fc);
-                        if (picFc.HasValue && fmt.DataStream is not null)
-                        {
-                            var extracted = TryExtractImage(fmt.DataStream, picFc.Value, fmt.BStoreImages);
-                            if (extracted.HasValue)
+                            var match = oleSeenCount < OleEmbeds.Count ? OleEmbeds[oleSeenCount] : null;
+                            string cls = match?.ClassName ?? "OLE";
+                            img = new ImageBlock
                             {
-                                img.MediaType = extracted.Value.MediaType;
-                                img.Data      = extracted.Value.Data;
+                                Description = $"[OLE {cls}]",
+                                MediaType   = "application/x-ole-embed",
+                                Data        = match?.PrimaryContent ?? Array.Empty<byte>(),
+                            };
+                            oleSeenCount++;
+                        }
+                        else
+                        {
+                            img = new ImageBlock
+                            {
+                                Description = "[image]",
+                                MediaType   = "application/octet-stream",
+                            };
+                            int? picFc = fmt.GetPictureFc(fc);
+                            if (picFc.HasValue && fmt.DataStream is not null)
+                            {
+                                var extracted = TryExtractImage(fmt.DataStream, picFc.Value, fmt.BStoreImages);
+                                if (extracted.HasValue)
+                                {
+                                    img.MediaType = extracted.Value.MediaType;
+                                    img.Data      = extracted.Value.Data;
+                                }
                             }
                         }
                         if (tableStack.Count > 0)
@@ -2705,6 +2724,20 @@ public class DocBinaryReader
             return fc;
         }
 
+        // Phase 3l-2 — sprmCFOle2 (0x080A, 1-byte bool) — 이 char 가 OLE 객체 embed 인지 검사.
+        //   true 면 0x01 이 이미지가 아닌 임베드 OLE 객체 (Equation, Excel 등) 의 placeholder.
+        public bool GetCharIsOle(int charFc)
+        {
+            var chpx = LoadChpx(charFc);
+            if (chpx is null) return false;
+            bool isOle = false;
+            WalkSprms(chpx, (sprm, operand) =>
+            {
+                if (sprm == 0x080A && operand.Length >= 1 && operand[0] != 0) isOle = true;
+            });
+            return isOle;
+        }
+
         // Phase 1f — paraIstd 가 -1 아니면 단락 스타일의 STD chpxSprms 를 먼저 적용한 뒤
         // 직접 CHPX 로 override. Heading 의 폰트/크기/굵게 등이 자동 상속된다.
         // Phase 3h — sprmCFRMarkIns / sprmCFRMarkDel 도 동시에 추출해 revision flags 반환.
@@ -3289,7 +3322,19 @@ public class DocBinaryReader
                     }
                 }
             }
+            // Phase 3l-3 — Ole10Native wrapper 풀어 inner native data + 원본 파일명 추출.
+            string? originalFileName = null;
+            if (primary is not null && primaryName == "Ole10Native")
+            {
+                var unwrap = ParseOle10Native(primary);
+                if (unwrap.HasValue)
+                {
+                    primary          = unwrap.Value.Native;
+                    originalFileName = unwrap.Value.FileName;
+                }
+            }
             list.Add(new OleEmbedEntry(entry.Name, className, primaryName, primary,
+                                       originalFileName,
                                        (IReadOnlyDictionary<string, byte[]>)streams));
         }
         return list;
@@ -3301,6 +3346,49 @@ public class DocBinaryReader
     //   bytes [8..27]  : Reserved2 (CLSID, 16 byte) + extra
     //   bytes [28..31] : cch (length of ANSI class string, INCL null terminator)
     //   bytes [32..32+cch-1]: ANSI string (null-terminated)
+    // Phase 3l-3 — Ole10Native stream 의 wrapper 파싱. 형식:
+    //   [0..3]   TotalSize (uint32 LE) — 이 4 byte 이후 데이터 크기
+    //   [4..5]   flag (보통 0x0002) — 임베드 표시
+    //   [6..]    null-terminated ANSI class name
+    //   다음     null-terminated ANSI original file name
+    //   다음     null-terminated ANSI source path
+    //   reserved (8 byte: dwReserved + originalPathLen?)
+    //   uint32   tempPathLen + 그만큼 ANSI temp path
+    //   uint32   nativeDataLen + 그만큼 native data
+    private static (byte[] Native, string? FileName)? ParseOle10Native(byte[] stream)
+    {
+        if (stream.Length < 8) return null;
+        int pos = 4;  // skip TotalSize
+        ushort flag = BitConverter.ToUInt16(stream, pos); pos += 2;
+        if (flag != 0x0002) return null;
+
+        string ReadCString()
+        {
+            int start = pos;
+            while (pos < stream.Length && stream[pos] != 0) pos++;
+            if (pos >= stream.Length) return string.Empty;
+            var s = System.Text.Encoding.GetEncoding(1252).GetString(stream, start, pos - start);
+            pos++;  // skip null
+            return s;
+        }
+        string _className   = ReadCString();
+        string fileName     = ReadCString();
+        string _sourcePath  = ReadCString();
+        if (pos + 8 > stream.Length) return null;
+        pos += 8;  // reserved + originalPathLen
+
+        if (pos + 4 > stream.Length) return null;
+        uint tempPathLen = BitConverter.ToUInt32(stream, pos); pos += 4;
+        if (tempPathLen > 0 && pos + tempPathLen <= stream.Length) pos += (int)tempPathLen;
+
+        if (pos + 4 > stream.Length) return null;
+        uint dataLen = BitConverter.ToUInt32(stream, pos); pos += 4;
+        if (dataLen == 0 || pos + dataLen > stream.Length) return null;
+        var native = new byte[dataLen];
+        Buffer.BlockCopy(stream, pos, native, 0, (int)dataLen);
+        return (native, fileName.Length > 0 ? fileName : null);
+    }
+
     private static string? ParseCompObjClass(byte[] compObj)
     {
         if (compObj.Length < 36) return null;
@@ -3347,11 +3435,13 @@ public sealed record BookmarkEntry(string Name, int StartCp, int EndCp);
 /// <param name="Name">ObjectPool 안의 storage 이름 (예: "_1234567890").</param>
 /// <param name="ClassName">CompObj stream 에서 추출한 OLE class 이름 (예: "Equation.3", "Excel.Sheet.8"). null 이면 미상.</param>
 /// <param name="PrimaryStreamName">실제 콘텐츠를 담는 것으로 추정되는 stream 이름 (EquationNative / Ole10Native / Workbook 등).</param>
-/// <param name="PrimaryContent">PrimaryStreamName 의 raw bytes — round-trip 출력에 사용.</param>
+/// <param name="PrimaryContent">PrimaryStreamName 의 콘텐츠 bytes. Phase 3l-3 — Ole10Native 이면 wrapper 풀린 inner native data.</param>
+/// <param name="OriginalFileName">Phase 3l-3 — Ole10Native wrapper 의 원본 파일 이름 (있는 경우만).</param>
 /// <param name="Streams">storage 내 모든 stream 이름 → raw bytes 사전.</param>
 public sealed record OleEmbedEntry(
     string Name,
     string? ClassName,
     string? PrimaryStreamName,
     byte[]? PrimaryContent,
+    string? OriginalFileName,
     IReadOnlyDictionary<string, byte[]> Streams);
