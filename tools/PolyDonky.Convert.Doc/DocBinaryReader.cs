@@ -90,6 +90,8 @@ public class DocBinaryReader
             var (text, fcs) = ExtractTextWithFcs(wd, table, fib);
             // Phase 1b — PAPX/CHPX 바인 테이블을 한 번 로드해서 단락·문자 서식 조회에 재사용.
             var fmt = FormatStyles.Build(wd, table, fib);
+            // Phase 3e-2 — Data stream (선택적, 이미지 PICF 가 여기에). 없으면 null.
+            fmt.DataStream = ReadAll(root, "Data");
             var doc = BuildDocument(text, fcs, fmt);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
@@ -436,11 +438,23 @@ public class DocBinaryReader
                     if (tableStack.Count == 0 && fieldMode != 1)
                     {
                         FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
-                        section.Blocks.Add(new ImageBlock
+                        var img = new ImageBlock
                         {
                             Description = "[image]",
                             MediaType   = "application/octet-stream",
-                        });
+                        };
+                        // Phase 3e-2 — CHPX 의 sprmCPicLocation + Data stream 에서 실제 이미지 시도.
+                        int? picFc = fmt.GetPictureFc(fc);
+                        if (picFc.HasValue && fmt.DataStream is not null)
+                        {
+                            var extracted = TryExtractImage(fmt.DataStream, picFc.Value);
+                            if (extracted.HasValue)
+                            {
+                                img.MediaType = extracted.Value.MediaType;
+                                img.Data      = extracted.Value.Data;
+                            }
+                        }
+                        section.Blocks.Add(img);
                     }
                     break;
                 case '\u0002':  // footnote ref
@@ -691,6 +705,43 @@ public class DocBinaryReader
     // PIDSI 코드: 0x02 Title · 0x03 Subject · 0x04 Author · 0x05 Keywords · 0x06 Comments ·
     //             0x08 LastSavedBy · 0x09 RevisionNumber · 0x0C CreateTime · 0x0D LastSavedTime ·
     //             0x12 AppName.
+    // Phase 3e-2 — PICF 영역 안에서 PNG/JPEG/GIF signature 검색 후 raw byte 추출.
+    // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
+    // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw PNG/JPEG 가 인라인. signature 위치부터
+    // PICF 끝까지를 image data 로 본다 (legacy WMF/DIB 는 후속 단계).
+    private static (string MediaType, byte[] Data)? TryExtractImage(byte[] data, int fcPic)
+    {
+        if (fcPic < 0 || fcPic + 4 > data.Length) return null;
+        int lcb = BitConverter.ToInt32(data, fcPic);
+        if (lcb <= 8 || fcPic + lcb > data.Length) return null;
+
+        int start = fcPic + 4;                 // lcb 이후
+        int end   = Math.Min(fcPic + lcb, data.Length) - 8;  // signature 최소 8 byte 여유
+
+        for (int i = start; i < end; i++)
+        {
+            // PNG: 89 50 4E 47 0D 0A 1A 0A
+            if (data[i] == 0x89 && data[i + 1] == 0x50 && data[i + 2] == 0x4E && data[i + 3] == 0x47 &&
+                data[i + 4] == 0x0D && data[i + 5] == 0x0A && data[i + 6] == 0x1A && data[i + 7] == 0x0A)
+                return ("image/png", SliceTo(data, i, fcPic + lcb));
+            // JPEG: FF D8 FF
+            if (data[i] == 0xFF && data[i + 1] == 0xD8 && data[i + 2] == 0xFF)
+                return ("image/jpeg", SliceTo(data, i, fcPic + lcb));
+            // GIF: 47 49 46 38 (GIF87a/89a)
+            if (data[i] == 0x47 && data[i + 1] == 0x49 && data[i + 2] == 0x46 && data[i + 3] == 0x38)
+                return ("image/gif", SliceTo(data, i, fcPic + lcb));
+        }
+        return null;
+
+        static byte[] SliceTo(byte[] src, int from, int toExclusive)
+        {
+            int len = toExclusive - from;
+            var dst = new byte[len];
+            Buffer.BlockCopy(src, from, dst, 0, len);
+            return dst;
+        }
+    }
+
     // Phase 3c-2 — SEPX (Section Properties Exception) 의 sprm 들을 Section.Page 에 매핑.
     // SED 의 fcSepx 가 Table stream 내 SEPX 위치. 0xFFFFFFFF/음수 → 적용 안 함 (default).
     // SEPX layout (§2.9.249): cb(2) + grpprl(cb byte).
@@ -1024,6 +1075,8 @@ public class DocBinaryReader
         public IReadOnlyList<int> SectionFcSepx { get; }
         // Phase 3c-2 — SEPX 적용에 필요하므로 보존.
         public byte[] TableBytes { get; }
+        // Phase 3e-2 — Data stream (이미지 PICF 가 들어 있는 OLE2 stream). null = 없음.
+        public byte[]? DataStream { get; set; }
 
         // FKP 페이지(512 byte) 파싱은 매번 동일 데이터를 다시 만지지 않도록 page → grpprl 캐시.
         // PAPX 는 (istd, sprms) 가 페어로 필요하므로 별도 캐시.
@@ -1322,6 +1375,21 @@ public class DocBinaryReader
 
         // Twips → mm 변환 — 1 mm = 56.692 twips (1440/25.4).
         private const double TwipsToMm = 1.0 / 56.692;
+
+        // Phase 3e-2 — 특정 char(picture marker 0x01) 의 CHPX 에서 sprmCPicLocation 추출.
+        // [MS-DOC] §2.8.6 sprmCPicLocation (0x6A03, spra=3 4-byte) — Data stream 내 PICF 위치.
+        public int? GetPictureFc(int charFc)
+        {
+            var chpx = LoadChpx(charFc);
+            if (chpx is null) return null;
+            int? fc = null;
+            WalkSprms(chpx, (sprm, operand) =>
+            {
+                if (sprm == 0x6A03 && operand.Length >= 4)
+                    fc = BitConverter.ToInt32(operand, 0);
+            });
+            return fc;
+        }
 
         // Phase 1f — paraIstd 가 -1 아니면 단락 스타일의 STD chpxSprms 를 먼저 적용한 뒤
         // 직접 CHPX 로 override. Heading 의 폰트/크기/굵게 등이 자동 상속된다.
