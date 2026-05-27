@@ -70,6 +70,13 @@ public class DocBinaryReader
     /// </summary>
     public IReadOnlyList<BookmarkEntry> Bookmarks { get; private set; } = Array.Empty<BookmarkEntry>();
 
+    /// <summary>
+    /// Phase 3l — ObjectPool sub-storage 들에서 추출한 임베드 OLE 객체 목록.
+    /// 각 entry 는 storage 이름과 안에 든 stream 들의 raw bytes 사전.
+    /// EquationNative / Ole10Native / Workbook 등의 stream 이 실제 임베드 객체의 데이터를 담는다.
+    /// </summary>
+    public IReadOnlyList<OleEmbedEntry> OleEmbeds { get; private set; } = Array.Empty<OleEmbedEntry>();
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -130,6 +137,8 @@ public class DocBinaryReader
             // Phase 3i — Bookmarks 데이터 추출 (BuildDocument 보다 먼저 — char-walk 이 CP-event 를 본다).
             Bookmarks = ParseBookmarks(table, fib);
             fmt.SetBookmarks(Bookmarks);
+            // Phase 3l — ObjectPool sub-storage 들에서 임베드 OLE 객체 추출.
+            OleEmbeds = ParseOleEmbeds(root);
             var doc = BuildDocument(text, fcs, fmt);
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
@@ -3233,6 +3242,76 @@ public class DocBinaryReader
             return null;
         }
     }
+
+    // Phase 3l — ObjectPool storage 의 child 들 (각각 하나의 임베드 OLE 객체) 을 enumerate 해
+    //   storage 이름과 안의 stream 들을 OleEmbedEntry 로 반환.
+    //   CompObj 가 있으면 거기서 ClassName (Pascal-style 4-byte length + ANSI string) 도 추출.
+    private static IReadOnlyList<OleEmbedEntry> ParseOleEmbeds(OpenMcdf.RootStorage root)
+    {
+        var list = new List<OleEmbedEntry>();
+        if (!root.TryOpenStorage("ObjectPool", out var pool)) return list;
+
+        foreach (var entry in pool.EnumerateEntries())
+        {
+            // sub-storage 만 다룬다 — stream 직접 자식은 ObjectPool 에서 보통 없음.
+            if (!pool.TryOpenStorage(entry.Name, out var objStorage)) continue;
+
+            var streams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var inner in objStorage.EnumerateEntries())
+            {
+                if (objStorage.TryOpenStream(inner.Name, out var st))
+                {
+                    using var s = st;
+                    using var ms = new MemoryStream();
+                    s.CopyTo(ms);
+                    streams[inner.Name] = ms.ToArray();
+                }
+                else
+                {
+                }
+            }
+            string? className = streams.TryGetValue("CompObj", out var compObj)
+                ? ParseCompObjClass(compObj) : null;
+            // 우선순위: EquationNative > Ole10Native > Workbook > 첫 비-제어 stream.
+            byte[]? primary = null;
+            string? primaryName = null;
+            foreach (var preferred in new[] { "EquationNative", "Ole10Native", "Workbook", "PowerPoint Document" })
+            {
+                if (streams.TryGetValue(preferred, out var data)) { primary = data; primaryName = preferred; break; }
+            }
+            if (primary is null)
+            {
+                foreach (var kv in streams)
+                {
+                    if (kv.Key.Length > 0 && kv.Key[0] >= 0x20)
+                    {
+                        primary = kv.Value; primaryName = kv.Key; break;
+                    }
+                }
+            }
+            list.Add(new OleEmbedEntry(entry.Name, className, primaryName, primary,
+                                       (IReadOnlyDictionary<string, byte[]>)streams));
+        }
+        return list;
+    }
+
+    // [MS-OLEDS] CompObj stream — 28-byte header 후 length-prefixed ANSI 클래스 이름.
+    //   bytes [0..3]   : Reserved1 (-2)
+    //   bytes [4..7]   : Version (보통 0x0A 03 01 00)
+    //   bytes [8..27]  : Reserved2 (CLSID, 16 byte) + extra
+    //   bytes [28..31] : cch (length of ANSI class string, INCL null terminator)
+    //   bytes [32..32+cch-1]: ANSI string (null-terminated)
+    private static string? ParseCompObjClass(byte[] compObj)
+    {
+        if (compObj.Length < 36) return null;
+        int cch = BitConverter.ToInt32(compObj, 28);
+        if (cch <= 1 || cch > 256 || 32 + cch > compObj.Length) return null;
+        int strLen = cch;
+        if (compObj[32 + cch - 1] == 0) strLen--;
+        if (strLen <= 0) return null;
+        var result = System.Text.Encoding.GetEncoding(1252).GetString(compObj, 32, strLen);
+        return result;
+    }
 }
 
 /// <summary>
@@ -3261,3 +3340,18 @@ public sealed record FspaEntry(
 /// <param name="StartCp">시작 CP (PlcfBkf aCP).</param>
 /// <param name="EndCp">끝 CP (PlcfBkl aCP — BKF.ibkl 로 매핑).</param>
 public sealed record BookmarkEntry(string Name, int StartCp, int EndCp);
+
+/// <summary>
+/// Phase 3l — DOC OLE2 컨테이너의 ObjectPool sub-storage 한 개. 각 entry 가 임베드된 OLE 객체.
+/// </summary>
+/// <param name="Name">ObjectPool 안의 storage 이름 (예: "_1234567890").</param>
+/// <param name="ClassName">CompObj stream 에서 추출한 OLE class 이름 (예: "Equation.3", "Excel.Sheet.8"). null 이면 미상.</param>
+/// <param name="PrimaryStreamName">실제 콘텐츠를 담는 것으로 추정되는 stream 이름 (EquationNative / Ole10Native / Workbook 등).</param>
+/// <param name="PrimaryContent">PrimaryStreamName 의 raw bytes — round-trip 출력에 사용.</param>
+/// <param name="Streams">storage 내 모든 stream 이름 → raw bytes 사전.</param>
+public sealed record OleEmbedEntry(
+    string Name,
+    string? ClassName,
+    string? PrimaryStreamName,
+    byte[]? PrimaryContent,
+    IReadOnlyDictionary<string, byte[]> Streams);

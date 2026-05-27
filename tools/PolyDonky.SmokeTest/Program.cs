@@ -80,6 +80,7 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3j 주석 (annotations)", DocBi
 harness.Run("DOC (Word 97-2003 binary) — Phase 3j-2 주석 메타 (Author + Date)", DocBinaryPhase3j2CommentMetadata);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3m 헤더/푸터 Run-rich 통합", DocBinaryPhase3mHeaderFooterRichRuns);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3m-2 footnote/endnote/comment Run-rich", DocBinaryPhase3m2SubdocRichRuns);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3l 임베드 OLE (ObjectPool)", DocBinaryPhase3lObjectPool);
 
 return harness.Finish();
 
@@ -6731,6 +6732,55 @@ static void DocBinaryPhase3m2SubdocRichRuns()
         SmokeHarness.True(linkRun is not null, "footnote 안 HYPERLINK Run 존재");
         SmokeHarness.Equal("here", linkRun!.Text, "linkRun.Text = here");
         SmokeHarness.Equal("https://f.com", linkRun.Url, "linkRun.Url");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3l — 임베드 OLE 객체. ObjectPool sub-storage 안의 stream 들을 OleEmbedEntry 로 노출.
+//   합성: ObjectPool/_1234567890/ {CompObj, EquationNative}
+//     CompObj: "Equation.3" class name
+//     EquationNative: dummy bytes AA BB CC DD
+static void DocBinaryPhase3lObjectPool()
+{
+    BuildMinimalDocStreams("Body\r", out var wd, out var tblBytes);
+
+    // CompObj layout: header(32) + cch(4) + class name(cch including null).
+    //   "Equation.3" = 10 chars + null = 11 bytes.
+    var compObj = new byte[32 + 11];
+    BitConverter.TryWriteBytes(compObj.AsSpan(0), (uint)0xFFFFFFFE);  // Reserved1
+    BitConverter.TryWriteBytes(compObj.AsSpan(28), (int)11);          // cch
+    var classBytes = Encoding.GetEncoding(1252).GetBytes("Equation.3");
+    Buffer.BlockCopy(classBytes, 0, compObj, 32, classBytes.Length);
+    // last byte (index 32+10 = 42) is already 0 (null terminator).
+
+    byte[] equationNative = { 0xAA, 0xBB, 0xCC, 0xDD };
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            // ObjectPool/_1234567890/ {CompObj, EquationNative}
+            var pool = root.CreateStorage("ObjectPool");
+            var obj  = pool.CreateStorage("_1234567890");
+            using (var s = obj.CreateStream("CompObj"))         s.Write(compObj);
+            using (var s = obj.CreateStream("EquationNative"))  s.Write(equationNative);
+        }
+        using var fs = File.OpenRead(tmp);
+        var reader = new PolyDonky.Convert.Doc.DocBinaryReader();
+        reader.Read(fs);
+
+        SmokeHarness.Equal(1, reader.OleEmbeds.Count, $"OleEmbeds.Count = 1 (got {reader.OleEmbeds.Count})");
+        var ole = reader.OleEmbeds[0];
+        SmokeHarness.Equal("_1234567890",    ole.Name,              "OLE storage name");
+        SmokeHarness.Equal("Equation.3",     ole.ClassName,         "CompObj class name");
+        SmokeHarness.Equal("EquationNative", ole.PrimaryStreamName, "primary stream name");
+        SmokeHarness.True(ole.PrimaryContent is not null && ole.PrimaryContent.SequenceEqual(equationNative),
+            "primary content = AA BB CC DD");
+        SmokeHarness.True(ole.Streams.ContainsKey("CompObj"),        "Streams contains CompObj");
+        SmokeHarness.True(ole.Streams.ContainsKey("EquationNative"), "Streams contains EquationNative");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
