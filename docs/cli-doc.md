@@ -51,7 +51,7 @@ PolyDonky.Convert.Doc --help    | -h | /?
 | `*.rtf` | `*.iwpf` | **import** — RTF 를 IWPF 로 변환 |
 | `*.doc` | `*.iwpf` | **import** — Word 97-2003 OLE2 바이너리를 IWPF 로 변환 (VBA 매크로·디지털 서명·OLE 임베드는 fidelity capsule 로 격리 저장) |
 | `*.iwpf` | `*.rtf` | **export** — IWPF 를 RTF 로 변환 |
-| `*.iwpf` | `*.doc` | **export** — Word 97-2003 OLE2 바이너리 (Phase F1-W2a — 현재 본문 텍스트 골격만, 서식·표·이미지는 후속 단계) |
+| `*.iwpf` | `*.doc` | **export** — Word 97-2003 OLE2 바이너리. 본문 텍스트·글자/단락 서식·책갈피·FidelityCapsules (VBA/서명/미인식 storage) 보존. 이미지/표/도형은 가시 placeholder. 헤더/푸터·각주·필드는 v1.0.0+. |
 
 ---
 
@@ -157,9 +157,10 @@ PolyDonky.Convert.Doc 문서.rtf 문서.iwpf --debug
 |------|------|
 | RTF import / export | ✅ 현재 지원 |
 | `.doc` (Word 97-2003 OLE2 바이너리) import | ✅ 현재 지원 — VBA 매크로·디지털 서명·OLE 임베드·미인식 root storage 는 IWPF fidelity capsule 로 격리 저장 |
-| `.iwpf → .doc` (OLE2 바이너리 export) | ⚠️ Phase F1-W2a 진행 중 — `OpenMcdf` 기반 자체 writer. 현재는 본문 평문만 직렬화 (CFB + FIB + CLX 단일 piece). 글자/단락 서식 (F1-W2b), 표/이미지 (F1-W2c~d), fidelity capsule 복원 (F1-W2e) 은 후속 단계 |
-| 수식 (`\equation` 표기) | ⏳ v1.0.0 이후 |
-| `\shp` 그림자·3D·꼭짓점 경로 등 고급 도형 속성 | ⏳ v1.0.0 이후 |
+| `.iwpf → .doc` (OLE2 바이너리 export) | ✅ Phase F1-W2 완료 — `OpenMcdf` 기반 자체 writer. CFB + FIB + CLX + 본문 (F1-W2a), CHPX/PAPX 글자/단락 서식 (F1-W2b), SttbfBkmk/PlcfBkf/PlcfBkl 책갈피 (F1-W2c), 이미지/표/도형 가시 placeholder (F1-W2d), FidelityCapsules → OLE2 storage 복원 (F1-W2e). `.doc → .iwpf → .doc` 라운드트립 시 매크로·서명·미인식 storage 가 0% 손실로 보존 |
+| 헤더/푸터, 섹션 SEPX, 각주/미주, 주석, 필드 binary 임베드 | ⏳ v1.0.0+ |
+| OfficeArt 이미지/도형 binary 임베드 (PICF / BStore / FSPA) | ⏳ v1.0.0+ |
+| 수식 (`\equation` 표기) | ⏳ v1.0.0+ |
 
 ---
 

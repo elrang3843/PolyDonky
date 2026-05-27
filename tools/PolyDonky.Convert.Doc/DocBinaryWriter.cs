@@ -11,19 +11,19 @@ namespace PolyDonky.Convert.Doc;
 /// <summary>
 /// IWPF → Word 97-2003 (.doc) OLE2 바이너리 writer.
 ///
-/// 현재 단계 — Phase F1-W2d (이미지/도형 placeholder):
+/// 현재 단계 — Phase F1-W2e (FidelityCapsules round-trip):
 ///   * CFB 컨테이너 + FIB + CLX (단일 piece) + 본문 텍스트
 ///   * SttbfFfn (폰트 테이블)
 ///   * PAPX FKP 페이지 — 단락별 정렬·들여쓰기·간격·줄높이
 ///   * CHPX FKP 페이지 — Run 별 굵게/이탤릭/밑줄/취소선·글자크기·전경색·폰트 인덱스
 ///   * PlcfBtePapx / PlcfBteChpx — FKP 페이지 인덱스
 ///   * SttbfBkmk + PlcfBkf + PlcfBkl — Run.BookmarkStart/End 책갈피
-///   * ImageBlock / ShapeObject / TextBoxObject / Table → 가시 placeholder 텍스트 (정보 보존)
-///     실제 OfficeArt 바이너리 임베드는 후속 v1.0.0+ 단계.
+///   * ImageBlock / ShapeObject / TextBoxObject / Table → 가시 placeholder (텍스트 정보 보존)
+///   * FidelityCapsules (msdoc/macros / msdoc/signatures / msdoc/preserved) → 원래 OLE2 storage 로 복원.
+///     VBA 매크로 / 디지털 서명 / 미인식 root storage 가 .doc → .iwpf → .doc 라운드트립을 통과.
 ///
-/// 후속 단계:
-///   F1-W2e  FidelityCapsules → OLE2 storage 복원 (VBA / 서명 / 미인식 root storage)
-///   v1.0.0+ 헤더/푸터, 섹션 SEPX, 각주/미주, 주석, 필드, OfficeArt 이미지/도형 binary 임베드
+/// 후속 단계 (v1.0.0+):
+///   헤더/푸터, 섹션 SEPX, 각주/미주, 주석, 필드, OfficeArt 이미지/도형 binary 임베드
 ///
 /// 참고 사양:
 ///   [MS-CFB]  Compound File Binary File Format        (OpenMcdf 가 처리)
@@ -76,6 +76,11 @@ public sealed class DocBinaryWriter
         using var root = RootStorage.Create(output, OpenMcdf.Version.V3, StorageModeFlags.LeaveOpen);
         WriteStream(root, "WordDocument", wd);
         WriteStream(root, "1Table",       table);
+
+        // Phase F1-W2e — FidelityCapsules 복원 (VBA 매크로 / 디지털 서명 / 미인식 root storage).
+        //   Reader 가 .doc → .iwpf 할 때 fidelity/capsules/msdoc/... 로 저장한 raw bytes 를
+        //   원래 OLE2 storage 위치로 복원해 .doc → .iwpf → .doc 라운드트립을 닫는다.
+        WriteFidelityCapsules(root, doc.FidelityCapsules);
     }
 
     // ─────────────────────────────── BuildContext ──────────────────────────────
@@ -859,6 +864,68 @@ public sealed class DocBinaryWriter
     private static void WriteStream(RootStorage root, string name, byte[] data)
     {
         using var s = root.CreateStream(name);
+        s.Write(data, 0, data.Length);
+    }
+
+    // ── Phase F1-W2e: FidelityCapsules → OLE2 storage 복원 ──────────────────────
+
+    /// <summary>이 writer 가 직접 출력하는 root entry — capsule 이 같은 이름을 가져도 덮어쓰지 않음.</summary>
+    private static readonly HashSet<string> ReservedRootEntries = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "WordDocument", "1Table", "0Table", "Data",
+    };
+
+    /// <summary>capsule 키 prefix → 첫 번째 path 컴포넌트가 root storage 이름.
+    /// 키 형식: <c>msdoc/&lt;category&gt;/&lt;rootStorageName&gt;/&lt;inner/path&gt;</c>.
+    /// 예: <c>msdoc/macros/Macros/VBA/Module1</c> → root="Macros", path="VBA/Module1".</summary>
+    private static void WriteFidelityCapsules(RootStorage root, IDictionary<string, byte[]>? capsules)
+    {
+        if (capsules is null || capsules.Count == 0) return;
+
+        foreach (var kv in capsules)
+        {
+            string key = kv.Key;
+            if (string.IsNullOrEmpty(key) || !key.StartsWith("msdoc/", StringComparison.Ordinal))
+                continue;   // 다른 prefix (ooxml/, hwpx/, hancom/) 는 DOC writer 가 처리 안 함
+
+            // msdoc/ 다음의 한 segment 는 category (macros/signatures/preserved). 그 뒤가 OLE2 path.
+            string afterMsdoc = key.Substring("msdoc/".Length);
+            int catSlash = afterMsdoc.IndexOf('/');
+            if (catSlash <= 0) continue;
+            string olePath = afterMsdoc.Substring(catSlash + 1);
+            if (string.IsNullOrEmpty(olePath)) continue;
+
+            string[] parts = olePath.Split('/');
+            if (parts.Length == 0 || string.IsNullOrEmpty(parts[0])) continue;
+
+            // Root entry 가 우리가 이미 쓴 stream 과 충돌하면 skip (안전망 — Reader 는 자기 stream 을 capsule 로 안 만든다).
+            if (ReservedRootEntries.Contains(parts[0])) continue;
+
+            try
+            {
+                WriteCapsuleAtPath(root, parts, kv.Value);
+            }
+            catch
+            {
+                // 같은 stream 이 두 번 쓰여지면 OpenMcdf 가 예외 — 무시하고 다음 capsule 진행.
+            }
+        }
+    }
+
+    private static void WriteCapsuleAtPath(RootStorage root, string[] parts, byte[] data)
+    {
+        Storage current = root;
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            string seg = parts[i];
+            if (string.IsNullOrEmpty(seg)) continue;
+            current = current.TryOpenStorage(seg, out var existing)
+                ? existing
+                : current.CreateStorage(seg);
+        }
+        string streamName = parts[^1];
+        if (string.IsNullOrEmpty(streamName)) return;
+        using var s = current.CreateStream(streamName);
         s.Write(data, 0, data.Length);
     }
 }

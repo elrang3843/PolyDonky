@@ -578,6 +578,133 @@ public class DocBinaryWriterTests
         Assert.Contains("inside container", NonEmptyParagraphTexts(doc2));
     }
 
+    // ── Phase F1-W2e: FidelityCapsules → OLE2 storage round-trip ───────────
+
+    private static byte[] FakeBytes(int len, byte seed = 0xAB)
+    {
+        var b = new byte[len];
+        for (int i = 0; i < len; i++) b[i] = (byte)(seed + i);
+        return b;
+    }
+
+    [Fact]
+    public void Macro_Capsule_RoundTrips_Via_DocBinaryReader()
+    {
+        var doc = DocWith(Paragraph.Of("with macros"));
+        var vbaProject = FakeBytes(64, 0x10);
+        var moduleData = FakeBytes(128, 0x20);
+        doc.FidelityCapsules["msdoc/macros/Macros/PROJECT"]        = vbaProject;
+        doc.FidelityCapsules["msdoc/macros/Macros/VBA/Module1"]    = moduleData;
+
+        var bytes = WriteDoc(doc);
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.True(reader.HasMacros);
+        Assert.NotNull(reader.MacroProject);
+        Assert.Equal("Macros", reader.MacroProject!.StorageName);
+        // Reader 가 root storage 안 모든 stream 을 path-keyed 사전으로 보존
+        Assert.True(reader.MacroProject!.Streams.ContainsKey("PROJECT"));
+        Assert.Equal(vbaProject, reader.MacroProject!.Streams["PROJECT"]);
+        Assert.True(reader.MacroProject!.Streams.ContainsKey("VBA/Module1"));
+        Assert.Equal(moduleData, reader.MacroProject!.Streams["VBA/Module1"]);
+    }
+
+    [Fact]
+    public void Digital_Signature_Capsule_RoundTrips()
+    {
+        var doc = DocWith(Paragraph.Of("signed"));
+        var sigData = FakeBytes(256, 0xF0);
+        doc.FidelityCapsules["msdoc/signatures/_SignaturesV1/sig.xml"] = sigData;
+
+        var bytes = WriteDoc(doc);
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.True(reader.HasDigitalSignature);
+        Assert.NotNull(reader.DigitalSignature);
+        Assert.Equal("_SignaturesV1", reader.DigitalSignature!.StorageName);
+        Assert.True(reader.DigitalSignature!.Streams.ContainsKey("sig.xml"));
+        Assert.Equal(sigData, reader.DigitalSignature!.Streams["sig.xml"]);
+    }
+
+    [Fact]
+    public void Preserved_Unknown_Root_Storage_RoundTrips()
+    {
+        var doc = DocWith(Paragraph.Of("data store"));
+        var dataA = FakeBytes(96, 0x33);
+        var dataB = FakeBytes(48, 0x77);
+        doc.FidelityCapsules["msdoc/preserved/MsoDataStore/item_1.dat"] = dataA;
+        doc.FidelityCapsules["msdoc/preserved/MsoDataStore/sub/item_2.dat"] = dataB;
+
+        var bytes = WriteDoc(doc);
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.Single(reader.PreservedRootStorages);
+        var storage = reader.PreservedRootStorages[0];
+        Assert.Equal("MsoDataStore", storage.Name);
+        Assert.Contains("item_1.dat",     storage.Streams.Keys);
+        Assert.Contains("sub/item_2.dat", storage.Streams.Keys);
+        Assert.Equal(dataA, storage.Streams["item_1.dat"]);
+        Assert.Equal(dataB, storage.Streams["sub/item_2.dat"]);
+    }
+
+    [Fact]
+    public void Multiple_Capsule_Categories_Coexist_In_Single_Doc()
+    {
+        var doc = DocWith(Paragraph.Of("all three"));
+        doc.FidelityCapsules["msdoc/macros/Macros/PROJECT"]            = FakeBytes(32);
+        doc.FidelityCapsules["msdoc/signatures/_SignaturesV1/sig.xml"] = FakeBytes(64, 0x55);
+        doc.FidelityCapsules["msdoc/preserved/MsoDataStore/item.dat"]  = FakeBytes(80, 0xAA);
+
+        var bytes = WriteDoc(doc);
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.True(reader.HasMacros);
+        Assert.True(reader.HasDigitalSignature);
+        Assert.NotEmpty(reader.PreservedRootStorages);
+    }
+
+    [Fact]
+    public void Capsule_Targeting_Reserved_Stream_Name_Is_Silently_Skipped()
+    {
+        // 누가 capsule key 를 'msdoc/preserved/WordDocument/x' 로 만들었더라도 writer 의
+        // WordDocument stream 을 덮어쓰면 안 됨. capsule skip → 정상 round-trip.
+        var doc = DocWith(Paragraph.Of("malicious"));
+        doc.FidelityCapsules["msdoc/preserved/WordDocument/sneaky"] = FakeBytes(16);
+
+        var bytes = WriteDoc(doc);
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        var doc2 = reader.Read(ms);
+
+        Assert.Contains("malicious", NonEmptyParagraphTexts(doc2));
+    }
+
+    [Fact]
+    public void Non_Msdoc_Prefix_Capsules_Are_Ignored_By_Doc_Writer()
+    {
+        var doc = DocWith(Paragraph.Of("only ooxml capsule"));
+        // ooxml/* 와 hwpx/* prefix 는 DOCX / HWPX writer 가 처리할 영역 — DOC writer 는 무시.
+        doc.FidelityCapsules["ooxml/word/vbaProject.bin"]   = FakeBytes(32);
+        doc.FidelityCapsules["hwpx/Scripts/macro.xml"]      = FakeBytes(32);
+
+        var bytes = WriteDoc(doc);
+        using var ms = new MemoryStream(bytes);
+        var reader = new DocBinaryReader();
+        _ = reader.Read(ms);
+
+        Assert.False(reader.HasMacros);
+        Assert.False(reader.HasDigitalSignature);
+        Assert.Empty(reader.PreservedRootStorages);
+    }
+
     [Fact]
     public void Mixed_Style_Runs_In_Single_Paragraph_RoundTrip()
     {
