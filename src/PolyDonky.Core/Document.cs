@@ -25,6 +25,9 @@ public sealed class PolyDonkyument
     /// <summary>문서 수준 미주 목록. Run.EndnoteId 가 여기 FootnoteEntry.Id 를 참조한다.</summary>
     public IList<FootnoteEntry> Endnotes { get; set; } = new List<FootnoteEntry>();
 
+    /// <summary>문서 수준 리뷰어 코멘트 목록. Run.CommentId 가 여기 CommentEntry.Id 를 참조한다.</summary>
+    public IList<CommentEntry> Comments { get; set; } = new List<CommentEntry>();
+
     /// <summary>비어 있지 않은 단일 섹션 단일 문단을 가진 최소 문서를 생성한다.</summary>
     public static PolyDonkyument Empty()
     {
