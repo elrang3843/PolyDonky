@@ -100,8 +100,9 @@ public class DocBinaryReader
             var fmt = FormatStyles.Build(wd, table, fib);
             // Phase 3e-2 — Data stream (선택적, 이미지 PICF 가 여기에). 없으면 null.
             fmt.DataStream = ReadAll(root, "Data");
-            // Phase 3f — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출 (BuildDocument 보다 먼저 — PICF 의 pib 참조 해석에 필요).
-            fmt.BStoreImages = ParseBStoreImages(table, fib);
+            // Phase 3f / 3f-3 — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출
+            // (Data stream 도 함께 넘겨 FBSE.foDelay 가 Data stream 안의 BLIP 을 가리키는 케이스 지원).
+            fmt.BStoreImages = ParseBStoreImages(table, fib, fmt.DataStream);
             BStoreImages = fmt.BStoreImages;
             var doc = BuildDocument(text, fcs, fmt);
 
@@ -1096,8 +1097,9 @@ public class DocBinaryReader
     //   FBSE body (36 byte fixed): btWin32 / btMacOS / rgbUid(16) / tag(2) / size(4) / cRef(4) /
     //                              foDelay(4) / unused1(1) / cbName(1) / unused2(1) / unused3(1)
     //   이후 nameData(cbName byte) 다음에 임베드 BLIP 가 옵션으로 위치.
-    //   foDelay 가 별도 stream 의 BLIP 을 가리키는 케이스 (없는 경우 0xFFFFFFFF) 는 후속 단계.
-    private static IReadOnlyList<(string MediaType, byte[] Data)> ParseBStoreImages(byte[] table, Fib fib)
+    // Phase 3f-3 — 임베드 BLIP 가 없으면 foDelay 가 가리키는 Data stream 의 BLIP 을 탐색.
+    private static IReadOnlyList<(string MediaType, byte[] Data)> ParseBStoreImages(
+        byte[] table, Fib fib, byte[]? dataStream)
     {
         if (fib.LcbDggInfo == 0) return Array.Empty<(string, byte[])>();
         int start = (int)fib.FcDggInfo;
@@ -1106,12 +1108,13 @@ public class DocBinaryReader
         int end = (int)endL;
 
         var list = new List<(string, byte[])>();
-        WalkForBStore(table, start, end, list, depth: 0);
+        WalkForBStore(table, start, end, dataStream, list, depth: 0);
         return list;
     }
 
     // DggContainer (0xF000) 안에서 BStoreContainer (0xF001) 를 찾아 FBSE 들을 처리.
-    private static void WalkForBStore(byte[] data, int start, int end, List<(string, byte[])> sink, int depth)
+    private static void WalkForBStore(byte[] data, int start, int end,
+        byte[]? dataStream, List<(string, byte[])> sink, int depth)
     {
         if (depth > 8) return;
         int pos = start;
@@ -1129,19 +1132,20 @@ public class DocBinaryReader
             if (recType == 0xF001)
             {
                 // BStoreContainer (container 0xF001). 자식 FBSE 처리.
-                ExtractFbses(data, dataStart, dataEnd, sink);
+                ExtractFbses(data, dataStart, dataEnd, dataStream, sink);
             }
             else if (recVer == 0xF)
             {
                 // 다른 컨테이너 — DggContainer / OptContainer 등 — 재귀로 BStore 탐색.
-                WalkForBStore(data, dataStart, dataEnd, sink, depth + 1);
+                WalkForBStore(data, dataStart, dataEnd, dataStream, sink, depth + 1);
             }
             pos = dataEnd;
         }
     }
 
-    // BStoreContainer 안의 FBSE atom 들을 walk 하며 임베드 BLIP 추출.
-    private static void ExtractFbses(byte[] data, int start, int end, List<(string, byte[])> sink)
+    // BStoreContainer 안의 FBSE atom 들을 walk 하며 임베드 BLIP 또는 foDelay 가 가리키는 Data stream BLIP 추출.
+    private static void ExtractFbses(byte[] data, int start, int end,
+        byte[]? dataStream, List<(string, byte[])> sink)
     {
         int pos = start;
         while (pos + 8 <= end)
@@ -1155,13 +1159,26 @@ public class DocBinaryReader
 
             if (recType == 0xF007 && dataStart + 36 <= dataEnd)
             {
-                byte cbName = data[dataStart + 33];
+                uint foDelay = BitConverter.ToUInt32(data, dataStart + 28);
+                byte cbName  = data[dataStart + 33];
                 int blipStart = dataStart + 36 + cbName;
+
+                // (a) 임베드 BLIP — FBSE 본체 안에 BLIP 레코드가 함께 있는 경우 (Phase 3f).
+                (string MediaType, byte[] Data)? blip = null;
                 if (blipStart < dataEnd)
+                    blip = TryExtractFromOfficeArt(data, blipStart, dataEnd, bstore: null, depth: 0);
+
+                // (b) Phase 3f-3 — 임베드가 없으면 foDelay 의 Data stream 안에서 BLIP 찾기.
+                //     foDelay == 0xFFFFFFFF 는 "BLIP 없음" sentinel.
+                if (!blip.HasValue && foDelay != 0xFFFFFFFF && dataStream is not null)
                 {
-                    var blip = TryExtractFromOfficeArt(data, blipStart, dataEnd, bstore: null, depth: 0);
-                    if (blip.HasValue) sink.Add(blip.Value);
+                    int doff = (int)foDelay;
+                    if (doff >= 0 && doff < dataStream.Length)
+                        blip = TryExtractFromOfficeArt(
+                            dataStream, doff, dataStream.Length, bstore: null, depth: 0);
                 }
+
+                if (blip.HasValue) sink.Add(blip.Value);
             }
             pos = dataEnd;
         }
