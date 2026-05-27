@@ -54,6 +54,8 @@ harness.Run("DOC (Word 97-2003 binary) — Phase 3e-3 WMF placeable header 인�
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-3 DIB BITMAPINFOHEADER 인식", DocBinaryPhase3e3DibImage);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-4 표 셀 안 inline 이미지", DocBinaryPhase3e4ImageInTableCell);
 harness.Run("DOC (Word 97-2003 binary) — Phase 3e-5 EMF EMR_HEADER 인식", DocBinaryPhase3e5EmfImage);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-6 OfficeArt BLIP_PNG (SpContainer)", DocBinaryPhase3e6BlipPng);
+harness.Run("DOC (Word 97-2003 binary) — Phase 3e-6 OfficeArt BLIP_JPEG (atom)", DocBinaryPhase3e6BlipJpeg);
 
 return harness.Finish();
 
@@ -3699,6 +3701,169 @@ static void DocBinaryPhase3e5EmfImage()
             img.Data[0] == 0x01 && img.Data[1] == 0 && img.Data[2] == 0 && img.Data[3] == 0 &&
             img.Data[40] == 0x20 && img.Data[41] == 0x45 && img.Data[42] == 0x4D && img.Data[43] == 0x46,
             "Data 의 EMR_HEADER iType=1 + dSignature \" EMF\" @ offset 40");
+    }
+    finally { try { File.Delete(tmp); } catch { } }
+}
+
+// Phase 3e-6 — OfficeArt 컨테이너 정식 파싱.
+//
+// 두 케이스 모두 signature 스캔으로는 못 찾는 image bytes (raw signature 아님) 를 BLIP body 에 박아
+// OfficeArt path 가 실제로 사용됨을 검증한다.
+
+static void DocBinaryPhase3e6BlipPng()
+{
+    // OfficeArtSpContainer (0xF004, recVer=0xF) 안에 BLIP_PNG (0xF01E) atom.
+    //   image data = AB CD EF 12 (PNG signature 아님 — OfficeArt path 만 추출 가능).
+    DocBinaryRunOfficeArtPicCase(BuildSpContainerPngStream(), "image/png",
+        new byte[] { 0xAB, 0xCD, 0xEF, 0x12 }, "BLIP_PNG in SpContainer");
+}
+
+static void DocBinaryPhase3e6BlipJpeg()
+{
+    // BLIP_JPEG (0xF01D) atom 을 PICF 최상위에 직접.
+    //   image data = 11 22 33 44 (JPEG signature 아님).
+    DocBinaryRunOfficeArtPicCase(BuildBlipJpegStream(), "image/jpeg",
+        new byte[] { 0x11, 0x22, 0x33, 0x44 }, "BLIP_JPEG atom");
+}
+
+static byte[] BuildSpContainerPngStream()
+{
+    // Layout (41 byte):
+    //   [0..3]   lcb = 41
+    //   [4..11]  SpContainer header: verInst=0x000F, recType=0xF004, recLen=29
+    //   [12..19] BLIP_PNG header: verInst=0x6E00, recType=0xF01E, recLen=21
+    //   [20..35] UID = 16 zeros
+    //   [36]     tag = 0xFF
+    //   [37..40] image data = AB CD EF 12
+    var d = new byte[41];
+    BitConverter.TryWriteBytes(d.AsSpan(0),  (int)41);
+    // SpContainer
+    BitConverter.TryWriteBytes(d.AsSpan(4),  (ushort)0x000F);
+    BitConverter.TryWriteBytes(d.AsSpan(6),  (ushort)0xF004);
+    BitConverter.TryWriteBytes(d.AsSpan(8),  (uint)29);
+    // BLIP_PNG
+    BitConverter.TryWriteBytes(d.AsSpan(12), (ushort)0x6E00);
+    BitConverter.TryWriteBytes(d.AsSpan(14), (ushort)0xF01E);
+    BitConverter.TryWriteBytes(d.AsSpan(16), (uint)21);
+    // UID = zeros
+    d[36] = 0xFF;
+    d[37] = 0xAB; d[38] = 0xCD; d[39] = 0xEF; d[40] = 0x12;
+    return d;
+}
+
+static byte[] BuildBlipJpegStream()
+{
+    // Layout (33 byte):
+    //   [0..3]   lcb = 33
+    //   [4..11]  BLIP_JPEG header: verInst=0x46A0, recType=0xF01D, recLen=21
+    //   [12..27] UID = 16 zeros
+    //   [28]     tag = 0xFF
+    //   [29..32] image data = 11 22 33 44
+    var d = new byte[33];
+    BitConverter.TryWriteBytes(d.AsSpan(0),  (int)33);
+    BitConverter.TryWriteBytes(d.AsSpan(4),  (ushort)0x46A0);
+    BitConverter.TryWriteBytes(d.AsSpan(6),  (ushort)0xF01D);
+    BitConverter.TryWriteBytes(d.AsSpan(8),  (uint)21);
+    d[28] = 0xFF;
+    d[29] = 0x11; d[30] = 0x22; d[31] = 0x33; d[32] = 0x44;
+    return d;
+}
+
+static void DocBinaryRunOfficeArtPicCase(
+    byte[] dataStream, string expectedMime, byte[] expectedBytes, string label)
+{
+    const string text = "BeforeAfter\r";
+    int ccp = text.Length;
+    var textBytes = Encoding.Unicode.GetBytes(text);
+    int fcText = 0x200;
+    int pnPapx = 4, pnChpx = 5;
+    int fcPapxFkp = pnPapx * 512;
+    int fcChpxFkp = pnChpx * 512;
+    int wdSize = fcChpxFkp + 512;
+    var wd = new byte[wdSize];
+    Buffer.BlockCopy(textBytes, 0, wd, fcText, textBytes.Length);
+
+    int cpara = 1;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 0), (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcPapxFkp + 4), (int)(0x200 + ccp * 2));
+    int papx0Off = 64;
+    wd[fcPapxFkp + 8 + 0 * 13] = (byte)(papx0Off / 2);
+    int p = fcPapxFkp + papx0Off;
+    wd[p++] = 0; wd[p++] = 1; BitConverter.TryWriteBytes(wd.AsSpan(p), (ushort)0);
+    wd[fcPapxFkp + 511] = (byte)cpara;
+
+    int crun = 3;
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 0),  (int)0x200);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 4),  (int)0x20C);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 8),  (int)0x20E);
+    BitConverter.TryWriteBytes(wd.AsSpan(fcChpxFkp + 12), (int)0x218);
+    int chpx0Off = 64, chpx1Off = 80, chpx2Off = 96;
+    int rgbBase  = 4 * (crun + 1);
+    wd[fcChpxFkp + rgbBase + 0] = (byte)(chpx0Off / 2);
+    wd[fcChpxFkp + rgbBase + 1] = (byte)(chpx1Off / 2);
+    wd[fcChpxFkp + rgbBase + 2] = (byte)(chpx2Off / 2);
+    wd[fcChpxFkp + chpx0Off + 0] = 0;
+    int c = fcChpxFkp + chpx1Off;
+    wd[c++] = 6;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (ushort)0x6A03); c += 2;
+    BitConverter.TryWriteBytes(wd.AsSpan(c), (int)0); c += 4;
+    wd[fcChpxFkp + chpx2Off + 0] = 0;
+    wd[fcChpxFkp + 511] = (byte)crun;
+
+    var tblMs = new MemoryStream();
+    Span<byte> b4 = stackalloc byte[4];
+    tblMs.WriteByte(0x02);
+    BitConverter.TryWriteBytes(b4, (uint)16); tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)0);   tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (uint)ccp); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    BitConverter.TryWriteBytes(b4, (uint)fcText); tblMs.Write(b4);
+    tblMs.WriteByte(0); tblMs.WriteByte(0);
+    int clxEnd = (int)tblMs.Position;
+    int papxBteStart = clxEnd;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnPapx); tblMs.Write(b4);
+    int papxBteLen = (int)tblMs.Position - papxBteStart;
+    int chpxBteStart = (int)tblMs.Position;
+    BitConverter.TryWriteBytes(b4, (int)0x200);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)0x300);  tblMs.Write(b4);
+    BitConverter.TryWriteBytes(b4, (int)pnChpx); tblMs.Write(b4);
+    int chpxBteLen = (int)tblMs.Position - chpxBteStart;
+    var tblBytes = tblMs.ToArray();
+
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00),   (ushort)0xA5EC);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x02),   (ushort)193);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0A),   (ushort)0x0000);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x18),   (uint)fcText);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x4C),   (uint)ccp);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A2), (uint)0);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x01A6), (uint)clxEnd);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FA), (uint)chpxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x00FE), (uint)chpxBteLen);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0102), (uint)papxBteStart);
+    BitConverter.TryWriteBytes(wd.AsSpan(0x0106), (uint)papxBteLen);
+
+    var tmp = Path.Combine(Path.GetTempPath(), $"polydonky-smoke-{Guid.NewGuid():N}.doc");
+    try
+    {
+        using (var root = OpenMcdf.RootStorage.Create(tmp))
+        {
+            using (var s = root.CreateStream("WordDocument")) s.Write(wd);
+            using (var s = root.CreateStream("0Table"))       s.Write(tblBytes);
+            using (var s = root.CreateStream("Data"))         s.Write(dataStream);
+        }
+        using var fs = File.OpenRead(tmp);
+        var doc = new PolyDonky.Convert.Doc.DocBinaryReader().Read(fs);
+        var blocks = doc.Sections[0].Blocks;
+
+        SmokeHarness.True(blocks.Count >= 3, $"[{label}] blocks.Count >= 3 (got {blocks.Count})");
+        SmokeHarness.True(blocks[1] is ImageBlock, $"[{label}] blocks[1] = ImageBlock");
+        var img = (ImageBlock)blocks[1];
+        SmokeHarness.Equal(expectedMime, img.MediaType, $"[{label}] MediaType");
+        SmokeHarness.Equal(expectedBytes.Length, img.Data.Length, $"[{label}] Data.Length");
+        for (int i = 0; i < expectedBytes.Length; i++)
+            SmokeHarness.Equal(expectedBytes[i], img.Data[i], $"[{label}] Data[{i}]");
     }
     finally { try { File.Delete(tmp); } catch { } }
 }
