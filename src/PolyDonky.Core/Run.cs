@@ -73,6 +73,16 @@ public enum FieldType
     Author,
     /// <summary>문서 제목.</summary>
     Title,
+    /// <summary>문서 본문 글자 수 (MS Word NUMCHARS).</summary>
+    NumChars,
+    /// <summary>문서 파일명 (MS Word FILENAME).</summary>
+    FileName,
+    /// <summary>문서 주제 (MS Word SUBJECT, DocumentMetadata 의 Subject 메타데이터).</summary>
+    Subject,
+    /// <summary>문서 키워드 (MS Word KEYWORDS).</summary>
+    Keywords,
+    /// <summary>문서 코멘트 (MS Word COMMENTS — 메타데이터의 설명 문자열, 주석 annotation 과 다름).</summary>
+    Comments,
 }
 
 /// <summary>이모지 인라인 이미지의 기준선 정렬.</summary>
