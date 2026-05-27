@@ -346,8 +346,11 @@ public class DocBinaryReader
         var paraFcs   = new List<int>();
         int lastFc    = 0;
         // Phase 2a — 표 누적 상태 (pending: 진행 중인 표/행).
+        // Phase 2f — TTP 시 raw row + cellProps 를 pendingRowsRaw 에 보관, 표 마감 시
+        //          세로 → 가로 병합 순으로 후처리 (세로 병합이 여러 행에 걸치므로).
         Table? pendingTable = null;
         TableRow? pendingRow = null;
+        var pendingRowsRaw = new List<(TableRow Row, TableCellProps[]? Cp)>();
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -359,7 +362,7 @@ public class DocBinaryReader
             {
                 case '\r':
                 case '\f':  // page break — 단락 분리로 처리
-                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, ref pendingTable, ref pendingRow);
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw);
                     break;
                 case '\v':  // soft line break
                     paraChars.Add('\n'); paraFcs.Add(fc);
@@ -386,11 +389,12 @@ public class DocBinaryReader
                     break;
             }
         }
-        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, ref pendingTable, ref pendingRow);
-        // 본문 끝에서 표가 미완 상태이면 마감.
+        FlushParagraph(section, paraChars, paraFcs, lastFc, fmt, ref pendingTable, ref pendingRow, pendingRowsRaw);
+        // 본문 끝에서 표가 미완 상태이면 마감 — Phase 2f: FinalizeTable 가 세로/가로 병합 후처리.
         if (pendingTable is not null)
         {
-            if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
+            if (pendingRow is { Cells.Count: > 0 }) pendingRowsRaw.Add((pendingRow, null));
+            FinalizeTable(pendingTable, pendingRowsRaw);
             if (pendingTable.Rows.Count > 0) section.Blocks.Add(pendingTable);
         }
 
@@ -401,9 +405,12 @@ public class DocBinaryReader
     // Phase 1b — 누적된 (char, fc) 쌍을 한 단락으로 묶어 만든다.
     // Phase 2a — InTable=true 단락은 pendingTable 에 셀별로 누적, IsTtp 단락은 행 종료,
     //          비-InTable 단락은 표를 마감하고 section.Blocks 에 직접 추가.
+    // Phase 2f — TTP 시 가로 병합 즉시 적용 대신 raw row + cellProps 를 pendingRowsRaw 에 누적,
+    //          표 마감 시 FinalizeTable 가 세로 → 가로 병합 순으로 후처리.
     private static void FlushParagraph(
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
-        ref Table? pendingTable, ref TableRow? pendingRow)
+        ref Table? pendingTable, ref TableRow? pendingRow,
+        List<(TableRow Row, TableCellProps[]? Cp)> pendingRowsRaw)
     {
         var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps) = fmt.GetParagraphInfo(paraEndFc);
 
@@ -411,38 +418,10 @@ public class DocBinaryReader
         if (isTtp)
         {
             pendingTable ??= new Table();
-            // Phase 2c — TTP 직전에 누적된 행 셀들에 sprmTDefTable 의 rgTc 에서 추출한
-            // 셀별 테두리를 1:1 적용.
-            if (pendingRow is not null && cellProps is not null)
-            {
-                int n = Math.Min(pendingRow.Cells.Count, cellProps.Length);
-                // 1) 테두리·배경 1:1 적용.
-                for (int i = 0; i < n; i++)
-                {
-                    var cell = pendingRow.Cells[i];
-                    var cp   = cellProps[i];
-                    if (cp.Top    is not null) cell.BorderTop    = cp.Top;
-                    if (cp.Left   is not null) cell.BorderLeft   = cp.Left;
-                    if (cp.Bottom is not null) cell.BorderBottom = cp.Bottom;
-                    if (cp.Right  is not null) cell.BorderRight  = cp.Right;
-                    if (cp.BackgroundHex is not null) cell.BackgroundColor = cp.BackgroundHex;
-                }
-
-                // 2) Phase 2e — 가로 병합. fMerged && !fFirstMerged 셀은 직전 셀에 흡수.
-                //   IWPF sparse 모델: 흡수 셀을 row.Cells 에서 제거하고 시작 셀의 ColumnSpan 만 증가.
-                var merged = new List<TableCell>();
-                for (int i = 0; i < pendingRow.Cells.Count; i++)
-                {
-                    bool absorb = i < n && cellProps[i].IsMerged && !cellProps[i].IsFirstMerged
-                                  && merged.Count > 0;
-                    if (absorb) merged[^1].ColumnSpan++;
-                    else        merged.Add(pendingRow.Cells[i]);
-                }
-                pendingRow.Cells = merged;
-            }
-            if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
+            if (pendingRow is { Cells.Count: > 0 })
+                pendingRowsRaw.Add((pendingRow, cellProps));
             pendingRow = null;
-            // Phase 2b — TTP 의 PAPX 에 sprmTDefTable 가 있으면 셀 너비를 표 컬럼에 적용.
+            // Phase 2b — TTP 의 PAPX 에 sprmTDefTable 가 있으면 셀 너비를 표 컬럼에 적용 (가장 처음 행 기준).
             if (rgdxa is { Length: > 1 } && pendingTable.Columns.Count == 0)
             {
                 for (int i = 0; i < rgdxa.Length - 1; i++)
@@ -471,16 +450,107 @@ public class DocBinaryReader
         // 비-InTable 단락 — 표가 진행 중이면 마감.
         if (pendingTable is not null)
         {
-            if (pendingRow is { Cells.Count: > 0 }) pendingTable.Rows.Add(pendingRow);
+            // TTP 없이 끝난 row 가 있으면 (드물지만 안전성) raw 누적에 추가.
+            if (pendingRow is { Cells.Count: > 0 }) pendingRowsRaw.Add((pendingRow, null));
+            FinalizeTable(pendingTable, pendingRowsRaw);
             if (pendingTable.Rows.Count > 0) section.Blocks.Add(pendingTable);
             pendingTable = null;
             pendingRow   = null;
+            pendingRowsRaw.Clear();
         }
 
         var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
         section.Blocks.Add(para);
         paraChars.Clear();
         paraFcs.Clear();
+    }
+
+    // Phase 2f — 표 마감 시점에 raw rows + cellProps 를 walk 해 (세로 병합 → 가로 병합) 순으로
+    // 적용한 후 pendingTable.Rows 에 채운다.
+    private static void FinalizeTable(
+        Table table, List<(TableRow Row, TableCellProps[]? Cp)> rows)
+    {
+        if (rows.Count == 0) return;
+
+        // 1. 세로 병합 — column 별로 chain 찾고 시작 셀의 RowSpan 증가, 흡수 셀은 toRemove 표시.
+        int maxCols = rows.Max(r => r.Cp?.Length ?? 0);
+        var toRemove = new bool[rows.Count][];
+        for (int r = 0; r < rows.Count; r++)
+            toRemove[r] = new bool[rows[r].Cp?.Length ?? 0];
+
+        for (int col = 0; col < maxCols; col++)
+        {
+            int startRow = -1;
+            for (int r = 0; r < rows.Count; r++)
+            {
+                var cp = rows[r].Cp;
+                if (cp is null || col >= cp.Length) { startRow = -1; continue; }
+                var p = cp[col];
+                if (p.IsVertMerge && p.IsVertRestart)
+                {
+                    startRow = r;
+                }
+                else if (p.IsVertMerge && !p.IsVertRestart && startRow >= 0)
+                {
+                    if (col < rows[startRow].Row.Cells.Count)
+                        rows[startRow].Row.Cells[col].RowSpan++;
+                    toRemove[r][col] = true;
+                }
+                else
+                {
+                    startRow = -1;
+                }
+            }
+        }
+
+        // 2. 각 row 에 (세로 흡수 제거 + 가로 병합) 적용. row.Cells.Count==0 (모든 셀이 세로 흡수) 인
+        //    행도 RowSpan 의미 보존을 위해 추가하지 않는다 (sparse: 흡수된 행 자체가 없음).
+        //    한 셀이라도 남으면 add — 부분 흡수 (다른 col 은 살아남음) 케이스를 지원.
+        for (int r = 0; r < rows.Count; r++)
+        {
+            var (row, cp) = rows[r];
+            row.Cells = MergeRowCells(row.Cells, cp, toRemove[r]);
+            if (row.Cells.Count > 0) table.Rows.Add(row);
+        }
+    }
+
+    // 한 행의 row.Cells 에 세로 흡수 제거 + 가로 병합 (Phase 2e) 적용. cp 와 toRemove 의 인덱스는
+    // 입력 row.Cells 와 1:1 (SplitIntoCells 가 0x07 단위로 만들기 때문).
+    private static IList<TableCell> MergeRowCells(
+        IList<TableCell> cells, TableCellProps[]? cp, bool[]? toRemove)
+    {
+        // cp 가 없으면 그대로 — 테두리/배경/병합 정보 없음.
+        if (cp is null)
+        {
+            // 테두리·배경 적용 없이 그대로.
+            return cells;
+        }
+
+        // 1) 테두리·배경 1:1 적용.
+        int n = Math.Min(cells.Count, cp.Length);
+        for (int i = 0; i < n; i++)
+        {
+            var cell = cells[i];
+            var p    = cp[i];
+            if (p.Top    is not null) cell.BorderTop    = p.Top;
+            if (p.Left   is not null) cell.BorderLeft   = p.Left;
+            if (p.Bottom is not null) cell.BorderBottom = p.Bottom;
+            if (p.Right  is not null) cell.BorderRight  = p.Right;
+            if (p.BackgroundHex is not null) cell.BackgroundColor = p.BackgroundHex;
+        }
+
+        // 2) 세로 흡수 제거 + 가로 병합.
+        var merged = new List<TableCell>();
+        for (int col = 0; col < n; col++)
+        {
+            if (toRemove is not null && col < toRemove.Length && toRemove[col]) continue;  // 세로 흡수
+            bool absorb = cp[col].IsMerged && !cp[col].IsFirstMerged && merged.Count > 0;
+            if (absorb) merged[^1].ColumnSpan++;
+            else        merged.Add(cells[col]);
+        }
+        // cp 길이 초과 셀은 그대로 (드물지만 안전성)
+        for (int k = n; k < cells.Count; k++) merged.Add(cells[k]);
+        return merged;
     }
 
     // 단일 셀 단락 만들기 — Phase 1 의 Run 분할 알고리즘 재사용.
@@ -654,6 +724,21 @@ public class DocBinaryReader
         return s.TrimEnd('\0');
     }
 
+    // ─────────────────────────────── 표 셀 메타 (Phase 2c~2f) ────────────────────
+
+    // 한 행의 셀별 테두리/배경/병합 묶음. ScanTableProps (FormatStyles) 가 sprmTDefTable/sprmTSetShd
+    // 에서 채우고 FlushParagraph/FinalizeTable 가 pendingRow.Cells 에 적용.
+    //   Phase 2c — 4면 BRC (Top/Left/Bottom/Right)
+    //   Phase 2d — sprmTSetShd 의 cvBack → BackgroundHex
+    //   Phase 2e — TC97 bf bit 0 (fFirstMerged) / bit 1 (fMerged) — 가로 병합
+    //   Phase 2f — TC97 bf bit 5 (fVertMerge)   / bit 6 (fVertRestart) — 세로 병합
+    internal sealed record TableCellProps(
+        CellBorderSide? Top, CellBorderSide? Left,
+        CellBorderSide? Bottom, CellBorderSide? Right,
+        string? BackgroundHex,
+        bool IsFirstMerged, bool IsMerged,
+        bool IsVertMerge,   bool IsVertRestart);
+
     // ─────────────────────────────── PAPX / CHPX 운영 (Phase 1b) ────────────────
     //
     // [MS-DOC] §2.4.6 BTE (Bin Table Entry) plex: aFC[n+1] + aPnFkp[n], 각 PnFkp 는 4-byte 페이지 번호.
@@ -788,6 +873,7 @@ public class DocBinaryReader
                     localDxa = dxa;
                     // TC97[itcMac] — 각 20 byte: bf(2)+wUnused(2)+brcTop(4)+brcLeft(4)+brcBottom(4)+brcRight(4)
                     // bf bit 0 = fFirstMerged, bit 1 = fMerged (가로 병합).
+                    // bf bit 5 = fVertMerge, bit 6 = fVertRestart (세로 병합).
                     var tcs = new TableCellProps[itcMac];
                     for (int j = 0; j < itcMac; j++)
                     {
@@ -800,7 +886,9 @@ public class DocBinaryReader
                             ParseBrc80(operand, tcOff + 16),
                             BackgroundHex: null,
                             IsFirstMerged: (bf & 0x0001) != 0,
-                            IsMerged:      (bf & 0x0002) != 0);
+                            IsMerged:      (bf & 0x0002) != 0,
+                            IsVertMerge:   (bf & 0x0020) != 0,
+                            IsVertRestart: (bf & 0x0040) != 0);
                     }
                     localCp = tcs;
                 }
@@ -854,16 +942,8 @@ public class DocBinaryReader
             return new CellBorderSide(dpt / 8.0, colorHex, line);
         }
 
-        // 한 행의 셀별 테두리/배경 묶음. ScanTableProps 가 sprmTDefTable 의 rgTc 에서 채우고
-        // FlushParagraph 의 TTP 처리에서 pendingRow.Cells 에 1:1 적용.
-        // Phase 2d — sprmTSetShd 가 cvBack 으로 BackgroundHex 추가.
-        // Phase 2e — TC97 의 bf 에서 fFirstMerged(가로 병합 시작) / fMerged(가로 병합 흡수) 추출.
-        //           IWPF sparse 모델에선 흡수 셀이 사라지고 시작 셀의 ColumnSpan 만 늘어남.
-        internal sealed record TableCellProps(
-            CellBorderSide? Top, CellBorderSide? Left,
-            CellBorderSide? Bottom, CellBorderSide? Right,
-            string? BackgroundHex,
-            bool IsFirstMerged, bool IsMerged);
+        // TableCellProps 는 외부(DocBinaryReader)에서 BuildDocument 가 raw row + cp 누적에 사용하므로
+        // outer scope 로 이동됨. ScanTableProps 가 채우고 FlushParagraph 가 적용.
 
         // Phase 1g — istd 부터 istdBase 를 따라가 root 까지 chain 을 모은 뒤 root 부터 순회.
         // 부모가 먼저 적용되고 자식이 덮어쓰는 순서. 순환 참조와 nil(0xFFF) 종료를 모두 처리.
