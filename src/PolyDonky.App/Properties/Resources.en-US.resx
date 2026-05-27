@@ -41,6 +41,7 @@
   <data name="MenuFilePreview" xml:space="preserve"><value>_Preview</value></data>
   <data name="MenuFilePrint" xml:space="preserve"><value>_Print...</value></data>
   <data name="MenuFilePreviewPrint" xml:space="preserve"><value>Preview / _Print...</value></data>
+  <data name="MenuFileDocumentInfo" xml:space="preserve"><value>Document _Info / Preserved Data...</value></data>
   <data name="MenuFileClose" xml:space="preserve"><value>_Close</value></data>
   <data name="MenuFileExit" xml:space="preserve"><value>E_xit</value></data>
 
@@ -168,6 +169,26 @@
   <data name="StatusBusyConvertProgress" xml:space="preserve"><value>Converting ({0}%) {1} — {2}</value></data>
   <data name="StatusConvertedAndOpened" xml:space="preserve"><value>Converted {0} → {1} and opened the IWPF file.</value></data>
   <data name="StatusSavedAndConverted" xml:space="preserve"><value>Saved {0} and exported {1}.</value></data>
+
+  <!-- Status bar — fidelity capsule (active content / preserved data) -->
+  <data name="StatusMacroIncluded" xml:space="preserve"><value>⚠ Contains macros</value></data>
+  <data name="StatusMacroIncludedTooltip" xml:space="preserve"><value>This document contains macros/scripts. Do not run them unless they come from a trusted source. (PolyDonky does not execute macros.)</value></data>
+  <data name="StatusDigitalSignature" xml:space="preserve"><value>🔏 Signed</value></data>
+  <data name="StatusDigitalSignatureTooltip" xml:space="preserve"><value>The original digital signature is preserved with this document. Editing may invalidate it; the signature is kept only as a preservation record.</value></data>
+
+  <!-- Document Info dialog (fidelity capsule view) -->
+  <data name="DocInfoDialogTitle" xml:space="preserve"><value>Document Info</value></data>
+  <data name="DocInfoFileLabel" xml:space="preserve"><value>File: {0}</value></data>
+  <data name="DocInfoMacroLine" xml:space="preserve"><value>Contains macros: {0}</value></data>
+  <data name="DocInfoSignatureLine" xml:space="preserve"><value>Digital signature preserved: {0}</value></data>
+  <data name="DocInfoCapsuleCountLine" xml:space="preserve"><value>Preserved fidelity capsule entries: {0}</value></data>
+  <data name="DocInfoYesMacro" xml:space="preserve"><value>Yes ⚠</value></data>
+  <data name="DocInfoYesSignature" xml:space="preserve"><value>Yes 🔏</value></data>
+  <data name="DocInfoNo" xml:space="preserve"><value>No</value></data>
+  <data name="DocInfoPreservedListHeader" xml:space="preserve"><value>Preserved data (round-trip fidelity):</value></data>
+  <data name="DocInfoEntryFormat" xml:space="preserve"><value>  {0} ({1:N0} bytes)</value></data>
+  <data name="DocInfoTruncated" xml:space="preserve"><value>  … (and {0} more)</value></data>
+  <data name="DocInfoSafetyNote" xml:space="preserve"><value>Note: PolyDonky preserves this data as-is without parsing or executing it.</value></data>
   <data name="DlgConvertOnOpenTitle" xml:space="preserve"><value>External format conversion</value></data>
   <data name="DlgConvertOnOpenPrompt" xml:space="preserve"><value>This format cannot be edited directly in the main app.
 

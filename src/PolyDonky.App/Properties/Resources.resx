@@ -41,8 +41,29 @@
   <data name="MenuFilePreview" xml:space="preserve"><value>미리보기(_V)</value></data>
   <data name="MenuFilePrint" xml:space="preserve"><value>인쇄(_P)...</value></data>
   <data name="MenuFilePreviewPrint" xml:space="preserve"><value>미리보기/인쇄(_P)...</value></data>
+  <data name="MenuFileDocumentInfo" xml:space="preserve"><value>문서 정보 / 보존 데이터...</value></data>
   <data name="MenuFileClose" xml:space="preserve"><value>닫기(_C)</value></data>
   <data name="MenuFileExit" xml:space="preserve"><value>종료(_X)</value></data>
+
+  <!-- 상태 표시줄 — fidelity capsule (활성 콘텐츠 / 보존 데이터) -->
+  <data name="StatusMacroIncluded" xml:space="preserve"><value>⚠ 매크로 포함</value></data>
+  <data name="StatusMacroIncludedTooltip" xml:space="preserve"><value>이 문서에 매크로/스크립트가 포함되어 있습니다. 신뢰할 수 있는 출처가 아니면 실행하지 마세요. (PolyDonky 는 매크로를 실행하지 않습니다.)</value></data>
+  <data name="StatusDigitalSignature" xml:space="preserve"><value>🔏 서명됨</value></data>
+  <data name="StatusDigitalSignatureTooltip" xml:space="preserve"><value>이 문서에는 원본 디지털 서명이 보존되어 있습니다. 편집 시 서명의 효력은 깨질 수 있으므로 보존 증적으로만 사용됩니다.</value></data>
+
+  <!-- 문서 정보 다이얼로그 -->
+  <data name="DocInfoDialogTitle" xml:space="preserve"><value>문서 정보</value></data>
+  <data name="DocInfoFileLabel" xml:space="preserve"><value>파일: {0}</value></data>
+  <data name="DocInfoMacroLine" xml:space="preserve"><value>매크로 포함 여부: {0}</value></data>
+  <data name="DocInfoSignatureLine" xml:space="preserve"><value>디지털 서명 보존: {0}</value></data>
+  <data name="DocInfoCapsuleCountLine" xml:space="preserve"><value>보존된 fidelity capsule 항목 수: {0}</value></data>
+  <data name="DocInfoYesMacro" xml:space="preserve"><value>예 ⚠</value></data>
+  <data name="DocInfoYesSignature" xml:space="preserve"><value>예 🔏</value></data>
+  <data name="DocInfoNo" xml:space="preserve"><value>아니오</value></data>
+  <data name="DocInfoPreservedListHeader" xml:space="preserve"><value>보존된 데이터 (round-trip 충실도):</value></data>
+  <data name="DocInfoEntryFormat" xml:space="preserve"><value>  {0} ({1:N0} bytes)</value></data>
+  <data name="DocInfoTruncated" xml:space="preserve"><value>  … (외 {0} 항목)</value></data>
+  <data name="DocInfoSafetyNote" xml:space="preserve"><value>주의: 이 데이터는 PolyDonky 가 파싱·실행하지 않고 원본 그대로 보존만 합니다.</value></data>
 
   <!-- 메뉴: 편집 -->
   <data name="MenuEdit" xml:space="preserve"><value>편집(_E)</value></data>
