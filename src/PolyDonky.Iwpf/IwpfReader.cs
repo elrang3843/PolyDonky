@@ -115,6 +115,10 @@ public sealed class IwpfReader : IDocumentReader
             // resources/images/* — ImageBlock.ResourcePath 가 있는 블록의 Data 를 다시 채운다.
             RehydrateImageResources(document, archive, manifest);
 
+            // fidelity/capsules/* — IwpfWriter 가 쓴 capsule 들을 PolyDonkyument.FidelityCapsules 로 복원.
+            //   매크로 / 디지털 서명 / 미인식 root storage 등 round-trip 보존 데이터.
+            RehydrateFidelityCapsules(document, archive, manifest);
+
             // 옛 빌드의 연속 Y 좌표를 페이지-로컬 좌표로 자동 마이그레이션 (멱등).
             OverlayAnchorMigration.MigrateContinuousAnchors(document);
 
@@ -229,6 +233,23 @@ public sealed class IwpfReader : IDocumentReader
             }
             cache[path] = payload;
             return payload;
+        }
+    }
+
+    // ZIP 안 fidelity/capsules/<key> 파트들을 PolyDonkyument.FidelityCapsules 로 복원.
+    //   manifest 의 등록된 파트 중 prefix 매칭 — 누락된 capsule (write 시 누락) 도 안전하게 skip.
+    private void RehydrateFidelityCapsules(PolyDonkyument document, ZipArchive archive, IwpfManifest manifest)
+    {
+        string prefix = IwpfPaths.FidelityCapsulesDir;  // "fidelity/capsules/"
+        foreach (var kv in manifest.Parts)
+        {
+            string path = kv.Key;
+            if (!path.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var bytes = ReadEntry(archive, path);
+            if (bytes is null) continue;  // manifest 에는 있지만 실제 entry 없음 — 손상으로 보고 skip.
+            if (VerifyHashes) VerifyHash(path, bytes, kv.Value.Sha256);
+            string capsuleKey = path.Substring(prefix.Length);
+            document.FidelityCapsules[capsuleKey] = bytes;
         }
     }
 
