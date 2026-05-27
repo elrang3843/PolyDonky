@@ -11,209 +11,652 @@ namespace PolyDonky.Convert.Doc;
 /// <summary>
 /// IWPF → Word 97-2003 (.doc) OLE2 바이너리 writer.
 ///
-/// Phase F1-W2a (현재 단계): CFB 컨테이너 골격 + FIB + 최소 CLX (piece table) + 본문 텍스트만.
-/// 글자/단락 서식, 표, 이미지, 헤더/푸터, 각주, 변경추적, 책갈피 등은 후속 단계 (F1-W2b ~ F1-W2e)
-/// 에서 추가된다. 출력된 파일은 <see cref="DocBinaryReader"/> 로 round-trip 가능하며,
-/// Word 가 열면 서식 없는 plain text 로 표시된다.
+/// 현재 단계 — Phase F1-W2b (글자 / 단락 서식):
+///   * CFB 컨테이너 + FIB + CLX (단일 piece) + 본문 텍스트
+///   * SttbfFfn (폰트 테이블)
+///   * PAPX FKP 페이지 — 단락별 정렬·들여쓰기·간격·줄높이
+///   * CHPX FKP 페이지 — Run 별 굵게/이탤릭/밑줄/취소선·글자크기·전경색·폰트 인덱스
+///   * PlcfBtePapx / PlcfBteChpx — FKP 페이지 인덱스
+///
+/// 후속 단계:
+///   F1-W2c  헤더/푸터, 섹션, 책갈피, 각주/미주, 주석
+///   F1-W2d  이미지 (PICF / BStore), 도형 (FSPA / OfficeArt)
+///   F1-W2e  FidelityCapsules → OLE2 storage 복원 (VBA / 서명 / 미인식 root storage)
 ///
 /// 참고 사양:
-///   [MS-CFB]  Compound File Binary File Format (OpenMcdf 가 처리)
-///   [MS-DOC]  Word (.doc) Binary File Format §2.5 FIB, §2.9.177 Pcd, §2.5.5 FibRgFcLcb97
+///   [MS-CFB]  Compound File Binary File Format        (OpenMcdf 가 처리)
+///   [MS-DOC]  Word (.doc) Binary File Format §2.5 FIB, §2.6 Sprm, §2.7 FKP,
+///             §2.8 PlcBteFcN, §2.9.85 FFN / §2.9.262 SttbfFfn, §2.9.177 Pcd
 /// </summary>
 public sealed class DocBinaryWriter
 {
-    // ── FIB 레이아웃 상수 (모든 offset 은 WordDocument stream 기준) ──────────────
+    // ── FIB 레이아웃 상수 ───────────────────────────────────────────────────────
 
-    /// <summary>FIB 시그니처 — [MS-DOC] §2.5.2 wIdent.</summary>
-    private const ushort Magic = 0xA5EC;
-
-    /// <summary>Word 97-2003 표준 nFib 값 (Word 2000+ 저장).</summary>
-    private const ushort NFib = 0x00C1;   // 193
-
-    /// <summary>nFibBack — Word 95 fallback 식별자 (호환성).</summary>
-    private const ushort NFibBack = 0x00BF;   // 191
-
+    private const ushort Magic     = 0xA5EC;
+    private const ushort NFib      = 0x00C1;          // Word 97-2003 표준 (193)
+    private const ushort NFibBack  = 0x00BF;
     /// <summary>FibBase flags @ 0x000A — bit 2 fComplex + bit 9 fWhichTblStm(=1Table).</summary>
-    private const ushort FibFlags = 0x0204;
-
-    /// <summary>FibRgW97 길이 (csw): [MS-DOC] §2.5.1 — nFib 0xC1 에서 14 개 short.</summary>
-    private const ushort Csw  = 0x000E;   // 14
-
-    /// <summary>FibRgLw97 길이 (cslw): nFib 0xC1 에서 22 개 long.</summary>
-    private const ushort Cslw = 0x0016;   // 22
-
-    /// <summary>FibRgFcLcbBlob 의 (fc, lcb) pair 개수 (cbRgFcLcb): nFib 0xC1 에서 93.</summary>
-    private const ushort CbRgFcLcb = 0x005D;   // 93
-
-    /// <summary>FibRgCswNew 길이: nFib 0xC1 에서 2 개 short.</summary>
-    private const ushort CswNew = 0x0002;
-
-    /// <summary>FIB 영역을 0x400 byte 로 패딩 — Reader 의 모든 offset 가드(최대 0x0316)를 충족.</summary>
+    private const ushort FibFlags  = 0x0204;
+    private const ushort Csw       = 0x000E;          // FibRgW97 size (14 shorts)
+    private const ushort Cslw      = 0x0016;          // FibRgLw97 size (22 longs)
+    private const ushort CbRgFcLcb = 0x005D;          // FibRgFcLcbBlob pair count (93)
+    private const ushort CswNew    = 0x0002;
+    /// <summary>FIB 영역 패딩 — Reader 가드(최대 0x0316) + cswNew(0x0382) 까지 충분.</summary>
     private const int    FibPadSize = 0x400;
 
-    // FibRgFcLcbBlob 안의 pair index (각 pair = 8 bytes, [fc:4][lcb:4]).
-    // 우리가 쓰는 pair 만 정의 — 나머지는 0 으로 두면 Reader 가 자동 무시.
-    private const int PairFcClx = 33;   // [MS-DOC] §2.5.5 FibRgFcLcb97.fcClx @ pair 33 → FIB 0x01A2
-
-    // FibRgFcLcbBlob 시작 offset
+    // FibRgFcLcbBlob 안의 (fc, lcb) pair 시작 — FIB offset 0x009A. pair index = (offset - 0x9A) / 8.
     private const int RgFcLcbBase = 0x009A;
+    private const int PairFcPlcfBteChpx = 12;   // FIB 0x00FA / 0x00FE
+    private const int PairFcPlcfBtePapx = 13;   // FIB 0x0102 / 0x0106
+    private const int PairFcSttbfFfn    = 15;   // FIB 0x0112 / 0x0116  ← 14 가 아님 (0x10A = pair 14 는 fcPlcfFldMom)
+    private const int PairFcClx         = 33;   // FIB 0x01A2 / 0x01A6
 
-    // ── 공개 진입점 ────────────────────────────────────────────────────────────
+    // FKP 페이지 크기 — [MS-DOC] §2.7 FKP 는 항상 512 byte.
+    private const int FkpPageSize = 512;
+
+    // ── 진입점 ──────────────────────────────────────────────────────────────────
 
     public void Write(PolyDonkyument doc, Stream output)
     {
-        // 1. 본문 텍스트 추출 — Phase F1-W2a 는 plain text 만, 서식 무시.
-        //    Word 의 본문은 항상 단락 마크 '\r' 로 끝나야 하므로, 마지막에 강제 추가.
-        string text = BuildPlainText(doc);
-        byte[] textBytes = Encoding.Unicode.GetBytes(text);
-        uint   ccpText   = (uint)text.Length;   // CP 단위 — UTF-16 code unit 1개 = 1 CP
+        var ctx = new BuildContext();
+        ctx.Collect(doc);
 
-        // 2. WordDocument stream 조립: [FIB 0x400 byte] [Unicode text]
-        var wd = new byte[FibPadSize + textBytes.Length];
-        uint fcMin = FibPadSize;
-        uint fcMac = fcMin + (uint)textBytes.Length;
-        Buffer.BlockCopy(textBytes, 0, wd, (int)fcMin, textBytes.Length);
+        byte[] wd    = BuildWordDocument(ctx);
+        byte[] table = BuildTable(ctx);
 
-        // 3. Table stream (1Table) 조립: [CLX with single Pcdt]
-        //    CLX = 1 byte clxtPcdt(0x02) + 4 byte lcb + plcfpcd(cps + Pcds).
-        //    cps = [0, ccpText],  Pcd[0].fc = fcMin (Unicode).
-        byte[] table = BuildTableStreamWithSinglePiece(fcMin, ccpText);
+        WriteFib(wd, ctx, (uint)table.Length);
 
-        // 4. FIB 채우기
-        WriteFib(wd, fcMin, fcMac, ccpText, fcClx: 0, lcbClx: (uint)table.Length);
-
-        // 5. OLE2 CFB 컨테이너에 두 stream 기록.
-        //    OpenMcdf v3 의 RootStorage.Create 는 stream 을 가져가는데, LeaveOpen flag 로 호출 측의
-        //    output stream 을 보존. 비-Transacted 모드에선 Write 가 즉시 반영되므로 Commit() 불필요.
+        // OpenMcdf v3 — 비-Transacted 모드는 stream Dispose 시점에 flush. LeaveOpen 으로 호출 측 stream 보존.
         using var root = RootStorage.Create(output, OpenMcdf.Version.V3, StorageModeFlags.LeaveOpen);
         WriteStream(root, "WordDocument", wd);
         WriteStream(root, "1Table",       table);
     }
 
-    // ── helpers ─────────────────────────────────────────────────────────────────
+    // ─────────────────────────────── BuildContext ──────────────────────────────
 
-    /// <summary>모든 Section/Paragraph 의 평문을 추출하고 '\r' 로 join. 마지막에 단락 마크 보장.
-    /// 이미지/표/도형 등은 Phase F1-W2b 이후 — 현재는 무시.</summary>
-    private static string BuildPlainText(PolyDonkyument doc)
+    /// <summary>1패스 수집 결과 — 텍스트 byte, 단락/Run FC 범위, sprm 바이트, 폰트 테이블.</summary>
+    private sealed class BuildContext
     {
-        var sb = new StringBuilder();
-        foreach (var sec in doc.Sections)
+        public byte[] TextBytes = Array.Empty<byte>();
+        public uint   CcpText;
+        public uint   FcMin = FibPadSize;
+        public uint   FcMac;
+        public readonly List<ParaInfo> Paragraphs = new();
+        public readonly List<string>   Fonts      = new();   // index 0 = default ("Times New Roman")
+
+        // Layout (BuildTable 가 채움)
+        public uint FcSttbfFfn,    LcbSttbfFfn;
+        public uint FcPlcfBteChpx, LcbPlcfBteChpx;
+        public uint FcPlcfBtePapx, LcbPlcfBtePapx;
+        public uint FcClx,         LcbClx;
+
+        // BuildWordDocument 가 채우는 BTE 목록 — 절대 페이지 번호로 치환된 상태로 BuildTable 에 전달.
+        public List<BteEntry> PapxBtes = new();
+        public List<BteEntry> ChpxBtes = new();
+
+        public void Collect(PolyDonkyument doc)
         {
+            Fonts.Add("Times New Roman");
+
+            var sb = new StringBuilder();
+            foreach (var sec in doc.Sections)
             foreach (var blk in sec.Blocks)
+                if (blk is Paragraph p) CollectParagraph(p, sb);
+
+            // 본문은 반드시 단락 마크 \r 로 끝나야 함 (Word EOF 마크 invariant).
+            if (sb.Length == 0 || sb[^1] != '\r')
             {
-                if (blk is Paragraph p)
+                int fcStart = sb.Length;
+                sb.Append('\r');
+                Paragraphs.Add(new ParaInfo
                 {
-                    foreach (var r in p.Runs)
-                        if (!string.IsNullOrEmpty(r.Text))
-                            sb.Append(SanitizeForWord(r.Text));
-                    sb.Append('\r');   // 단락 마크
-                }
-                // 다른 블록은 향후 단계에서 처리
+                    CpStart  = fcStart,
+                    CpEnd    = fcStart + 1,
+                    PapxBody = BuildPapxBody(new ParagraphStyle()),
+                    Runs     = new List<RunInfo>(),
+                });
+            }
+
+            string text = sb.ToString();
+            TextBytes   = Encoding.Unicode.GetBytes(text);
+            CcpText     = (uint)text.Length;
+            FcMac       = FcMin + (uint)TextBytes.Length;
+        }
+
+        private void CollectParagraph(Paragraph para, StringBuilder sb)
+        {
+            int paraCpStart = sb.Length;
+            var runs = new List<RunInfo>();
+            var style = para.Style ?? new ParagraphStyle();
+
+            foreach (var run in para.Runs)
+            {
+                if (string.IsNullOrEmpty(run.Text)) continue;
+                string sanitized = SanitizeForBody(run.Text);
+                if (sanitized.Length == 0) continue;
+                int runCpStart = sb.Length;
+                sb.Append(sanitized);
+                int runCpEnd = sb.Length;
+                runs.Add(new RunInfo
+                {
+                    CpStart  = runCpStart,
+                    CpEnd    = runCpEnd,
+                    ChpxBody = BuildChpxBody(run.Style ?? new RunStyle(), this),
+                });
+            }
+
+            // 단락 마크 \r 자체도 본문 character — CHPX 가 적용되어야 단락 끝의 폰트도 보존됨.
+            int markCp = sb.Length;
+            sb.Append('\r');
+
+            Paragraphs.Add(new ParaInfo
+            {
+                CpStart  = paraCpStart,
+                CpEnd    = sb.Length,         // includes \r
+                PapxBody = BuildPapxBody(style),
+                Runs     = runs,
+            });
+            // 단락 마크에 대해 별도 CHPX 가 필요한 경우는 향후 (Phase 3h-3 paragraph revision 등) — 현재 생략.
+        }
+
+        public int RegisterFont(string family)
+        {
+            if (string.IsNullOrEmpty(family)) return 0;
+            int i = Fonts.IndexOf(family);
+            if (i >= 0) return i;
+            Fonts.Add(family);
+            return Fonts.Count - 1;
+        }
+    }
+
+    /// <summary>한 단락의 메타 — CP 범위 (텍스트 시작~\r 포함 끝), PAPX grpprl 본문, Run 목록.</summary>
+    private sealed class ParaInfo
+    {
+        public int    CpStart;
+        public int    CpEnd;
+        public byte[] PapxBody = Array.Empty<byte>();    // istd 뒤에 오는 sprm 들만 — istd 자체는 별도
+        public List<RunInfo> Runs = new();
+        public ushort Istd = 0;                          // 0 = Normal style
+    }
+
+    private sealed class RunInfo
+    {
+        public int    CpStart;
+        public int    CpEnd;
+        public byte[] ChpxBody = Array.Empty<byte>();    // CHPX sprm 본문 (cb 헤더 없음)
+    }
+
+    // ─────────────────────────────── sprm 작성 ─────────────────────────────────
+
+    /// <summary>ParagraphStyle → PAPX grpprl sprm 본문 (istd 제외).
+    /// Reader 가 인식하는 sprms: 0x2461 정렬 / 0x845D 좌측 / 0x845E 우측 /
+    /// 0x8460 첫줄 들여쓰기 / 0xA413 앞 간격 / 0xA415 뒤 간격 / 0x6412 줄 간격.</summary>
+    private static byte[] BuildPapxBody(ParagraphStyle ps)
+    {
+        var ms = new MemoryStream(32);
+        var bw = new BinaryWriter(ms);
+
+        // sprmPJc80 (0x2461, spra=1, 1-byte): 정렬
+        byte align = ps.Alignment switch
+        {
+            Alignment.Center  => (byte)1,
+            Alignment.Right   => (byte)2,
+            Alignment.Justify => (byte)3,
+            _                 => (byte)0,
+        };
+        if (align != 0) WriteSprm1(bw, 0x2461, align);
+
+        // 들여쓰기·간격 (mm → twips, signed/unsigned 2-byte)
+        int liT  = MmToTwips(ps.IndentLeftMm);
+        int riT  = MmToTwips(ps.IndentRightMm);
+        int fiT  = MmToTwips(ps.IndentFirstLineMm);
+        int sbT  = (int)(ps.SpaceBeforePt * 20);
+        int saT  = (int)(ps.SpaceAfterPt  * 20);
+
+        if (liT != 0) WriteSprm2Signed(bw, 0x845D, liT);
+        if (riT != 0) WriteSprm2Signed(bw, 0x845E, riT);
+        if (fiT != 0) WriteSprm2Signed(bw, 0x8460, fiT);
+        if (sbT > 0)  WriteSprm2Unsigned(bw, 0xA413, sbT);
+        if (saT > 0)  WriteSprm2Unsigned(bw, 0xA415, saT);
+
+        // sprmPDyaLine (0x6412, spra=4, 4-byte LSPD: dyaLine + fMultLinespace)
+        // LineHeightFactor != 1.2 (default) 일 때만 multi-mode 로 기록.
+        if (ps.LineHeightFactor > 0 && Math.Abs(ps.LineHeightFactor - 1.2) > 0.01)
+        {
+            short  dyaLine = (short)Math.Round(ps.LineHeightFactor * 240.0);
+            WriteSprm4LSPD(bw, 0x6412, dyaLine, fMult: 1);
+        }
+
+        return ms.ToArray();
+    }
+
+    /// <summary>RunStyle → CHPX grpprl sprm 본문.
+    /// Reader 인식: 0x0835 굵게 / 0x0836 이탤릭 / 0x0837 취소선 / 0x2A3E 밑줄 /
+    /// 0x4A43 글자 크기 / 0x6870 RGB 전경색 / 0x2A0C 하이라이트(팔레트) /
+    /// 0x4A4F/0x4A50/0x4A51 폰트 인덱스 (ascii/far-east/other).</summary>
+    private static byte[] BuildChpxBody(RunStyle rs, BuildContext ctx)
+    {
+        var ms = new MemoryStream(32);
+        var bw = new BinaryWriter(ms);
+
+        if (rs.Bold)          WriteSprm1(bw, 0x0835, 1);
+        if (rs.Italic)        WriteSprm1(bw, 0x0836, 1);
+        if (rs.Strikethrough) WriteSprm1(bw, 0x0837, 1);
+        if (rs.Underline)     WriteSprm1(bw, 0x2A3E, 1);
+
+        // sprmCHps (0x4A43, spra=2, 2-byte): half-points
+        if (rs.FontSizePt > 0)
+        {
+            ushort halfPt = (ushort)Math.Round(rs.FontSizePt * 2);
+            if (halfPt > 0 && halfPt < 1000) WriteSprm2Unsigned(bw, 0x4A43, halfPt);
+        }
+
+        // sprmCCv (0x6870, spra=3, 4-byte): RGB+1 (R, G, B, 0). cvAuto 면 0xFF.
+        if (rs.Foreground.HasValue)
+        {
+            var c = rs.Foreground.Value;
+            byte[] op = { c.R, c.G, c.B, 0 };
+            WriteSprmHeader(bw, 0x6870);
+            bw.Write(op);
+        }
+
+        // 폰트 인덱스 — ascii / far-east / other 세 슬롯 모두 동일하게 설정 (Word 의 표준 동작)
+        if (!string.IsNullOrEmpty(rs.FontFamily))
+        {
+            ushort ftc = (ushort)ctx.RegisterFont(rs.FontFamily!);
+            if (ftc > 0)   // 0 = default, 굳이 sprm 으로 명시 안 함
+            {
+                WriteSprm2Unsigned(bw, 0x4A4F, ftc);
+                WriteSprm2Unsigned(bw, 0x4A50, ftc);
+                WriteSprm2Unsigned(bw, 0x4A51, ftc);
             }
         }
-        // 본문은 반드시 '\r' 로 끝나야 함 (Word 호환). 단락이 하나도 없었으면 강제 추가.
-        if (sb.Length == 0 || sb[^1] != '\r')
-            sb.Append('\r');
-        return sb.ToString();
+
+        return ms.ToArray();
     }
 
-    /// <summary>Word 본문에서 의미가 있는 control char (0x07 셀 끝, 0x0B 강제 줄바꿈 등) 만 허용하고
-    /// 그 외 ASCII 제어 문자(예: '\n', '\t' 도 \r 외)는 공백으로 치환. UTF-16 surrogate pair 는 그대로 유지.</summary>
-    private static string SanitizeForWord(string s)
+    // sprm header + 1-byte operand (spra=0 → 1-byte). 0x2461 / 0x0835 / 0x0836 / 0x0837 / 0x2A3E.
+    private static void WriteSprm1(BinaryWriter bw, ushort sprm, byte operand)
     {
-        var sb = new StringBuilder(s.Length);
-        foreach (char c in s)
+        WriteSprmHeader(bw, sprm);
+        bw.Write(operand);
+    }
+
+    // sprm header + 2-byte unsigned (spra=4 / 5). 0xA413 / 0xA415 / 0x4A43 / 0x4A4F-51.
+    private static void WriteSprm2Unsigned(BinaryWriter bw, ushort sprm, int operand)
+    {
+        WriteSprmHeader(bw, sprm);
+        bw.Write((ushort)operand);
+    }
+
+    // sprm header + 2-byte signed (spra=2). 0x845D / 0x845E / 0x8460.
+    private static void WriteSprm2Signed(BinaryWriter bw, ushort sprm, int operand)
+    {
+        WriteSprmHeader(bw, sprm);
+        bw.Write((short)Math.Clamp(operand, short.MinValue, short.MaxValue));
+    }
+
+    // sprm header + LSPD (2-byte dyaLine + 2-byte fMultLinespace).
+    private static void WriteSprm4LSPD(BinaryWriter bw, ushort sprm, short dyaLine, ushort fMult)
+    {
+        WriteSprmHeader(bw, sprm);
+        bw.Write(dyaLine);
+        bw.Write(fMult);
+    }
+
+    private static void WriteSprmHeader(BinaryWriter bw, ushort sprm) => bw.Write(sprm);
+
+    // ───────────────────────── WordDocument 조립 ───────────────────────────────
+
+    /// <summary>WordDocument stream 조립 — FIB(0x400 pad) + 텍스트 + (512-align) + PAPX FKP* + CHPX FKP*.</summary>
+    private static byte[] BuildWordDocument(BuildContext ctx)
+    {
+        // 1. 텍스트까지 layout
+        var ms = new MemoryStream();
+        ms.SetLength(FibPadSize);                 // FIB 영역 zero-pad
+        ms.Position = FibPadSize;
+        ms.Write(ctx.TextBytes, 0, ctx.TextBytes.Length);
+
+        // 2. 512-byte 페이지 경계로 정렬
+        PadTo512(ms);
+
+        // 3. PAPX FKP 페이지들 생성 — Body 는 sprm grpprl 본문만 (istd / cb 헤더는 PackFkpPages 가 감쌈).
+        var papxItems = ctx.Paragraphs.Select(p => new FkpItem
         {
-            // \r 은 단락 마크 — 본문 Run 안에서는 별도 단락으로 분할되어야 하므로 허용 안 함.
-            if (c == '\r' || c == '\n') sb.Append(' ');
-            else if (c == '\t') sb.Append('\t');   // tab 은 그대로
-            else if (c < 0x20)  sb.Append(' ');    // 기타 제어 문자 → 공백
-            else                sb.Append(c);
+            FcStart = CpToFc(p.CpStart, ctx),
+            FcEnd   = CpToFc(p.CpEnd,   ctx),
+            Body    = p.PapxBody,
+        }).ToList();
+
+        var (papxPages, papxBtes) = PackFkpPages(papxItems, isPapx: true);
+        foreach (var page in papxPages)
+        {
+            int pageIndex = (int)(ms.Position / FkpPageSize);
+            // BTE 의 PnFkp 를 절대 페이지 번호로 갱신 — Pack 단계에서 임시 인덱스만 채워 둠.
+            for (int i = 0; i < papxBtes.Count; i++)
+                if (papxBtes[i].PnFkp == -(papxPages.IndexOf(page) + 1))   // sentinel
+                    papxBtes[i] = papxBtes[i] with { PnFkp = pageIndex };
+            ms.Write(page, 0, page.Length);
         }
-        return sb.ToString();
+
+        // 4. CHPX FKP 페이지들 — Run 단위
+        var chpxItems = new List<FkpItem>();
+        foreach (var p in ctx.Paragraphs)
+        {
+            foreach (var r in p.Runs)
+            {
+                chpxItems.Add(new FkpItem
+                {
+                    FcStart = CpToFc(r.CpStart, ctx),
+                    FcEnd   = CpToFc(r.CpEnd,   ctx),
+                    Body    = r.ChpxBody,
+                });
+            }
+            // 단락 마크 (\r) 의 CHPX 도 빈 본문으로 등록 — Reader 의 FC 범위 누락 방지.
+            chpxItems.Add(new FkpItem
+            {
+                FcStart = CpToFc(p.CpEnd - 1, ctx),
+                FcEnd   = CpToFc(p.CpEnd,     ctx),
+                Body    = Array.Empty<byte>(),
+            });
+        }
+
+        var (chpxPages, chpxBtes) = PackFkpPages(chpxItems, isPapx: false);
+        foreach (var page in chpxPages)
+        {
+            int pageIndex = (int)(ms.Position / FkpPageSize);
+            for (int i = 0; i < chpxBtes.Count; i++)
+                if (chpxBtes[i].PnFkp == -(chpxPages.IndexOf(page) + 1))
+                    chpxBtes[i] = chpxBtes[i] with { PnFkp = pageIndex };
+            ms.Write(page, 0, page.Length);
+        }
+
+        // 5. BTE 데이터를 context 에 임시 저장 — BuildTable 에서 직렬화.
+        ctx.PapxBtes = papxBtes;
+        ctx.ChpxBtes = chpxBtes;
+
+        return ms.ToArray();
     }
 
-    /// <summary>1Table 의 CLX (Pcdt) 직렬화.
-    /// 단일 piece, Unicode (fCompressed=0), 전체 본문을 WordDocument 의 fcText 부터 ccpText CP 만큼 매핑.</summary>
-    private static byte[] BuildTableStreamWithSinglePiece(uint fcText, uint ccpText)
+    private static int CpToFc(int cp, BuildContext ctx) => (int)ctx.FcMin + cp * 2;
+
+    private static void PadTo512(MemoryStream ms)
     {
-        // plcfpcd 구조: cps[n+1] (4 byte each) + Pcds[n] (8 byte each).
-        // n=1 → cps = [0, ccpText], pcds = [{flags=0, fc=fcText(unicode), prm=0}].
+        int rem = (int)(ms.Length % FkpPageSize);
+        if (rem == 0) return;
+        int pad = FkpPageSize - rem;
+        ms.SetLength(ms.Length + pad);
+        ms.Position = ms.Length;
+    }
+
+    /// <summary>PAPX record: cb=0 form. grpprl = istd(2 byte) + sprms (even-padded).
+    /// 입력 <paramref name="papxBody"/> 는 sprm grpprl 본문만 (istd 제외).</summary>
+    private static byte[] BuildPapxRecord(byte[] papxBody, ushort istd)
+    {
+        int sprmsLen = papxBody.Length;
+        if ((sprmsLen & 1) == 1) sprmsLen++;
+        int grpprlSize = 2 + sprmsLen;              // istd(2) + padded sprms
+        if ((grpprlSize & 1) == 1) grpprlSize++;
+
+        // cb=0 form: 1 byte cb=0 + 1 byte cb2=grpprlSize/2 + grpprl. record size = 2 + grpprlSize.
+        var rec = new byte[2 + grpprlSize];
+        rec[0] = 0;
+        rec[1] = (byte)(grpprlSize / 2);
+        rec[2] = (byte)(istd & 0xFF);
+        rec[3] = (byte)((istd >> 8) & 0xFF);
+        Buffer.BlockCopy(papxBody, 0, rec, 4, papxBody.Length);
+        // 잉여 trailing bytes 는 0 — Reader 의 WalkSprms 가 sprm 0x0000 (spra=0 1-byte operand) 로
+        //   안전하게 통과시키고 ApplyParagraphSprm switch 가 default false 반환.
+        return rec;
+    }
+
+    /// <summary>CHPX record: cb(1 byte) + sprms[cb]. bOffset 이 /2 로 인코딩되므로 record offset 은 even.
+    /// → sprms 길이를 even 으로 padding (cb 도 even 이어야 record 전체가 even).</summary>
+    private static byte[] BuildChpxRecord(byte[] body)
+    {
+        int len = body.Length;
+        if ((len & 1) == 1) len++;          // even sprms
+        // cb = len. record size = 1 + len. odd → pad 1 byte for even-alignment.
+        int recSize = 1 + len;
+        if ((recSize & 1) == 1) recSize++;
+        var rec = new byte[recSize];
+        rec[0] = (byte)len;
+        Buffer.BlockCopy(body, 0, rec, 1, body.Length);
+        return rec;
+    }
+
+    // ── FKP 페이지 패킹 ────────────────────────────────────────────────────────
+
+    private record struct FkpItem
+    {
+        public int    FcStart;
+        public int    FcEnd;
+        public byte[] Body;
+    }
+
+    /// <summary>한 페이지에 PAPX/CHPX 항목들을 가능한 만큼 패킹. 페이지를 넘으면 새 페이지로.
+    /// 반환되는 BTE 의 <c>PnFkp</c> 는 sentinel(-(pageIndex+1)) — <see cref="BuildWordDocument"/>
+    /// 에서 실제 absolute page number 로 치환.</summary>
+    private static (List<byte[]> Pages, List<BteEntry> Btes) PackFkpPages(List<FkpItem> items, bool isPapx)
+    {
+        var pages = new List<byte[]>();
+        var btes  = new List<BteEntry>();
+        if (items.Count == 0) return (pages, btes);
+
+        int idx = 0;
+        while (idx < items.Count)
+        {
+            // 한 페이지에 들어갈 항목 수 결정 — back-to-front 로 record 누적, front 에서 rgfc+rgbx 누적.
+            int rgbxEntrySize = isPapx ? 13 : 1;
+            int recordsBytes  = 0;
+            int count         = 0;
+            for (int i = idx; i < items.Count; i++)
+            {
+                var rec = isPapx ? BuildPapxRecord(items[i].Body, istd: 0) : BuildChpxRecord(items[i].Body);
+                int neededFront = 4 * (count + 2) + rgbxEntrySize * (count + 1);
+                int neededBack  = recordsBytes + rec.Length;
+                int cparaByte   = 1;
+                if (neededFront + neededBack + cparaByte > FkpPageSize) break;
+                recordsBytes += rec.Length;
+                count++;
+            }
+            if (count == 0)
+                throw new InvalidOperationException(
+                    "단일 PAPX/CHPX record 가 FKP 페이지(512 byte) 보다 큽니다 — 단락/Run 의 sprm 본문이 비정상적으로 큼.");
+
+            // 페이지 채우기
+            var page = new byte[FkpPageSize];
+            int writePos = FkpPageSize - 1;                // crun byte
+            page[writePos] = (byte)count;
+
+            // record 들 — 페이지 끝부터 역방향으로 배치, 각 record 의 offset 을 rgbx 에 기록
+            // bOffset 은 /2 로 인코딩됨 (PAPX 와 CHPX 모두) → record offset 은 even.
+            int recCursor = FkpPageSize - 1;               // crun 위
+            var offsets   = new int[count];
+            for (int i = count - 1; i >= 0; i--)
+            {
+                var rec = isPapx
+                    ? BuildPapxRecord(items[idx + i].Body, istd: 0)
+                    : BuildChpxRecord(items[idx + i].Body);
+                recCursor -= rec.Length;
+                if ((recCursor & 1) == 1) recCursor--;     // even alignment
+                Buffer.BlockCopy(rec, 0, page, recCursor, rec.Length);
+                offsets[i] = recCursor;
+            }
+
+            // rgfc[count+1] @ offset 0 — FC array
+            for (int i = 0; i <= count; i++)
+            {
+                int fc = i == count ? items[idx + count - 1].FcEnd : items[idx + i].FcStart;
+                WriteInt32(page, i * 4, fc);
+            }
+
+            // rgbx[count] — 각 항목별 (PAPX: bOffset(1)+PHE(12)=13 byte, CHPX: bOffset(1)=1 byte)
+            int rgbxBase = 4 * (count + 1);
+            for (int i = 0; i < count; i++)
+            {
+                page[rgbxBase + i * rgbxEntrySize] = (byte)(offsets[i] / 2);
+                // PHE 12 byte 는 0 으로 둠 (paragraph height — Reader 가 안 읽음)
+            }
+
+            int pageSentinel = -(pages.Count + 1);
+            btes.Add(new BteEntry(items[idx].FcStart, items[idx + count - 1].FcEnd, pageSentinel));
+            pages.Add(page);
+            idx += count;
+        }
+
+        return (pages, btes);
+    }
+
+    // ───────────────────────── 1Table 조립 ────────────────────────────────────
+
+    private static byte[] BuildTable(BuildContext ctx)
+    {
+        var ms = new MemoryStream();
+
+        // 1. CLX (단일 piece, Unicode)
+        ctx.FcClx = (uint)ms.Position;
+        byte[] clx = BuildClx(ctx.FcMin, ctx.CcpText);
+        ms.Write(clx, 0, clx.Length);
+        ctx.LcbClx = (uint)clx.Length;
+
+        // 2. SttbfFfn
+        ctx.FcSttbfFfn = (uint)ms.Position;
+        byte[] sttbFfn = BuildSttbfFfn(ctx.Fonts);
+        ms.Write(sttbFfn, 0, sttbFfn.Length);
+        ctx.LcbSttbfFfn = (uint)sttbFfn.Length;
+
+        // 3. PlcfBteChpx — aFC[n+1] + aPnFkp[n]
+        ctx.FcPlcfBteChpx = (uint)ms.Position;
+        byte[] plcChpx = BuildPlcBte(ctx.ChpxBtes);
+        ms.Write(plcChpx, 0, plcChpx.Length);
+        ctx.LcbPlcfBteChpx = (uint)plcChpx.Length;
+
+        // 4. PlcfBtePapx
+        ctx.FcPlcfBtePapx = (uint)ms.Position;
+        byte[] plcPapx = BuildPlcBte(ctx.PapxBtes);
+        ms.Write(plcPapx, 0, plcPapx.Length);
+        ctx.LcbPlcfBtePapx = (uint)plcPapx.Length;
+
+        return ms.ToArray();
+    }
+
+    /// <summary>CLX = clxtPcdt(0x02) + lcb(4) + plcfpcd. 단일 piece, Unicode.</summary>
+    private static byte[] BuildClx(uint fcText, uint ccpText)
+    {
         const int n = 1;
         int cpsSize = (n + 1) * 4;
         int pcdSize = n * 8;
         int plcSize = cpsSize + pcdSize;
 
-        // CLX = clxtPcdt(1) + lcb(4) + plcfpcd
         var ms = new MemoryStream(1 + 4 + plcSize);
         var bw = new BinaryWriter(ms);
+        bw.Write((byte)0x02);
+        bw.Write((uint)plcSize);
+        bw.Write((uint)0);             // cp[0] = 0
+        bw.Write(ccpText);             // cp[1] = ccpText
 
-        bw.Write((byte)0x02);            // clxtPcdt marker
-        bw.Write((uint)plcSize);         // lcb of plcfpcd
-
-        // cps array
-        bw.Write((uint)0);               // cp[0] = 0
-        bw.Write(ccpText);               // cp[1] = ccpText
-
-        // single Pcd (8 bytes)
-        bw.Write((ushort)0);             // A/B/C/D flags = 0 (fNoParaLast=0 means trailing \r is a real para mark)
-        bw.Write(fcText);                // fc — Unicode mode (bit 30 = 0)
-        bw.Write((ushort)0);             // prm = 0 (no run-level property modifier)
-
+        // Pcd: A/B/C/D flags(2) + fc(4) Unicode + prm(2)
+        bw.Write((ushort)0);
+        bw.Write(fcText);              // bit 30 = 0 → Unicode
+        bw.Write((ushort)0);
         return ms.ToArray();
     }
 
-    /// <summary>FIB 의 모든 필수 필드를 wd 의 처음 0x400 byte 영역에 채운다.
-    /// 미사용 영역은 0 으로 남겨두면 Reader 가 0/0 (= 없음) 으로 해석한다.</summary>
-    private static void WriteFib(byte[] wd, uint fcMin, uint fcMac, uint ccpText, uint fcClx, uint lcbClx)
+    /// <summary>SttbfFfn extended format. FFN 내용은 40 byte zero header + UTF-16LE 이름 + null terminator.</summary>
+    private static byte[] BuildSttbfFfn(List<string> fonts)
     {
-        // [MS-DOC] §2.5.2 FibBase
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write((ushort)0xFFFF);                // extended marker
+        bw.Write((ushort)fonts.Count);           // cData
+        bw.Write((ushort)0);                     // cbExtra = 0
+
+        foreach (var name in fonts)
+        {
+            // FFN byte length = 40 (header) + (name + null) * 2
+            byte[] nameUtf16 = Encoding.Unicode.GetBytes(name);
+            int ffnBytes = 40 + nameUtf16.Length + 2;   // +2 = null terminator (UTF-16 0x0000)
+            ushort cchData = (ushort)(ffnBytes / 2);
+
+            bw.Write(cchData);
+            for (int k = 0; k < 40; k++) bw.Write((byte)0);   // FFN header — Reader 가 무시
+            bw.Write(nameUtf16);
+            bw.Write((ushort)0);                              // null terminator
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>PlcBteFcN: aFC[n+1] (4 byte) + aPnFkp[n] (4 byte, lower 22 bits = page number).</summary>
+    private static byte[] BuildPlcBte(List<BteEntry> btes)
+    {
+        if (btes.Count == 0) return Array.Empty<byte>();
+        int n = btes.Count;
+        var ms = new MemoryStream(4 * (n + 1) + 4 * n);
+        var bw = new BinaryWriter(ms);
+        for (int i = 0; i < n; i++) bw.Write(btes[i].FcStart);
+        bw.Write(btes[n - 1].FcEnd);                  // closing FC
+        for (int i = 0; i < n; i++) bw.Write((uint)(btes[i].PnFkp & 0x003FFFFF));
+        return ms.ToArray();
+    }
+
+    // ──────────────────────────── FIB 작성 ─────────────────────────────────────
+
+    private static void WriteFib(byte[] wd, BuildContext ctx, uint tableLength)
+    {
         WriteUInt16(wd, 0x0000, Magic);
         WriteUInt16(wd, 0x0002, NFib);
-        // 0x0004 unused
-        // 0x0006 lid (language id) — 0 OK
-        // 0x0008 pnNext = 0
         WriteUInt16(wd, 0x000A, FibFlags);
         WriteUInt16(wd, 0x000C, NFibBack);
-        // 0x000E lKey = 0 (no obfuscation key)
-        // 0x0012 envr, 0x0013 more flags, 0x0014..0x0017 reserved — 0 OK
-        WriteUInt32(wd, 0x0018, fcMin);
-        WriteUInt32(wd, 0x001C, fcMac);
+        WriteUInt32(wd, 0x0018, ctx.FcMin);
+        WriteUInt32(wd, 0x001C, ctx.FcMac);
 
-        // FibRgW97
         WriteUInt16(wd, 0x0020, Csw);
-        // 14 short 값 (0x0022 ~ 0x003D) — 모두 0 으로 두면 default.
-
-        // FibRgLw97
         WriteUInt16(wd, 0x003E, Cslw);
-        // FibRgLw97 anchor = 0x0040, 22 × 4 byte 필드. 주요 인덱스:
-        //   0x004C ccpText, 0x0050 ccpFtn, 0x0054 ccpHdd, 0x005C ccpAtn, 0x0060 ccpEdn
-        WriteUInt32(wd, 0x004C, ccpText);
-        // 나머지 ccp* 는 0 (각주/미주/주석/헤더 없음)
+        WriteUInt32(wd, 0x004C, ctx.CcpText);
 
-        // FibRgFcLcbBlob
         WriteUInt16(wd, 0x0098, CbRgFcLcb);
-        WritePair(wd, PairFcClx, fcClx, lcbClx);   // fcClx @ 0x01A2, lcbClx @ 0x01A6
+        WritePair(wd, PairFcPlcfBteChpx, ctx.FcPlcfBteChpx, ctx.LcbPlcfBteChpx);
+        WritePair(wd, PairFcPlcfBtePapx, ctx.FcPlcfBtePapx, ctx.LcbPlcfBtePapx);
+        WritePair(wd, PairFcSttbfFfn,    ctx.FcSttbfFfn,    ctx.LcbSttbfFfn);
+        WritePair(wd, PairFcClx,         ctx.FcClx,         ctx.LcbClx);
+        // STSH pair 는 0/0 — Reader 가 빈 styles 배열로 처리.
 
-        // cswNew + FibRgCswNew (nFib 0xC1 에서 2 short)
-        int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;   // = 0x0382
+        int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;
         WriteUInt16(wd, cswNewOffset,     CswNew);
-        WriteUInt16(wd, cswNewOffset + 2, NFib);          // FibRgCswNew[0] = nFibNew
-        // FibRgCswNew[1] = 0 (cQuickSavesNew)
+        WriteUInt16(wd, cswNewOffset + 2, NFib);
+
+        _ = tableLength;   // 현재 FIB 에 직접 기록하는 필드는 없음 — 모든 lcb 는 위에서 처리.
     }
+
+    // ── 헬퍼 ────────────────────────────────────────────────────────────────────
+
+    private static string SanitizeForBody(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            if (c == '\r' || c == '\n') sb.Append(' ');
+            else if (c == '\t')         sb.Append('\t');
+            else if (c < 0x20)          sb.Append(' ');
+            else                        sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    private static int MmToTwips(double mm) => (int)Math.Round(mm * 56.692);
 
     private static void WritePair(byte[] wd, int pairIndex, uint fc, uint lcb)
     {
-        int fcOff  = RgFcLcbBase + pairIndex * 8;
-        int lcbOff = fcOff + 4;
-        WriteUInt32(wd, fcOff,  fc);
-        WriteUInt32(wd, lcbOff, lcb);
+        int fcOff = RgFcLcbBase + pairIndex * 8;
+        WriteUInt32(wd, fcOff,     fc);
+        WriteUInt32(wd, fcOff + 4, lcb);
     }
 
     private static void WriteUInt16(byte[] buf, int offset, ushort value)
     {
-        buf[offset    ] = (byte)(value & 0xFF);
-        buf[offset + 1] = (byte)(value >> 8);
+        buf[offset    ] = (byte) (value       & 0xFF);
+        buf[offset + 1] = (byte)((value >> 8) & 0xFF);
     }
 
     private static void WriteUInt32(byte[] buf, int offset, uint value)
@@ -224,10 +667,14 @@ public sealed class DocBinaryWriter
         buf[offset + 3] = (byte)((value >> 24) & 0xFF);
     }
 
+    private static void WriteInt32(byte[] buf, int offset, int value) => WriteUInt32(buf, offset, unchecked((uint)value));
+
     private static void WriteStream(RootStorage root, string name, byte[] data)
     {
-        // CfbStream 은 사용 후 dispose 해야 데이터가 directory entry 에 flush 된다 (OpenMcdf v3).
         using var s = root.CreateStream(name);
         s.Write(data, 0, data.Length);
     }
 }
+
+/// <summary>PlcfBteChpx / PlcfBtePapx 의 한 엔트리 — FC 범위와 FKP 페이지 번호.</summary>
+internal record struct BteEntry(int FcStart, int FcEnd, int PnFkp);

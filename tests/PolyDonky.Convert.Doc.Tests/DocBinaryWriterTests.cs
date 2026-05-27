@@ -235,4 +235,179 @@ public class DocBinaryWriterTests
 
         Assert.Contains("stable", NonEmptyParagraphTexts(doc3));
     }
+
+    // ── Phase F1-W2b: 글자 서식 round-trip ──────────────────────────────────
+
+    private static Paragraph FirstParaWithText(PolyDonkyument doc, string snippet) =>
+        doc.Sections.SelectMany(s => s.Blocks).OfType<Paragraph>()
+                    .First(p => p.GetPlainText().Contains(snippet));
+
+    [Fact]
+    public void Bold_Run_RoundTrips()
+    {
+        var p = new Paragraph();
+        p.AddText("hello ");
+        p.AddText("BOLD", new RunStyle { Bold = true });
+        p.AddText(" world");
+
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "BOLD");
+        var bold = rp.Runs.FirstOrDefault(r => r.Style.Bold);
+        Assert.NotNull(bold);
+        Assert.Equal("BOLD", bold!.Text);
+    }
+
+    [Fact]
+    public void Italic_Underline_Strike_RoundTrip()
+    {
+        var p = new Paragraph();
+        p.AddText("I", new RunStyle { Italic = true });
+        p.AddText("U", new RunStyle { Underline = true });
+        p.AddText("S", new RunStyle { Strikethrough = true });
+
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "IUS");
+        var rs   = rp.Runs.Where(r => !string.IsNullOrEmpty(r.Text)).ToList();
+        Assert.Contains(rs, r => r.Text == "I" && r.Style.Italic);
+        Assert.Contains(rs, r => r.Text == "U" && r.Style.Underline);
+        Assert.Contains(rs, r => r.Text == "S" && r.Style.Strikethrough);
+    }
+
+    [Fact]
+    public void Font_Size_RoundTrips()
+    {
+        var p = new Paragraph();
+        p.AddText("big", new RunStyle { FontSizePt = 18 });
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "big");
+        Assert.Equal(18.0, rp.Runs.First(r => r.Text == "big").Style.FontSizePt, 1);
+    }
+
+    [Fact]
+    public void Foreground_Color_RoundTrips_RGB()
+    {
+        var red = new Color(255, 0, 0);
+        var p = new Paragraph();
+        p.AddText("red", new RunStyle { Foreground = red });
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "red");
+        var fg   = rp.Runs.First(r => r.Text == "red").Style.Foreground;
+        Assert.Equal(red, fg);
+    }
+
+    [Fact]
+    public void Font_Family_RoundTrips_Via_SttbfFfn()
+    {
+        var p = new Paragraph();
+        p.AddText("Arial text", new RunStyle { FontFamily = "Arial" });
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "Arial text");
+        Assert.Equal("Arial", rp.Runs.First(r => r.Text == "Arial text").Style.FontFamily);
+    }
+
+    // ── Phase F1-W2b: 단락 서식 round-trip ──────────────────────────────────
+
+    [Theory]
+    [InlineData(Alignment.Left)]
+    [InlineData(Alignment.Center)]
+    [InlineData(Alignment.Right)]
+    [InlineData(Alignment.Justify)]
+    public void Paragraph_Alignment_RoundTrips(Alignment align)
+    {
+        var p = new Paragraph { Style = { Alignment = align } };
+        p.AddText("alignment test");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "alignment test");
+        Assert.Equal(align, rp.Style.Alignment);
+    }
+
+    [Fact]
+    public void Paragraph_Indents_RoundTrip()
+    {
+        var p = new Paragraph
+        {
+            Style = { IndentLeftMm = 15, IndentRightMm = 5, IndentFirstLineMm = 10 },
+        };
+        p.AddText("indented");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "indented");
+        Assert.Equal(15, rp.Style.IndentLeftMm,      0);
+        Assert.Equal(5,  rp.Style.IndentRightMm,     0);
+        Assert.Equal(10, rp.Style.IndentFirstLineMm, 0);
+    }
+
+    [Fact]
+    public void Paragraph_Spacing_RoundTrips()
+    {
+        var p = new Paragraph { Style = { SpaceBeforePt = 12, SpaceAfterPt = 6 } };
+        p.AddText("spaced");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "spaced");
+        Assert.Equal(12, rp.Style.SpaceBeforePt, 0);
+        Assert.Equal(6,  rp.Style.SpaceAfterPt,  0);
+    }
+
+    [Fact]
+    public void Line_Height_Factor_RoundTrips()
+    {
+        var p = new Paragraph { Style = { LineHeightFactor = 1.5 } };
+        p.AddText("loose");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "loose");
+        Assert.InRange(rp.Style.LineHeightFactor, 1.45, 1.55);
+    }
+
+    [Fact]
+    public void Many_Paragraphs_Spill_To_Multiple_Fkp_Pages()
+    {
+        // 한 FKP 페이지(512 byte) 안에 들어가는 PAPX 항목 수보다 많은 단락을 만들어
+        // multi-page packing 동작을 검증. 약 30 개 paragraph 면 PAPX 2 페이지 필요.
+        var paras = Enumerable.Range(1, 60).Select(i =>
+        {
+            var p = new Paragraph();
+            p.AddText($"p{i:00}", new RunStyle { Bold = i % 3 == 0 });
+            return p;
+        }).ToArray();
+
+        var doc2 = RoundTrip(DocWith(paras));
+
+        var texts = NonEmptyParagraphTexts(doc2).ToArray();
+        Assert.Equal(60, texts.Length);
+        Assert.Equal("p01", texts[0]);
+        Assert.Equal("p60", texts[59]);
+
+        // bold 단락 (3 의 배수 인덱스) 도 보존되어야 함
+        var boldTexts = doc2.Sections.SelectMany(s => s.Blocks).OfType<Paragraph>()
+            .Where(p => p.Runs.Any(r => r.Style.Bold))
+            .Select(p => p.GetPlainText())
+            .ToArray();
+        Assert.Contains("p03", boldTexts);
+        Assert.Contains("p60", boldTexts);
+    }
+
+    [Fact]
+    public void Mixed_Style_Runs_In_Single_Paragraph_RoundTrip()
+    {
+        var p = new Paragraph { Style = { Alignment = Alignment.Center } };
+        p.AddText("Normal ");
+        p.AddText("Bold-Red", new RunStyle { Bold = true, Foreground = new Color(255, 0, 0) });
+        p.AddText(" Italic-14pt", new RunStyle { Italic = true, FontSizePt = 14 });
+        p.AddText(" Arial", new RunStyle { FontFamily = "Arial" });
+
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "Bold-Red");
+
+        Assert.Equal(Alignment.Center, rp.Style.Alignment);
+
+        var brun = rp.Runs.First(r => r.Text.Contains("Bold-Red"));
+        Assert.True(brun.Style.Bold);
+        Assert.Equal(new Color(255, 0, 0), brun.Style.Foreground);
+
+        var irun = rp.Runs.First(r => r.Text.Contains("Italic-14pt"));
+        Assert.True(irun.Style.Italic);
+        Assert.Equal(14.0, irun.Style.FontSizePt, 1);
+
+        var arun = rp.Runs.First(r => r.Text.Contains("Arial"));
+        Assert.Equal("Arial", arun.Style.FontFamily);
+    }
 }
