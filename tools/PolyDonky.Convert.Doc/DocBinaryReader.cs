@@ -127,12 +127,13 @@ public class DocBinaryReader
             FspaEntries  = ParseFspaEntries(table, fib);
             // Phase 3f-5 — DggContainer 의 SpContainer 들에서 spid → pib (BStore index) 맵 추출.
             ShapeImageIndex = ParseShapeImageIndex(table, fib);
+            // Phase 3i — Bookmarks 데이터 추출 (BuildDocument 보다 먼저 — char-walk 이 CP-event 를 본다).
+            Bookmarks = ParseBookmarks(table, fib);
+            fmt.SetBookmarks(Bookmarks);
             var doc = BuildDocument(text, fcs, fmt);
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
             ApplyFloatingShapeImages(doc);
-            // Phase 3i — Bookmarks (SttbfBkmk + PlcfBkf + PlcfBkl).
-            Bookmarks = ParseBookmarks(table, fib);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc);
@@ -533,6 +534,21 @@ public class DocBinaryReader
             int  fc = i < fcs.Length ? fcs[i] : lastFc;
             lastFc = fc;
 
+            // Phase 3i-2 — bookmark events at this CP. End 먼저(닫고) 그 다음 Start(열기) — 표현상 자연스럽다.
+            //   각 marker 는 char-walk 시점에 EnqueueBookmarkEvent 로 등록, BuildParaFromChars 에서 dequeue.
+            var bkEnds = fmt.GetBookmarkEndsAtCp(i);
+            if (bkEnds is not null) foreach (var name in bkEnds)
+            {
+                fmt.EnqueueBookmarkEvent(fc, isStart: false, name);
+                paraChars.Add('￼'); paraFcs.Add(fc);
+            }
+            var bkStarts = fmt.GetBookmarkStartsAtCp(i);
+            if (bkStarts is not null) foreach (var name in bkStarts)
+            {
+                fmt.EnqueueBookmarkEvent(fc, isStart: true, name);
+                paraChars.Add('￼'); paraFcs.Add(fc);
+            }
+
             switch (c)
             {
                 case '\r':
@@ -861,6 +877,7 @@ public class DocBinaryReader
 
             // Phase 3g-2 — OBJECT REPLACEMENT CHARACTER (U+FFFC) 는 footnote/endnote ref marker.
             //   별도 Run 으로 (Text="", FootnoteId/EndnoteId 설정) emit 후 다음 chars 계속.
+            // Phase 3i-2 — 같은 marker 가 bookmark 시작/끝 도 표현. footnote/endnote 가 우선 매칭, 그 다음 bookmark.
             if (c == '￼')
             {
                 var (fnId, enId) = fmt.GetRefAtFc(fc);
@@ -874,6 +891,16 @@ public class DocBinaryReader
                         FootnoteId = fnId,
                         EndnoteId  = enId,
                     });
+                    continue;
+                }
+                var bk = fmt.DequeueBookmarkEvent(fc);
+                if (bk is not null)
+                {
+                    Flush();
+                    var run = new Run { Text = "", Style = curStyle ?? new RunStyle() };
+                    if (bk.Value.IsStart) run.BookmarkStart = bk.Value.Name;
+                    else                  run.BookmarkEnd   = bk.Value.Name;
+                    para.Runs.Add(run);
                     continue;
                 }
             }
@@ -1991,6 +2018,47 @@ public class DocBinaryReader
         private string[] _rmarkAuthors = Array.Empty<string>();
         public string? GetRMarkAuthor(int index)
             => index >= 0 && index < _rmarkAuthors.Length ? _rmarkAuthors[index] : null;
+
+        // Phase 3i-2 — Bookmark events. CP 단위로 시작/끝 이벤트를 저장; char-walk 이 매 CP 마다 확인.
+        //   같은 CP 에 여러 책갈피 시작/끝 이 가능하므로 list 형식.
+        //   marker fc → events queue: BuildParaFromChars 가 '￼' marker 만나면 하나씩 dequeue.
+        private readonly Dictionary<int, List<string>> _bookmarkStartsByCp = new();
+        private readonly Dictionary<int, List<string>> _bookmarkEndsByCp   = new();
+        private readonly Dictionary<int, List<(bool IsStart, string Name)>> _bookmarkEventsByFc = new();
+
+        public void SetBookmarks(IReadOnlyList<BookmarkEntry> bks)
+        {
+            _bookmarkStartsByCp.Clear();
+            _bookmarkEndsByCp.Clear();
+            foreach (var bk in bks)
+            {
+                if (!_bookmarkStartsByCp.TryGetValue(bk.StartCp, out var s)) _bookmarkStartsByCp[bk.StartCp] = s = new();
+                s.Add(bk.Name);
+                if (!_bookmarkEndsByCp.TryGetValue(bk.EndCp, out var e)) _bookmarkEndsByCp[bk.EndCp] = e = new();
+                e.Add(bk.Name);
+            }
+        }
+
+        public IReadOnlyList<string>? GetBookmarkStartsAtCp(int cp)
+            => _bookmarkStartsByCp.TryGetValue(cp, out var lst) ? lst : null;
+        public IReadOnlyList<string>? GetBookmarkEndsAtCp(int cp)
+            => _bookmarkEndsByCp.TryGetValue(cp, out var lst) ? lst : null;
+
+        public void EnqueueBookmarkEvent(int fc, bool isStart, string name)
+        {
+            if (!_bookmarkEventsByFc.TryGetValue(fc, out var lst)) _bookmarkEventsByFc[fc] = lst = new();
+            lst.Add((isStart, name));
+        }
+        public (bool IsStart, string Name)? DequeueBookmarkEvent(int fc)
+        {
+            if (_bookmarkEventsByFc.TryGetValue(fc, out var lst) && lst.Count > 0)
+            {
+                var ev = lst[0];
+                lst.RemoveAt(0);
+                return ev;
+            }
+            return null;
+        }
 
         public int FindFootnoteRefIndex(int cp) => Array.IndexOf(_footnoteRefCps, cp);
         public int FindEndnoteRefIndex(int cp)  => Array.IndexOf(_endnoteRefCps,  cp);

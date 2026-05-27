@@ -57,6 +57,13 @@ public sealed class Run
     /// null 이면 기록 없음. DOCX <c>w:ins/w:del</c> 의 <c>w:date</c> 속성.</summary>
     public System.DateTimeOffset? RevisionDate { get; set; }
 
+    /// <summary>책갈피 시작 marker. 이 Run 은 빈 텍스트의 marker Run 이며 책갈피 이름을 보존한다.
+    /// 텍스트가 아닌 위치 의미만 갖는다. DOCX <c>w:bookmarkStart</c> 와 매핑.</summary>
+    public string? BookmarkStart { get; set; }
+
+    /// <summary>책갈피 끝 marker. 책갈피 이름을 보존하는 빈 marker Run. DOCX <c>w:bookmarkEnd</c> 와 매핑.</summary>
+    public string? BookmarkEnd { get; set; }
+
     /// <summary>루비 주석 텍스트 (한자 위 후리가나 등). null 이면 루비 없음.
     /// HTML <c>&lt;ruby&gt;&lt;rb&gt;base&lt;/rb&gt;&lt;rt&gt;annotation&lt;/rt&gt;&lt;/ruby&gt;</c>
     /// 에서 rt 콘텐츠를 여기에 저장, 베이스 텍스트는 Text 에 저장.</summary>
@@ -80,6 +87,8 @@ public sealed class Run
         IsDeletedRevision  = IsDeletedRevision,
         RevisionAuthor     = RevisionAuthor,
         RevisionDate       = RevisionDate,
+        BookmarkStart      = BookmarkStart,
+        BookmarkEnd        = BookmarkEnd,
         RubyText          = RubyText,
     };
 }
