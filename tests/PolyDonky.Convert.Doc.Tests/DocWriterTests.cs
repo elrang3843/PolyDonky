@@ -112,7 +112,7 @@ public class DocWriterTests
         p.Runs.Add(new Run { Text = "click here", Url = "https://example.com/page?x=1" });
         var rtf = WriteRtf(DocWith(p));
 
-        Assert.Contains(@"{\field{\*\fldinst HYPERLINK ""https://example.com/page?x=1""}", rtf);
+        Assert.Contains(@"{\field{\*\fldinst {HYPERLINK ""https://example.com/page?x=1"" }}", rtf);
         Assert.Contains(@"{\fldrslt", rtf);
         Assert.Contains("click here", rtf);
     }
@@ -157,7 +157,7 @@ public class DocWriterTests
         p.Runs.Add(new Run { Text = "1", Field = type });
         var rtf = WriteRtf(DocWith(p));
 
-        Assert.Contains($@"\fldinst {keyword}", rtf);
+        Assert.Contains($@"\fldinst {{{keyword}", rtf);
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public class DocWriterTests
         p.Runs.Add(new Run { Text = "3", Field = FieldType.Seq, FieldArg = "Figure" });
         var rtf = WriteRtf(DocWith(p));
 
-        Assert.Contains(@"\fldinst SEQ Figure", rtf);
+        Assert.Contains(@"\fldinst {SEQ Figure", rtf);
     }
 
     [Fact]
@@ -177,7 +177,7 @@ public class DocWriterTests
         p.Runs.Add(new Run { Text = "Chapter Title", Field = FieldType.StyleRef, FieldArg = "Heading 1" });
         var rtf = WriteRtf(DocWith(p));
 
-        Assert.Contains(@"\fldinst STYLEREF ""Heading 1""", rtf);
+        Assert.Contains(@"\fldinst {STYLEREF ""Heading 1""", rtf);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public class DocWriterTests
         p.Runs.Add(new Run { Text = string.Empty, Field = FieldType.Page });
         var rtf = WriteRtf(DocWith(p));
 
-        Assert.Contains(@"\fldinst PAGE", rtf);
+        Assert.Contains(@"\fldinst {PAGE", rtf);
     }
 
     // ── 책갈피 ────────────────────────────────────────────────────────────────
@@ -738,7 +738,7 @@ public class DocWriterTests
         doc.Sections.Add(sec);
         var rtf = WriteRtf(doc);
 
-        Assert.Contains($@"\fldinst {keyword}", rtf);
+        Assert.Contains($@"\fldinst {{{keyword}", rtf);
         Assert.DoesNotContain(token, rtf);   // 리터럴 토큰이 남으면 안 됨
     }
 
@@ -754,7 +754,74 @@ public class DocWriterTests
 
         Assert.Contains("Page",            rtf);   // 리터럴 보존
         Assert.Contains(" of ",            rtf);
-        Assert.Contains(@"\fldinst PAGE",     rtf);
-        Assert.Contains(@"\fldinst NUMPAGES", rtf);
+        Assert.Contains(@"\fldinst {PAGE",     rtf);
+        Assert.Contains(@"\fldinst {NUMPAGES", rtf);
+    }
+
+    // ── 회귀 방지: 직선 방향 / 표 테두리 / 빈 필드 결과 ─────────────────────────
+
+    [Fact]
+    public void Field_Empty_Result_Group_Is_Never_Empty()
+    {
+        // 빈 \fldrslt 그룹은 Word 가 작은 사각형(누락 결과 마커)으로 렌더하므로
+        // placeholder 가 채워져야 한다.
+        var p = new Paragraph();
+        p.Runs.Add(new Run { Text = string.Empty, Field = FieldType.Page });
+        var rtf = WriteRtf(DocWith(p));
+
+        Assert.DoesNotContain(@"\fldrslt {}", rtf);
+        Assert.Contains(@"\fldrslt {1}", rtf);
+    }
+
+    [Fact]
+    public void Line_Going_Up_Right_Emits_FlipV()
+    {
+        // 좌하 → 우상(올라가는) 직선은 fFlipV 로 보정되어야 한다.
+        var shape = new ShapeObject
+        {
+            Kind = ShapeKind.Line,
+            OverlayXMm = 10, OverlayYMm = 10, WidthMm = 40, HeightMm = 20,
+        };
+        shape.Points.Add(new ShapePoint { X = 0,  Y = 20 });  // 좌하
+        shape.Points.Add(new ShapePoint { X = 40, Y = 0  });  // 우상
+        var rtf = WriteRtf(DocWith(shape));
+
+        Assert.Contains(@"{\sp{\sn fFlipV}{\sv 1}}", rtf);
+    }
+
+    [Fact]
+    public void Line_Going_Down_Right_Does_Not_Flip()
+    {
+        var shape = new ShapeObject
+        {
+            Kind = ShapeKind.Line,
+            OverlayXMm = 10, OverlayYMm = 10, WidthMm = 40, HeightMm = 20,
+        };
+        shape.Points.Add(new ShapePoint { X = 0,  Y = 0  });  // 좌상
+        shape.Points.Add(new ShapePoint { X = 40, Y = 20 });  // 우하
+        var rtf = WriteRtf(DocWith(shape));
+
+        Assert.DoesNotContain(@"\sn fFlipV", rtf);
+    }
+
+    [Fact]
+    public void Table_Cell_Border_Emits_Visible_Width_And_Color()
+    {
+        var cell = new TableCell
+        {
+            BorderTop = new CellBorderSide(1.0, "#FF0000"),
+        };
+        cell.Blocks.Add(Paragraph.Of("x"));
+        var row = new TableRow();
+        row.Cells.Add(cell);
+        var table = new Table();
+        table.Rows.Add(row);
+        var rtf = WriteRtf(DocWith(table));
+
+        // 폭은 0.5pt(10twips) 이상이라야 Word 에서 보인다.
+        Assert.Contains(@"\clbrdrt\brdrs\brdrw20", rtf);
+        // 빨강이 colortbl 에 등록되고 \brdrcf 로 참조되어야 한다.
+        Assert.Contains(@"\red255\green0\blue0;", rtf);
+        Assert.Matches(@"\\clbrdrt\\brdrs\\brdrw20\\brdrcf\d+", rtf);
     }
 }

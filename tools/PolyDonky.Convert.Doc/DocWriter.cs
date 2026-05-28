@@ -105,9 +105,17 @@ public class DocWriter
                 }
                 break;
             case Table t:
+                ScanBorderColor(t.BorderTop);    ScanBorderColor(t.BorderBottom);
+                ScanBorderColor(t.BorderLeft);   ScanBorderColor(t.BorderRight);
                 foreach (var row in t.Rows)
                     foreach (var cell in row.Cells)
+                    {
+                        if (!string.IsNullOrEmpty(cell.BackgroundColor))
+                            try { RegisterColor(Color.FromHex(cell.BackgroundColor!)); } catch { }
+                        ScanBorderColor(cell.BorderTop);    ScanBorderColor(cell.BorderBottom);
+                        ScanBorderColor(cell.BorderLeft);   ScanBorderColor(cell.BorderRight);
                         foreach (var b in cell.Blocks) ScanBlock(b);
+                    }
                 break;
             case ShapeObject s:
                 if (!string.IsNullOrEmpty(s.FillColor))
@@ -126,6 +134,12 @@ public class DocWriter
                 foreach (var b in c.Children) ScanBlock(b);
                 break;
         }
+    }
+
+    private void ScanBorderColor(CellBorderSide? side)
+    {
+        if (side is { Color: { Length: > 0 } hex })
+            try { RegisterColor(Color.FromHex(hex)); } catch { }
     }
 
     private int RegisterRevAuthor(string name)
@@ -648,16 +662,18 @@ public class DocWriter
             ? $"HYPERLINK \"{EscapeFieldArg(run.Url!)}\""
             : BuildFieldInstruction(fieldType!.Value, run.FieldArg);
 
-        sb.Append(@"{\field{\*\fldinst ");
+        // 표준 RTF 필드 구조: {\field{\*\fldinst {INSTR }}{\fldrslt {RESULT}}}
+        //   - fldinst 내용을 그룹으로 감싸고 끝에 공백을 둔다(Word 파서 호환).
+        //   - fldrslt 는 절대 비우지 않는다. 빈 결과 그룹은 Word 가 작은 사각형(누락 결과
+        //     마커)으로 렌더해 "페이지 번호 1 뒤 사각형" 같은 잔상이 생긴다.
+        sb.Append(@"{\field{\*\fldinst {");
         sb.Append(fldinst);
-        sb.Append(@"}{\fldrslt ");
+        sb.Append(@" }}{\fldrslt {");
         if (!string.IsNullOrEmpty(run.Text))
-        {
-            sb.Append('{');
             WriteStyledRunBody(run, ps, sb);
-            sb.Append('}');
-        }
-        sb.Append("}}");
+        else
+            sb.Append(DefaultFieldResult(fieldType, isHyperlink));
+        sb.Append("}}}");
         sb.Append(' ');
     }
 
@@ -707,6 +723,18 @@ public class DocWriter
         if (hasBg)            sb.Append(@"\highlight0");
 
         sb.Append(' ');
+    }
+
+    /// <summary>빈 필드 결과 자리(\fldrslt) 채움값 — Word 가 열 때 재계산하므로 placeholder 면 충분.
+    /// 비워두면 작은 사각형(누락 결과 마커)으로 렌더되는 것을 방지한다.</summary>
+    private static string DefaultFieldResult(FieldType? type, bool isHyperlink)
+    {
+        if (isHyperlink) return " ";
+        return type switch
+        {
+            FieldType.Page or FieldType.NumPages or FieldType.NumChars => "1",
+            _ => " ",
+        };
     }
 
     /// <summary>FieldType → RTF \fldinst 명령문 헤더. Reader 의 ParseFieldInstr 와 역매핑.</summary>
@@ -875,7 +903,7 @@ public class DocWriter
         sb.Append($@"\cellx{rightEdgeTwips}");
     }
 
-    private static void WriteCellBorder(string rtfKey, CellBorderSide? side, StringBuilder sb)
+    private void WriteCellBorder(string rtfKey, CellBorderSide? side, StringBuilder sb)
     {
         if (side is null) return;
         sb.Append(rtfKey);
@@ -886,12 +914,15 @@ public class DocWriter
             BorderLineStyle.Double  => @"\brdrdb",
             _                       => @"\brdrs",
         });
-        int w = (int)(side.Value.ThicknessPt * PtToTwips / 10); // brdrw는 twips/10
-        if (w > 0) sb.Append($@"\brdrw{w}");
-        if (!string.IsNullOrEmpty(side.Value.Color))
+        // \brdrwN — N 은 twips 단위. 0.5pt(=10twips) 미만이면 Word 에서 보이지 않으므로
+        //   최소 10twips 로 보정한다. (이전 코드는 /10 으로 1~2twips 라 사실상 안 그려졌음)
+        double pt = side.Value.ThicknessPt > 0 ? side.Value.ThicknessPt : 0.5;
+        int w = Math.Max(10, (int)Math.Round(pt * PtToTwips));
+        sb.Append($@"\brdrw{w}");
+        // 테두리 색 — pass 1 에서 ScanBorderColor 로 등록된 인덱스를 참조.
+        if (side.Value.Color is { Length: > 0 } hex)
         {
-            try
-            { /* color index 등록 불가 (이미 scan 완료 전) — 색은 생략 */ }
+            try { sb.Append($@"\brdrcf{RegisterColor(Color.FromHex(hex))}"); }
             catch { }
         }
     }
@@ -990,6 +1021,20 @@ public class DocWriter
 
         // 도형 종류
         sb.Append($@"{{\sp{{\sn shapeType}}{{\sv {shapeType}}}}}");
+
+        // 선(Line/Polyline) 방향 보정 — 바운딩 박스 기본 대각선은 좌상→우하.
+        //   실제 끝점이 좌하→우상(올라가는) 방향이면 세로 뒤집기(fFlipV)로 보정해
+        //   직선이 상하 반대로 그려지던 문제를 해결한다.
+        if ((shape.Kind == ShapeKind.Line || shape.Kind == ShapeKind.Polyline)
+            && shape.Points.Count >= 2)
+        {
+            var a = shape.Points[0];
+            var b = shape.Points[^1];
+            double dx = b.X - a.X;
+            double dy = b.Y - a.Y;
+            if (dx * dy < 0)
+                sb.Append(@"{\sp{\sn fFlipV}{\sv 1}}");
+        }
 
         // 채우기 색상 (BGR int)
         if (!string.IsNullOrEmpty(shape.FillColor))
