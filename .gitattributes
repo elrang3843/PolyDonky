@@ -1,0 +1,14 @@
+# 바이너리 파일 — git 의 EOL(CRLF) 변환·텍스트 머지 금지. 플랫폼 간 checkout 시 손상 방지.
+*.doc   binary
+*.docx  binary
+*.hwp   binary
+*.hwpx  binary
+*.iwpf  binary
+*.rtf   binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.bin   binary
