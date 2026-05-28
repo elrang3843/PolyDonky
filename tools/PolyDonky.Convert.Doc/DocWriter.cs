@@ -115,6 +115,13 @@ public class DocWriter
                 if (!string.IsNullOrEmpty(s.StrokeColor))
                     try { RegisterColor(Color.FromHex(s.StrokeColor)); } catch { }
                 break;
+            case TextBoxObject tb:
+                if (!string.IsNullOrEmpty(tb.BorderColor))
+                    try { RegisterColor(Color.FromHex(tb.BorderColor)); } catch { }
+                if (!string.IsNullOrEmpty(tb.BackgroundColor))
+                    try { RegisterColor(Color.FromHex(tb.BackgroundColor)); } catch { }
+                foreach (var b in tb.Content) ScanBlock(b);
+                break;
             case ContainerBlock c:
                 foreach (var b in c.Children) ScanBlock(b);
                 break;
@@ -383,58 +390,58 @@ public class DocWriter
 
     // ── 글상자 (TextBox) ─────────────────────────────────────────────────────────
 
-    /// <summary>글상자 → RTF \shp (shapeType 202 = text box). 테두리·배경·위치·내부 단락 출력.
-    /// 내부 텍스트는 \shptxt 그룹에 담아 Word/한글이 글상자 안 텍스트로 렌더링.</summary>
+    /// <summary>글상자 → 위치 지정 프레임 + 4면 테두리 단락.
+    /// RTF Office Drawing shape(\shptxt)는 Word 가 까다롭게 처리해 내부 텍스트가 안 보이는 경우가 많다.
+    /// 대신 Word 가 오래전부터 안정적으로 지원하는 "positioned frame"(\posx/\posy/\absw/\absh) +
+    /// 단락 테두리(\brdrt/l/b/r)로 글상자를 표현한다 — 텍스트가 단락 안에 직접 들어가 항상 렌더링된다.</summary>
     private void WriteTextBox(TextBoxObject tb, StringBuilder sb)
     {
-        int left   = T(tb.OverlayXMm);
-        int top    = T(tb.OverlayYMm);
-        int right  = T(tb.OverlayXMm + Math.Max(1, tb.WidthMm));
-        int bottom = T(tb.OverlayYMm + Math.Max(1, tb.HeightMm));
+        int x = T(tb.OverlayXMm);
+        int y = T(tb.OverlayYMm);
+        int w = T(Math.Max(1, tb.WidthMm));
+        int h = T(Math.Max(1, tb.HeightMm));
 
-        sb.Append(@"{\shp");
-        sb.Append($@"\shpleft{left}\shptop{top}\shpright{right}\shpbottom{bottom}");
-        sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
-        sb.Append(@"{\*\shpinst");
-        sb.Append(@"{\sp{\sn shapeType}{\sv 202}}");          // 202 = text box
-
-        // 채우기 배경색
-        if (!string.IsNullOrEmpty(tb.BackgroundColor))
-        {
-            try
-            {
-                var c = Color.FromHex(tb.BackgroundColor);
-                int abgr = c.R | (c.G << 8) | (c.B << 16);
-                sb.Append($@"{{\sp{{\sn fillColor}}{{\sv {abgr}}}}}");
-                sb.Append(@"{\sp{\sn fFilled}{\sv 1}}");
-            }
-            catch { }
-        }
-        // 테두리 색·두께
-        if (!string.IsNullOrEmpty(tb.BorderColor))
-        {
-            try
-            {
-                var c = Color.FromHex(tb.BorderColor);
-                int abgr = c.R | (c.G << 8) | (c.B << 16);
-                sb.Append($@"{{\sp{{\sn lineColor}}{{\sv {abgr}}}}}");
-                sb.Append(@"{\sp{\sn fLine}{\sv 1}}");
-            }
-            catch { }
-        }
+        // 4면 테두리 (border) — \brdrwN 은 twips 단위.
+        string border = string.Empty;
         if (tb.BorderThicknessPt > 0)
-            sb.Append($@"{{\sp{{\sn lineWidth}}{{\sv {(int)(tb.BorderThicknessPt * 12700)}}}}}");
+        {
+            int bw = Math.Max(10, (int)(tb.BorderThicknessPt * 20));
+            int ci = 0;
+            if (!string.IsNullOrEmpty(tb.BorderColor))
+                try { ci = RegisterColor(Color.FromHex(tb.BorderColor)); } catch { }
+            string side = $@"\brdrs\brdrw{bw}\brdrcf{ci}";
+            border = $@"\brdrt{side}\brdrl{side}\brdrb{side}\brdrr{side} ";
+        }
 
-        // 내부 텍스트
-        sb.Append(@"{\shptxt ");
-        if (tb.Content.Count == 0)
-            sb.Append(@"\pard ");
-        else
-            foreach (var b in tb.Content) WriteBlock(b, sb, inTable: false);
-        sb.Append('}');
+        // 배경색 (\cbpat = paragraph shading background color index)
+        string shading = string.Empty;
+        if (!string.IsNullOrEmpty(tb.BackgroundColor))
+            try { shading = $@"\cbpat{RegisterColor(Color.FromHex(tb.BackgroundColor))} "; } catch { }
 
-        sb.Append("}}");
-        sb.AppendLine();
+        string align = tb.HAlign switch
+        {
+            TextBoxHAlign.Center  => @"\qc",
+            TextBoxHAlign.Right   => @"\qr",
+            TextBoxHAlign.Justify => @"\qj",
+            _                     => @"\ql",
+        };
+
+        var paras = tb.Content.OfType<Paragraph>().ToList();
+        if (paras.Count == 0) paras.Add(new Paragraph());
+
+        // 동일한 frame 좌표를 가진 연속 단락은 Word 가 한 프레임으로 병합한다.
+        foreach (var src in paras)
+        {
+            var p = src.Clone();
+            var ps = p.Style ?? new ParagraphStyle();
+            sb.Append($@"{{\pard\phpg\pvpg\posx{x}\posy{y}\absw{w}\absh{h}\dxfrtext0\dfrmtxtx0\dfrmtxty0 ");
+            sb.Append(border);
+            sb.Append(shading);
+            sb.Append(align);
+            foreach (var run in p.Runs) WriteRun(run, ps, sb);
+            sb.Append(@"\par}");
+            sb.AppendLine();
+        }
     }
 
     // ── 단락 ────────────────────────────────────────────────────────────────────

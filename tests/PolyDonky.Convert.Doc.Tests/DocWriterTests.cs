@@ -635,16 +635,28 @@ public class DocWriterTests
     // ── 글상자 / 부유 이미지 / 머리말 토큰 ─────────────────────────────────────
 
     [Fact]
-    public void TextBox_Emits_Shp_TextBox_With_Content()
+    public void TextBox_Emits_Positioned_Bordered_Frame_With_Content()
     {
-        var tb = new TextBoxObject { OverlayXMm = 20, OverlayYMm = 180, WidthMm = 50, HeightMm = 25 };
+        var tb = new TextBoxObject
+        {
+            OverlayXMm = 20, OverlayYMm = 180, WidthMm = 50, HeightMm = 25,
+            BorderColor = "#000000", BorderThicknessPt = 1,
+        };
         tb.Content.Clear();
         tb.Content.Add(Paragraph.Of("box text"));
         var rtf = WriteRtf(DocWith(tb));
 
-        Assert.Contains(@"{\sv 202}", rtf);     // shapeType 202 = text box
-        Assert.Contains(@"\shptxt",   rtf);
-        Assert.Contains("box text",   rtf);
+        // 위치 지정 프레임
+        Assert.Contains(@"\phpg\pvpg", rtf);
+        Assert.Contains(@"\posx",      rtf);
+        Assert.Contains(@"\absw",      rtf);
+        // 4면 테두리
+        Assert.Contains(@"\brdrt",     rtf);
+        Assert.Contains(@"\brdrl",     rtf);
+        Assert.Contains(@"\brdrb",     rtf);
+        Assert.Contains(@"\brdrr",     rtf);
+        // 텍스트가 단락 안에 직접 존재
+        Assert.Contains("box text",    rtf);
     }
 
     [Fact]
