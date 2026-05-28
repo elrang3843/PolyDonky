@@ -655,12 +655,17 @@ public class DocWriter
         int ci = rs.Foreground.HasValue ? RegisterColor(rs.Foreground.Value) : 0;
         sb.Append($@"\cf{ci}");
 
-        // 배경색
+        // 배경색 (하이라이트) — Word 는 \cb 를 거의 렌더 안 하므로 character shading
+        //   \chshdng0\chcbpat{N} (배경 100% 채움) 을 함께 출력. \cb 는 다른 reader 용 폴백.
         Color? bg = rs.Background;
         if (!bg.HasValue && ps.BackgroundColor is { Length: > 0 } hex)
             try { bg = Color.FromHex(hex); } catch { }
         bool hasBg = bg.HasValue;
-        if (hasBg) sb.Append($@"\cb{RegisterColor(bg!.Value)}");
+        if (hasBg)
+        {
+            int bgi = RegisterColor(bg!.Value);
+            sb.Append($@"\chshdng0\chcbpat{bgi}\cb{bgi}");
+        }
 
         // 글자 크기 (half-point)
         double fsz = rs.FontSizePt > 0 ? rs.FontSizePt : 11;
@@ -683,7 +688,7 @@ public class DocWriter
         if (rs.Underline)     sb.Append(@"\ulnone");
         if (rs.Strikethrough) sb.Append(@"\strike0");
         if (rs.Superscript || rs.Subscript) sb.Append(@"\nosupersub");
-        if (hasBg)            sb.Append(@"\cb0");
+        if (hasBg)            sb.Append(@"\chcbpat0\cb0");
 
         sb.Append(' ');
     }

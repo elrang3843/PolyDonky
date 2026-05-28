@@ -70,6 +70,19 @@ public class DocWriterTests
     }
 
     [Fact]
+    public void Run_Background_Emits_Character_Shading_For_Word()
+    {
+        var p = new Paragraph();
+        p.AddText("highlighted", new RunStyle { Background = new Color(0x00, 0xFF, 0xFF) });  // cyan
+        var rtf = WriteRtf(DocWith(p));
+
+        // Word 가 인식하는 character shading (배경 100%)
+        Assert.Contains(@"\chcbpat", rtf);
+        Assert.Contains(@"\chshdng0", rtf);
+        Assert.Contains("highlighted", rtf);
+    }
+
+    [Fact]
     public void Empty_Document_Produces_Valid_Skeleton()
     {
         var rtf = WriteRtf(new PolyDonkyument());
