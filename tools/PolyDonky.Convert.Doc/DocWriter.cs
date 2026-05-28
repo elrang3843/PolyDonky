@@ -429,7 +429,8 @@ public class DocWriter
 
         sb.Append(@"{\shp");
         sb.Append($@"\shpleft{x}\shptop{y}\shpright{x + w}\shpbottom{y + h}");
-        sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
+        // \shpfblwtxt1 = 도형을 텍스트 레이어 뒤로 — 흰 채움·테두리가 뒤에, 같은 좌표의 텍스트 프레임이 앞에.
+        sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpfblwtxt1\shpwr3");
         sb.Append(@"{\*\shpinst{\sp{\sn shapeType}{\sv 1}}");   // 1 = rectangle
         sb.Append($@"{{\sp{{\sn fillColor}}{{\sv {fill}}}}}");
         sb.Append(@"{\sp{\sn fFilled}{\sv 1}}");
