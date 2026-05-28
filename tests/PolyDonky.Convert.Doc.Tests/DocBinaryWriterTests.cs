@@ -708,7 +708,7 @@ public class DocBinaryWriterTests
     // ── Word strict-parser 호환 skeleton (STSH / PlcfSed / SEPX) ───────────
 
     [Fact]
-    public void Fib_Has_Zero_FcMin_FcMac_And_QuickSaves_Flag()
+    public void Fib_Is_Consistent_Word97_Configuration()
     {
         var bytes = WriteDoc(DocWith(Paragraph.Of("x")));
         using var ms = new MemoryStream(bytes);
@@ -717,11 +717,17 @@ public class DocBinaryWriterTests
         var wb = new byte[wd.Length];
         wd.ReadExactly(wb, 0, wb.Length);
 
-        // [MS-DOC] §2.5.1 — Word 97+ MUST: fcMin / fcMac = 0
-        Assert.Equal(0u, BitConverter.ToUInt32(wb, 0x18));
-        Assert.Equal(0u, BitConverter.ToUInt32(wb, 0x1C));
-        // cQuickSaves (bits 4-7) MUST be 0xF → flags = 0x02F4
-        Assert.Equal((ushort)0x02F4, BitConverter.ToUInt16(wb, 0x0A));
+        // 실제 Word 문서처럼 fcMin/fcMac 은 본문 텍스트 byte 범위를 가리킨다 (0 아님).
+        Assert.True(BitConverter.ToUInt32(wb, 0x18) > 0, "fcMin should point at text");
+        Assert.True(BitConverter.ToUInt32(wb, 0x1C) > BitConverter.ToUInt32(wb, 0x18), "fcMac > fcMin");
+        // flags: cQuickSaves=0xF + fWhichTblStm + fExtChar = 0x12F0
+        Assert.Equal((ushort)0x12F0, BitConverter.ToUInt16(wb, 0x0A));
+        // cbRgFcLcb = 0x5D (FibRgFcLcb97), cswNew = 0 (순수 Word 97, FibRgCswNew 없음) — 일관성
+        Assert.Equal((ushort)0x005D, BitConverter.ToUInt16(wb, 0x98));
+        int cswNewOffset = 0x009A + 0x005D * 8;
+        Assert.Equal((ushort)0, BitConverter.ToUInt16(wb, cswNewOffset));
+        // lid = 한국어
+        Assert.Equal((ushort)0x0412, BitConverter.ToUInt16(wb, 0x06));
     }
 
     [Fact]

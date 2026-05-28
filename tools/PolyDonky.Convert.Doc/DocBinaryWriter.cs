@@ -37,17 +37,22 @@ public sealed class DocBinaryWriter
     private const ushort Magic     = 0xA5EC;
     private const ushort NFib      = 0x00C1;          // Word 97-2003 표준 (193)
     private const ushort NFibBack  = 0x00BF;
+    /// <summary>기본 언어 ID — 한국어(0x0412). FIB 0x0006 lid.</summary>
+    private const ushort Lid       = 0x0412;
     /// <summary>FibBase flags @ 0x000A — [MS-DOC] §2.5.1 ABCDEFGH/IJKLMNOP:
-    ///   bit 2  (0x0004) C = fComplex            (CLX piece table 사용)
-    ///   bits 4-7 (0x00F0) EFGH = cQuickSaves    ([MS-DOC] MUST be 0xF when nFib &lt; 0x00D9)
-    ///   bit 9  (0x0200) J = fWhichTblStm        (1 → "1Table" 사용)
-    /// → 0x0004 | 0x00F0 | 0x0200 = 0x02F4.
-    /// 누락 시 한글/Word Doc Viewer 가 "지원하지 않는 파일 형식" 으로 거부.</summary>
-    private const ushort FibFlags  = 0x02F4;
+    ///   bits 4-7 (0x00F0) EFGH = cQuickSaves    (MUST be 0xF when nFib &lt; 0x00D9)
+    ///   bit 9  (0x0200) J = fWhichTblStm        (1 → "1Table")
+    ///   bit 12 (0x1000) M = fExtChar            (Unicode 확장 문자 사용 — 실제 Word 문서가 항상 set)
+    /// → 0x00F0 | 0x0200 | 0x1000 = 0x12F0.
+    /// fComplex(bit 2) 는 incremental-save 표시일 뿐 piece table 사용과 무관 — 깨끗한 전체 저장이라 0.</summary>
+    private const ushort FibFlags  = 0x12F0;
     private const ushort Csw       = 0x000E;          // FibRgW97 size (14 shorts)
     private const ushort Cslw      = 0x0016;          // FibRgLw97 size (22 longs)
-    private const ushort CbRgFcLcb = 0x005D;          // FibRgFcLcbBlob pair count (93)
-    private const ushort CswNew    = 0x0002;
+    private const ushort CbRgFcLcb = 0x005D;          // FibRgFcLcb97 pair count (93) — Word 97
+    /// <summary>cswNew — [MS-DOC] §2.5.1: 0이면 순수 Word 97 (FibRgCswNew 없음).
+    /// cbRgFcLcb=0x5D(=FibRgFcLcb97) 와 짝이 맞으려면 반드시 0. 비-0 이면 nFibNew 가 newer 버전을 가리켜야 하고
+    /// cbRgFcLcb 도 그에 맞게 커져야 하므로, 0으로 두는 게 Word 97 문서로 일관된다.</summary>
+    private const ushort CswNew    = 0x0000;
     /// <summary>FIB 영역 패딩 — Reader 가드(최대 0x0316) + cswNew(0x0382) 까지 충분.</summary>
     private const int    FibPadSize = 0x400;
 
@@ -115,15 +120,16 @@ public sealed class DocBinaryWriter
         using var ms = new MemoryStream();
         var bw = new BinaryWriter(ms);
 
-        // Header (28 byte) — [MS-OLEDS] §2.3.7
+        // Header (28 byte) — [MS-OLEDS] §2.3.7. 실제 sample5.doc 의 바이트 레이아웃과 일치:
+        //   01 00 FE FF | 03 0A 00 00 | FF FF FF FF | <16-byte CLSID>
         bw.Write((uint)0xFFFE0001);                // Reserved1 magic
         bw.Write((uint)0x00000A03);                // Version (Office 2.0 binary)
-        // Reserved2 (20 byte): 16 byte CLSID (Word.Document.8) + 4 byte 0
+        // Reserved2 (20 byte): 0xFFFFFFFF marker + 16 byte CLSID (Word.Document.8)
+        bw.Write((uint)0xFFFFFFFF);
         bw.Write(WordDocument8ClsId.ToByteArray());
-        bw.Write((uint)0);
 
         // AnsiUserType: LengthPrefixedAnsiString — length(4) + bytes + null
-        var userType = "Microsoft Word Document\0";
+        var userType = "Microsoft Office Word Document\0";
         bw.Write((uint)userType.Length);
         bw.Write(System.Text.Encoding.ASCII.GetBytes(userType));
 
@@ -1054,13 +1060,14 @@ public sealed class DocBinaryWriter
     {
         WriteUInt16(wd, 0x0000, Magic);
         WriteUInt16(wd, 0x0002, NFib);
+        WriteUInt16(wd, 0x0006, Lid);          // 기본 언어 ID (한국어)
         WriteUInt16(wd, 0x000A, FibFlags);
         WriteUInt16(wd, 0x000C, NFibBack);
-        // [MS-DOC] §2.5.1 fcMin / fcMac — Word 97+ 에서는 본문 위치를 CLX piece table 로만 표현하고
-        // 이 두 필드는 SHOULD be 0. 0이 아닌 값이면 한글/Word Doc Viewer 같은 strict parser 가 거부.
-        // (CLX 의 Pcd.fc 는 여전히 ctx.FcMin = 0x400 을 가리켜 실제 텍스트 위치는 정상.)
-        WriteUInt32(wd, 0x0018, 0);
-        WriteUInt32(wd, 0x001C, 0);
+        // [MS-DOC] §2.5.1 fcMin / fcMac — 실제 Word 문서는 본문 텍스트의 byte 범위를 가리킨다
+        // (예: sample5.doc 은 fcMin=0x600, fcMac=0x369F). CLX piece table 이 정본이지만 이 두 필드도
+        // 실제 텍스트 위치로 채우는 게 표준 — 0 으로 두면 일부 reader 가 빈 문서로 오인.
+        WriteUInt32(wd, 0x0018, ctx.FcMin);
+        WriteUInt32(wd, 0x001C, ctx.FcMac);
 
         WriteUInt16(wd, 0x0020, Csw);
         WriteUInt16(wd, 0x003E, Cslw);
@@ -1077,11 +1084,12 @@ public sealed class DocBinaryWriter
         WritePair(wd, PairFcStshf,       ctx.FcStshf,       ctx.LcbStshf);
         WritePair(wd, PairFcPlcfSed,     ctx.FcPlcfSed,     ctx.LcbPlcfSed);
 
+        // cswNew = 0 → 순수 Word 97 FIB (FibRgCswNew 없음). cbRgFcLcb=0x5D 와 일관.
+        //   nFibNew 등을 쓰지 않는다 — 비-0 cswNew + nFibNew=0xC1 조합은 모순이라 strict parser 가 거부.
         int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;
-        WriteUInt16(wd, cswNewOffset,     CswNew);
-        WriteUInt16(wd, cswNewOffset + 2, NFib);
+        WriteUInt16(wd, cswNewOffset, CswNew);   // 0
 
-        _ = tableLength;   // 현재 FIB 에 직접 기록하는 필드는 없음 — 모든 lcb 는 위에서 처리.
+        _ = tableLength;
     }
 
     // ── 헬퍼 ────────────────────────────────────────────────────────────────────
