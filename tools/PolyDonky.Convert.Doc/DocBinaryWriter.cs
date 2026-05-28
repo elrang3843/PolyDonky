@@ -37,8 +37,13 @@ public sealed class DocBinaryWriter
     private const ushort Magic     = 0xA5EC;
     private const ushort NFib      = 0x00C1;          // Word 97-2003 표준 (193)
     private const ushort NFibBack  = 0x00BF;
-    /// <summary>FibBase flags @ 0x000A — bit 2 fComplex + bit 9 fWhichTblStm(=1Table).</summary>
-    private const ushort FibFlags  = 0x0204;
+    /// <summary>FibBase flags @ 0x000A — [MS-DOC] §2.5.1 ABCDEFGH/IJKLMNOP:
+    ///   bit 2  (0x0004) C = fComplex            (CLX piece table 사용)
+    ///   bits 4-7 (0x00F0) EFGH = cQuickSaves    ([MS-DOC] MUST be 0xF when nFib &lt; 0x00D9)
+    ///   bit 9  (0x0200) J = fWhichTblStm        (1 → "1Table" 사용)
+    /// → 0x0004 | 0x00F0 | 0x0200 = 0x02F4.
+    /// 누락 시 한글/Word Doc Viewer 가 "지원하지 않는 파일 형식" 으로 거부.</summary>
+    private const ushort FibFlags  = 0x02F4;
     private const ushort Csw       = 0x000E;          // FibRgW97 size (14 shorts)
     private const ushort Cslw      = 0x0016;          // FibRgLw97 size (22 longs)
     private const ushort CbRgFcLcb = 0x005D;          // FibRgFcLcbBlob pair count (93)
@@ -928,8 +933,11 @@ public sealed class DocBinaryWriter
         WriteUInt16(wd, 0x0002, NFib);
         WriteUInt16(wd, 0x000A, FibFlags);
         WriteUInt16(wd, 0x000C, NFibBack);
-        WriteUInt32(wd, 0x0018, ctx.FcMin);
-        WriteUInt32(wd, 0x001C, ctx.FcMac);
+        // [MS-DOC] §2.5.1 fcMin / fcMac — Word 97+ 에서는 본문 위치를 CLX piece table 로만 표현하고
+        // 이 두 필드는 SHOULD be 0. 0이 아닌 값이면 한글/Word Doc Viewer 같은 strict parser 가 거부.
+        // (CLX 의 Pcd.fc 는 여전히 ctx.FcMin = 0x400 을 가리켜 실제 텍스트 위치는 정상.)
+        WriteUInt32(wd, 0x0018, 0);
+        WriteUInt32(wd, 0x001C, 0);
 
         WriteUInt16(wd, 0x0020, Csw);
         WriteUInt16(wd, 0x003E, Cslw);
