@@ -44,6 +44,10 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+---
+
+## [1.1.0] - 2026-05-28
+
 ### Docs
 - **README.md, USER_GUIDE.md, WORK_PLAN.md 문서 보완**: DOC(Word 97-2003) 포맷 상태 ⏳→✅ 반영, 프로젝트 상태 Beta 갱신, 개발 단계 2단계 완료 표기, M4-b 로드맵 항목 추가, USER_GUIDE.md 에 RTF/XML/XHTML 지원 포맷 추가·DOCX/HWPX 아키텍처 설명 정정·각주/미주·목차·필드 코드·블록 그룹·서식 툴바·충실도 캡슐 섹션 신설, WORK_PLAN.md 에 DOC binary reader/writer 완료·테스트 수 416개 갱신.
 
