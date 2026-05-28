@@ -164,9 +164,15 @@ try
         using (var fs = File.OpenRead(inPath))
             doc = new IwpfReader().Read(fs);
 
-        ConverterProgress.Write(50, "DOC (Word 97-2003 binary) 로 변환 중");
+        // .doc 출력은 RTF 내용을 .doc 확장자로 쓴다.
+        //   한컴 한글이 .doc 저장 시 실제로 생성하는 형식 (RTF + \kis94 확장)과 동일한 전략이고,
+        //   Word / 한글 / Doc Viewer / Office 365 모두 .doc 확장자라도 {\rtf1 시그니처를 보고
+        //   RTF 로 정상 인식한다. Word 97-2003 OLE2 바이너리(DocBinaryWriter)는 strict parser
+        //   호환을 100% 맞추기 어려워, 실용적으로 검증된 RTF 경로를 .doc export 기본값으로 사용.
+        //   (DocBinaryWriter 는 .doc ingest 라운드트립 검증·향후용으로 코드베이스에 유지.)
+        ConverterProgress.Write(50, "DOC (RTF 호환) 로 변환 중");
         using (var ofs = File.Create(outPath))
-            new DocBinaryWriter().Write(doc, ofs);
+            new DocWriter().Write(doc, ofs);
     }
 
     ConverterProgress.Write(100, "완료");
@@ -211,12 +217,9 @@ static void PrintHelp()
     Console.WriteLine("변환 쌍:");
     Console.WriteLine("  *.rtf  → *.iwpf : import (텍스트·서식 지원)");
     Console.WriteLine("  *.doc  → *.iwpf : import (Word 97-2003 OLE2 binary, 매크로/서명 fidelity 보존)");
-    Console.WriteLine("  *.iwpf → *.rtf  : export (텍스트·서식·각주·필드·헤더/푸터 등 지원)");
-    Console.WriteLine("  *.iwpf → *.doc  : export (Word 97-2003 binary; Phase F1-W2a — 본문 텍스트 골격)");
-    Console.WriteLine();
-    Console.WriteLine("향후 단계:");
-    Console.WriteLine("  *.iwpf → *.doc  : Phase F1-W2b — 글자/단락 서식 (CHPX/PAPX)");
-    Console.WriteLine("  *.iwpf → *.doc  : Phase F1-W2c~e — 표·이미지·각주/주석·fidelity capsule 복원");
+    Console.WriteLine("  *.iwpf → *.rtf  : export (텍스트·서식·표·이미지·도형·각주·필드·헤더/푸터)");
+    Console.WriteLine("  *.iwpf → *.doc  : export (RTF 내용을 .doc 로 — 한글이 .doc 저장 시 쓰는 방식과 동일.");
+    Console.WriteLine("                            Word/한글/Doc Viewer 가 {\\rtf1 시그니처로 인식해 정상 오픈)");
     Console.WriteLine();
     Console.WriteLine("종료 코드:");
     Console.WriteLine("  0  성공");
