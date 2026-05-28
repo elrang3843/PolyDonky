@@ -16,7 +16,7 @@ namespace PolyDonky.App.Services;
 ///   .xml  / .xhtml  — PolyDonky.Convert.Xml
 ///   .docx           — PolyDonky.Convert.Docx
 ///   .hwpx           — PolyDonky.Convert.Hwpx
-///   .rtf / .doc     — PolyDonky.Convert.Doc   (.doc 는 ingest 전용 — Phase 1a 텍스트·단락)
+///   .rtf / .doc     — PolyDonky.Convert.Doc   (.doc 는 import + export 모두 — Phase F1-W2 완료)
 ///   .hwp            — PolyDonky.Convert.Hwp
 /// </summary>
 public static class ExternalConverter

@@ -57,7 +57,7 @@ public static class KnownFormats
             or "html" or "htm"
             or "xml"  or "xhtml"
             or "hwp"  or "rtf"
-            or "doc"           => true,   // Phase 1a — 텍스트·단락만, ingest 전용
+            or "doc"           => true,   // .doc 는 import + export 모두 — Phase F1-W2 완료 (CHPX/PAPX/책갈피/FidelityCapsule)
             _ => false,
         };
     }
@@ -70,7 +70,7 @@ public static class KnownFormats
         "텍스트 (*.txt)|*.txt|" +
         // 외부 CLI 변환 후 IWPF 정본을 통해 읽음
         "Word DOCX (*.docx) — 외부 변환|*.docx|" +
-        "Word DOC (*.doc) — 외부 변환 (텍스트·단락만)|*.doc|" +
+        "Word DOC (*.doc) — 외부 변환|*.doc|" +
         "Word RTF (*.rtf) — 외부 변환|*.rtf|" +
         "한글 HWPX (*.hwpx) — 외부 변환|*.hwpx|" +
         "HTML (*.html;*.htm) — 외부 변환|*.html;*.htm|" +
@@ -86,6 +86,7 @@ public static class KnownFormats
         "텍스트 (*.txt)|*.txt|" +
         // 외부 CLI 변환 — IWPF 정본을 만든 후 CLI 가 대상 포맷으로 변환
         "Word DOCX (*.docx) — 외부 변환|*.docx|" +
+        "Word DOC (*.doc) — 외부 변환|*.doc|" +
         "Word RTF (*.rtf) — 외부 변환|*.rtf|" +
         "한글 HWPX (*.hwpx) — 외부 변환|*.hwpx|" +
         "HTML (*.html) — 외부 변환|*.html|" +
