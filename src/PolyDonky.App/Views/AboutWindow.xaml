@@ -37,7 +37,7 @@
 
         <TextBlock Grid.Row="2"
                    x:Name="VersionText"
-                   Text="버전 1.0.0"
+                   Text="버전 1.1.0"
                    Foreground="{DynamicResource OnSurfaceMuted}"
                    HorizontalAlignment="Center"
                    Margin="0,4,0,0" />
