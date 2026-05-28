@@ -705,6 +705,77 @@ public class DocBinaryWriterTests
         Assert.Empty(reader.PreservedRootStorages);
     }
 
+    // ── Word strict-parser 호환 skeleton (STSH / PlcfSed / SEPX) ───────────
+
+    [Fact]
+    public void Fib_Has_Zero_FcMin_FcMac_And_QuickSaves_Flag()
+    {
+        var bytes = WriteDoc(DocWith(Paragraph.Of("x")));
+        using var ms = new MemoryStream(bytes);
+        using var root = RootStorage.Open(ms, StorageModeFlags.LeaveOpen);
+        using var wd = root.OpenStream("WordDocument");
+        var wb = new byte[wd.Length];
+        wd.ReadExactly(wb, 0, wb.Length);
+
+        // [MS-DOC] §2.5.1 — Word 97+ MUST: fcMin / fcMac = 0
+        Assert.Equal(0u, BitConverter.ToUInt32(wb, 0x18));
+        Assert.Equal(0u, BitConverter.ToUInt32(wb, 0x1C));
+        // cQuickSaves (bits 4-7) MUST be 0xF → flags = 0x02F4
+        Assert.Equal((ushort)0x02F4, BitConverter.ToUInt16(wb, 0x0A));
+    }
+
+    [Fact]
+    public void Stsh_And_PlcfSed_Are_Present_In_Fib()
+    {
+        var bytes = WriteDoc(DocWith(Paragraph.Of("x")));
+        using var ms = new MemoryStream(bytes);
+        using var root = RootStorage.Open(ms, StorageModeFlags.LeaveOpen);
+        using var wd = root.OpenStream("WordDocument");
+        var wb = new byte[wd.Length];
+        wd.ReadExactly(wb, 0, wb.Length);
+
+        // fcStshf @ 0x00A2 / lcb @ 0x00A6 — non-zero
+        Assert.True(BitConverter.ToUInt32(wb, 0xA6) > 0, "STSH lcb should be non-zero");
+        // fcPlcfSed @ 0x00CA / lcb @ 0x00CE — non-zero
+        Assert.True(BitConverter.ToUInt32(wb, 0xCE) > 0, "PlcfSed lcb should be non-zero");
+    }
+
+    [Fact]
+    public void Section_Page_Margins_RoundTrip_Via_Sepx()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.MarginLeftMm   = 30;
+        sec.Page.MarginRightMm  = 15;
+        sec.Page.MarginTopMm    = 22;
+        sec.Page.MarginBottomMm = 18;
+        sec.Blocks.Add(Paragraph.Of("body"));
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        var page = doc2.Sections[0].Page;
+        Assert.Equal(30, page.MarginLeftMm,   0);
+        Assert.Equal(15, page.MarginRightMm,  0);
+        Assert.Equal(22, page.MarginTopMm,    0);
+        Assert.Equal(18, page.MarginBottomMm, 0);
+    }
+
+    [Fact]
+    public void Section_Page_Size_RoundTrips_Via_Sepx()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.WidthMm  = 210;   // A4
+        sec.Page.HeightMm = 297;
+        sec.Blocks.Add(Paragraph.Of("body"));
+        doc.Sections.Add(sec);
+
+        var doc2 = RoundTrip(doc);
+        var page = doc2.Sections[0].Page;
+        Assert.Equal(210, page.WidthMm,  0);
+        Assert.Equal(297, page.HeightMm, 0);
+    }
+
     [Fact]
     public void Mixed_Style_Runs_In_Single_Paragraph_RoundTrip()
     {

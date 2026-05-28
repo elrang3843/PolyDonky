@@ -57,6 +57,8 @@ public sealed class DocBinaryWriter
 
     // FibRgFcLcbBlob 안의 (fc, lcb) pair 시작 — FIB offset 0x009A. pair index = (offset - 0x9A) / 8.
     private const int RgFcLcbBase = 0x009A;
+    private const int PairFcStshf       = 1;    // FIB 0x00A2 / 0x00A6 — STSH (스타일시트)
+    private const int PairFcPlcfSed     = 6;    // FIB 0x00CA / 0x00CE — PlcfSed (섹션 테이블)
     private const int PairFcPlcfBteChpx = 12;   // FIB 0x00FA / 0x00FE
     private const int PairFcPlcfBtePapx = 13;   // FIB 0x0102 / 0x0106
     private const int PairFcSttbfFfn    = 15;   // FIB 0x0112 / 0x0116  ← 14 가 아님 (0x10A = pair 14 는 fcPlcfFldMom)
@@ -240,6 +242,13 @@ public sealed class DocBinaryWriter
         public uint FcSttbfBkmk,   LcbSttbfBkmk;
         public uint FcPlcfBkf,     LcbPlcfBkf;
         public uint FcPlcfBkl,     LcbPlcfBkl;
+        // 한글/Word strict parser 호환용 skeleton 구조 — STSH(스타일시트) + PlcfSed(섹션테이블).
+        public uint FcStshf,       LcbStshf;
+        public uint FcPlcfSed,     LcbPlcfSed;
+        /// <summary>SEPX 의 WordDocument stream 내 위치 — BuildWordDocument 가 append 후 채움.</summary>
+        public uint SepxFc;
+        /// <summary>첫 번째 섹션의 페이지 설정 — SEPX 에 page width/height/margin sprm 으로 기록.</summary>
+        public PageSettings Page = new();
 
         // BuildWordDocument 가 채우는 BTE 목록 — 절대 페이지 번호로 치환된 상태로 BuildTable 에 전달.
         public List<BteEntry> PapxBtes = new();
@@ -252,6 +261,7 @@ public sealed class DocBinaryWriter
         public void Collect(PolyDonkyument doc)
         {
             Fonts.Add("Times New Roman");
+            if (doc.Sections.Count > 0) Page = doc.Sections[0].Page;
 
             var sb = new StringBuilder();
             foreach (var sec in doc.Sections)
@@ -626,6 +636,7 @@ public sealed class DocBinaryWriter
         }
 
         // 5. BTE 데이터를 context 에 임시 저장 — BuildTable 에서 직렬화.
+        //    SEPX 는 [MS-DOC] §2.9.241 상 Table stream 에 위치하므로 BuildTable 이 작성.
         ctx.PapxBtes = papxBtes;
         ctx.ChpxBtes = chpxBtes;
 
@@ -814,6 +825,118 @@ public sealed class DocBinaryWriter
             ctx.LcbPlcfBkl = (uint)plcBkl.Length;
         }
 
+        // 6. STSH (스타일시트) — 한글/Word strict parser 가 istd(=0 Normal) 참조를 해석하려면 필수.
+        ctx.FcStshf = (uint)ms.Position;
+        byte[] stsh = BuildStsh();
+        ms.Write(stsh, 0, stsh.Length);
+        ctx.LcbStshf = (uint)stsh.Length;
+
+        // 7. SEPX (Section Properties) — [MS-DOC] §2.9.241 상 Table stream 에 위치.
+        //    PlcfSed 의 Sed.fcSepx 가 이 위치를 가리킨다.
+        ctx.SepxFc = (uint)ms.Position;
+        byte[] sepx = BuildSepx(ctx.Page);
+        ms.Write(sepx, 0, sepx.Length);
+
+        // 8. PlcfSed (섹션 테이블) — 1개 섹션. Sed.fcSepx → 위 SEPX 의 Table stream 위치.
+        ctx.FcPlcfSed = (uint)ms.Position;
+        byte[] plcfSed = BuildPlcfSed(ctx.CcpText, ctx.SepxFc);
+        ms.Write(plcfSed, 0, plcfSed.Length);
+        ctx.LcbPlcfSed = (uint)plcfSed.Length;
+
+        return ms.ToArray();
+    }
+
+    // ── 한글/Word strict parser 호환 skeleton 구조 ──────────────────────────────
+
+    /// <summary>SEPX (Section Properties) — [MS-DOC] §2.8.26. cb(2) + grpprl(section sprms).
+    /// 첫 섹션의 페이지 크기·여백을 sprmSDxaPage/SDyaPage/SDxaLeft/SDxaRight/SDyaTop/SDyaBottom 으로 기록.</summary>
+    private static byte[] BuildSepx(PageSettings page)
+    {
+        using var body = new MemoryStream();
+        var bw = new BinaryWriter(body);
+
+        // sprmSBkc (0x3009, spra=0, 1-byte): break code = 2 (new page) — 섹션 시작 방식
+        WriteSprm1(bw, 0x3009, 2);
+        // 페이지 크기 (twips). EffectiveWidth/Height 로 가로/세로 반영.
+        WriteSprm2Unsigned(bw, 0xB016, MmToTwips(page.EffectiveWidthMm));   // sprmSDxaPage
+        WriteSprm2Unsigned(bw, 0xB017, MmToTwips(page.EffectiveHeightMm));  // sprmSDyaPage
+        WriteSprm2Unsigned(bw, 0xB02C, MmToTwips(page.MarginLeftMm));       // sprmSDxaLeft
+        WriteSprm2Unsigned(bw, 0xB02D, MmToTwips(page.MarginRightMm));      // sprmSDxaRight
+        WriteSprm2Signed  (bw, 0xB02E, MmToTwips(page.MarginTopMm));        // sprmSDyaTop
+        WriteSprm2Signed  (bw, 0xB02F, MmToTwips(page.MarginBottomMm));     // sprmSDyaBottom
+
+        byte[] grpprl = body.ToArray();
+        using var ms = new MemoryStream();
+        var bw2 = new BinaryWriter(ms);
+        bw2.Write((ushort)grpprl.Length);   // cb
+        bw2.Write(grpprl);
+        return ms.ToArray();
+    }
+
+    /// <summary>PlcfSed — aCP[n+1] (섹션 경계 CP) + Sed[n] (각 12 byte).
+    /// 1개 섹션: aCP=[0, ccpText], Sed[0] = fn(2)=0 + fcSepx(4) + fnMpr(2)=0 + fcMpr(4)=0xFFFFFFFF.</summary>
+    private static byte[] BuildPlcfSed(uint ccpText, uint sepxFc)
+    {
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        // aCP[2]
+        bw.Write((uint)0);
+        bw.Write(ccpText);
+        // Sed[0] (12 byte)
+        bw.Write((ushort)0);            // fn
+        bw.Write(sepxFc);               // fcSepx → WordDocument stream
+        bw.Write((ushort)0);            // fnMpr
+        bw.Write((uint)0xFFFFFFFF);     // fcMpr (none)
+        return ms.ToArray();
+    }
+
+    /// <summary>STSH (Style Sheet) — [MS-DOC] §2.9.271. LPStshi + rgLPStd.
+    /// 최소: Stshif(18 byte) + Normal 스타일 1개 (sti=0, stk=1 paragraph). istd=0 참조 해석용.</summary>
+    private static byte[] BuildStsh()
+    {
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+
+        // ── LPStshi: cbStshi(2) + Stshif(18) ──
+        using var stshi = new MemoryStream();
+        var sw = new BinaryWriter(stshi);
+        sw.Write((ushort)1);        // cstd = 1 (Normal only)
+        sw.Write((ushort)0x000A);   // cbSTDBaseInFile = 10 (Word 97 STD base)
+        sw.Write((ushort)0x0000);   // fStdStylenamesWritten + grfReserved
+        sw.Write((ushort)0);        // stiMaxWhenSaved
+        sw.Write((ushort)1);        // istdMaxFixedWhenSaved
+        sw.Write((ushort)0);        // nVerBuiltInNamesWhenSaved
+        sw.Write((ushort)0);        // rgftcStandardChpStsh[0] (ftcAsci)
+        sw.Write((ushort)0);        // [1] ftcFE
+        sw.Write((ushort)0);        // [2] ftcOther
+        byte[] stshiBytes = stshi.ToArray();   // 18 byte
+        bw.Write((ushort)stshiBytes.Length);
+        bw.Write(stshiBytes);
+
+        // ── rgLPStd[0] = Normal: cbStd(2) + STD ──
+        using var std = new MemoryStream();
+        var dw = new BinaryWriter(std);
+        // StdfBase (10 byte)
+        dw.Write((ushort)0x0000);   // sti=0 + flags
+        dw.Write((ushort)0xFFF1);   // stk=1(para) | istdBase=0xFFF<<4
+        dw.Write((ushort)0x0002);   // cupx=2 | istdNext=0
+        dw.Write((ushort)0);        // bchUpe
+        dw.Write((ushort)0);        // grfstd
+        // xstzName "Normal": cchData(2) + UTF-16 + null(2)
+        const string name = "Normal";
+        dw.Write((ushort)name.Length);
+        dw.Write(System.Text.Encoding.Unicode.GetBytes(name));
+        dw.Write((ushort)0);
+        // grLPUpxSw (para style, cupx=2): LPUpxPapx + LPUpxChpx
+        //   LPUpxPapx: cbUPX(2)=2 + UpxPapx(istd 2 byte) → 그 뒤 2-byte 정렬 (이미 even)
+        dw.Write((ushort)2);        // cbUPX (PAPX) = 2
+        dw.Write((ushort)0);        // istd = 0 (UpxPapx)
+        //   LPUpxChpx: cbUPX(2)=0 (빈 grpprl)
+        dw.Write((ushort)0);        // cbUPX (CHPX) = 0
+        byte[] stdBytes = std.ToArray();
+        bw.Write((ushort)stdBytes.Length);
+        bw.Write(stdBytes);
+
         return ms.ToArray();
     }
 
@@ -951,7 +1074,8 @@ public sealed class DocBinaryWriter
         WritePair(wd, PairFcSttbfBkmk,   ctx.FcSttbfBkmk,   ctx.LcbSttbfBkmk);
         WritePair(wd, PairFcPlcfBkf,     ctx.FcPlcfBkf,     ctx.LcbPlcfBkf);
         WritePair(wd, PairFcPlcfBkl,     ctx.FcPlcfBkl,     ctx.LcbPlcfBkl);
-        // STSH pair 는 0/0 — Reader 가 빈 styles 배열로 처리.
+        WritePair(wd, PairFcStshf,       ctx.FcStshf,       ctx.LcbStshf);
+        WritePair(wd, PairFcPlcfSed,     ctx.FcPlcfSed,     ctx.LcbPlcfSed);
 
         int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;
         WriteUInt16(wd, cswNewOffset,     CswNew);
