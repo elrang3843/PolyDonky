@@ -70,6 +70,38 @@
   </Target>
 
 
+  <!--
+    이식형(portable) 배포 — --self-contained true -r win-x64 로 Publish 할 때
+    CLI 변환기도 동일한 PublishDir 에 self-contained 로 함께 게시.
+    MSIX 빌드(WindowsPackageType=MSIX) 에서는 실행하지 않는다.
+  -->
+  <Target Name="PublishExternalConverters" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != '' and '$(SelfContained)' == 'true' and '$(WindowsPackageType)' == ''">
+    <PropertyGroup>
+      <!-- PublishDir 이 상대 경로일 수 있으므로 절대 경로로 정규화 -->
+      <_PortablePublishDir>$([System.IO.Path]::GetFullPath($([MSBuild]::EnsureTrailingSlash($(PublishDir)))))</_PortablePublishDir>
+    </PropertyGroup>
+    <MSBuild Projects="..\..\tools\PolyDonky.Convert.Html\PolyDonky.Convert.Html.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishReadyToRun=$(PublishReadyToRun);DebugType=none;DebugSymbols=false;PublishDir=$(_PortablePublishDir)" />
+    <MSBuild Projects="..\..\tools\PolyDonky.Convert.Xml\PolyDonky.Convert.Xml.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishReadyToRun=$(PublishReadyToRun);DebugType=none;DebugSymbols=false;PublishDir=$(_PortablePublishDir)" />
+    <MSBuild Projects="..\..\tools\PolyDonky.Convert.Docx\PolyDonky.Convert.Docx.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishReadyToRun=$(PublishReadyToRun);DebugType=none;DebugSymbols=false;PublishDir=$(_PortablePublishDir)" />
+    <MSBuild Projects="..\..\tools\PolyDonky.Convert.Hwpx\PolyDonky.Convert.Hwpx.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishReadyToRun=$(PublishReadyToRun);DebugType=none;DebugSymbols=false;PublishDir=$(_PortablePublishDir)" />
+    <MSBuild Projects="..\..\tools\PolyDonky.Convert.Doc\PolyDonky.Convert.Doc.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishReadyToRun=$(PublishReadyToRun);DebugType=none;DebugSymbols=false;PublishDir=$(_PortablePublishDir)" />
+    <MSBuild Projects="..\..\tools\PolyDonky.Convert.Hwp\PolyDonky.Convert.Hwp.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishReadyToRun=$(PublishReadyToRun);DebugType=none;DebugSymbols=false;PublishDir=$(_PortablePublishDir)" />
+    <Message Text="CLI 변환기 6종 → $(_PortablePublishDir) 게시 완료" Importance="High" />
+  </Target>
+
   <!-- LICENSE 및 THIRD_PARTY_NOTICES.md 를 어셈블리에 내장 (라이선스 다이얼로그용) -->
   <ItemGroup>
     <EmbeddedResource Include="..\..\LICENSE">

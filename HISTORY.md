@@ -44,6 +44,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Added
+- **이식형(Portable) ZIP 배포 지원**: `scripts/publish-portable.ps1` 스크립트 신설 + `Portable.pubxml` 게시 프로파일 추가. `dotnet publish -p:PublishProfile=Portable` 한 줄로 .NET 10 별도 설치 없이 바로 실행 가능한 win-x64 ZIP 이 생성된다. `PolyDonky.App.csproj` 에 `PublishExternalConverters` MSBuild 타깃 추가 — self-contained publish 시 CLI 변환기 6종(Html/Xml/Docx/Hwpx/Doc/Hwp)을 같은 출력 디렉터리에 자동으로 함께 게시.
+
 ---
 
 ## [1.1.0] - 2026-05-28
