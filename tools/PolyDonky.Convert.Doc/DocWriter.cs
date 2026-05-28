@@ -411,9 +411,10 @@ public class DocWriter
 
     // ── 글상자 (TextBox) ─────────────────────────────────────────────────────────
 
-    /// <summary>글상자 → 위치 지정 프레임 + `\box` 4면 테두리 단락 (단일 객체).
-    /// 이전엔 도형(외곽선)+프레임(텍스트)을 겹쳤으나 Word 가 도형 위에 검은 막대를 그리는 문제가 있어,
-    /// 겹치는 객체 없이 프레임 하나로 통합. `\box` 는 단락 4면 테두리를 한 번에 그린다.</summary>
+    /// <summary>글상자 → 사각형 도형(외곽선 + 명시적 채움) + 위치 지정 텍스트 프레임.
+    /// positioned frame 단락 테두리(\box/\brdr*)는 Word 가 안 그리므로 테두리는 도형이 담당.
+    /// 도형 채움을 fFilled=0 으로 두면 Word 가 검정으로 칠하는 문제가 있어, 배경색이 없으면 흰색으로
+    /// 명시 채움(fFilled=1)한다. 텍스트는 같은 좌표의 프레임이 도형 위에 렌더.</summary>
     private void WriteTextBox(TextBoxObject tb, StringBuilder sb)
     {
         int x = T(tb.OverlayXMm);
@@ -421,21 +422,34 @@ public class DocWriter
         int w = T(Math.Max(1, tb.WidthMm));
         int h = T(Math.Max(1, tb.HeightMm));
 
-        // \box 4면 테두리 — \brdrwN 은 twips. 색 인덱스 \brdrcf.
-        string border = string.Empty;
+        // (1) 사각형 도형 — 외곽선 + 명시적 채움 (검은 막대 방지).
+        int fill = 0xFFFFFF;   // 기본 흰색 (BGR int)
+        if (!string.IsNullOrEmpty(tb.BackgroundColor))
+            try { var c = Color.FromHex(tb.BackgroundColor); fill = c.R | (c.G << 8) | (c.B << 16); } catch { }
+
+        sb.Append(@"{\shp");
+        sb.Append($@"\shpleft{x}\shptop{y}\shpright{x + w}\shpbottom{y + h}");
+        sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
+        sb.Append(@"{\*\shpinst{\sp{\sn shapeType}{\sv 1}}");   // 1 = rectangle
+        sb.Append($@"{{\sp{{\sn fillColor}}{{\sv {fill}}}}}");
+        sb.Append(@"{\sp{\sn fFilled}{\sv 1}}");
         if (tb.BorderThicknessPt > 0)
         {
-            int bw = Math.Max(10, (int)(tb.BorderThicknessPt * 20));
-            int ci = 0;
+            int lineColor = 0;
             if (!string.IsNullOrEmpty(tb.BorderColor))
-                try { ci = RegisterColor(Color.FromHex(tb.BorderColor)); } catch { }
-            border = $@"\box\brdrs\brdrw{bw}\brdrcf{ci} ";
+                try { var c = Color.FromHex(tb.BorderColor); lineColor = c.R | (c.G << 8) | (c.B << 16); } catch { }
+            sb.Append($@"{{\sp{{\sn lineColor}}{{\sv {lineColor}}}}}");
+            sb.Append(@"{\sp{\sn fLine}{\sv 1}}");
+            sb.Append($@"{{\sp{{\sn lineWidth}}{{\sv {(int)(tb.BorderThicknessPt * 12700)}}}}}");
         }
-        // 배경색 — 단락 음영 \cbpat (배경 색상 인덱스). 없으면 생략(투명).
-        string shading = string.Empty;
-        if (!string.IsNullOrEmpty(tb.BackgroundColor))
-            try { shading = $@"\cbpat{RegisterColor(Color.FromHex(tb.BackgroundColor))} "; } catch { }
+        else
+        {
+            sb.Append(@"{\sp{\sn fLine}{\sv 0}}");
+        }
+        sb.Append("}}");
+        sb.AppendLine();
 
+        // (2) 텍스트 — 같은 좌표의 positioned frame. \plain 으로 직전 서식 누수 차단.
         string align = tb.HAlign switch
         {
             TextBoxHAlign.Center  => @"\qc",
@@ -443,17 +457,13 @@ public class DocWriter
             TextBoxHAlign.Justify => @"\qj",
             _                     => @"\ql",
         };
-
         var paras = tb.Content.OfType<Paragraph>().ToList();
         if (paras.Count == 0) paras.Add(new Paragraph());
         foreach (var src in paras)
         {
             var p = src.Clone();
             var ps = p.Style ?? new ParagraphStyle();
-            // \plain — 직전 단락에서 새어든 \highlight/\cb 등 문자 서식 상태를 초기화 (검은막대 방지).
             sb.Append($@"{{\pard\plain\phpg\pvpg\posx{x}\posy{y}\absw{w}\absh{h}\dxfrtext0\dfrmtxtx0\dfrmtxty0 ");
-            sb.Append(border);
-            sb.Append(shading);
             sb.Append(align);
             foreach (var run in p.Runs) WriteRun(run, ps, sb);
             sb.Append(@"\par}");

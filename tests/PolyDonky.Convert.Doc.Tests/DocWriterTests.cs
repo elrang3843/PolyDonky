@@ -661,7 +661,7 @@ public class DocWriterTests
     // ── 글상자 / 부유 이미지 / 머리말 토큰 ─────────────────────────────────────
 
     [Fact]
-    public void TextBox_Emits_Positioned_Frame_With_Box_Border_And_Content()
+    public void TextBox_Emits_Filled_Bordered_Shape_Plus_Text_Frame()
     {
         var tb = new TextBoxObject
         {
@@ -672,14 +672,15 @@ public class DocWriterTests
         tb.Content.Add(Paragraph.Of("box text"));
         var rtf = WriteRtf(DocWith(tb));
 
-        // 위치 지정 프레임 + \box 4면 테두리 (단일 객체, 겹치는 도형 없음)
-        Assert.Contains(@"\phpg\pvpg", rtf);
-        Assert.Contains(@"\posx",      rtf);
-        Assert.Contains(@"\absw",      rtf);
-        Assert.Contains(@"\box\brdrs", rtf);
-        Assert.Contains("box text",    rtf);
-        // 겹치는 도형(검은막대 원인)을 더 이상 만들지 않음
-        Assert.DoesNotContain(@"\shp", rtf);
+        // (1) 사각형 도형 — 외곽선 + 명시적 채움(검은막대 방지)
+        Assert.Contains(@"{\sv 1}",         rtf);   // shapeType 1 = rectangle
+        Assert.Contains(@"\sn fillColor",   rtf);
+        Assert.Contains(@"{\sn fFilled}{\sv 1}", rtf);
+        Assert.Contains(@"\sn lineColor",   rtf);
+        // (2) 같은 좌표의 텍스트 프레임 (\plain 으로 누수 차단)
+        Assert.Contains(@"\pard\plain\phpg\pvpg", rtf);
+        Assert.Contains(@"\posx",           rtf);
+        Assert.Contains("box text",         rtf);
     }
 
     [Fact]
