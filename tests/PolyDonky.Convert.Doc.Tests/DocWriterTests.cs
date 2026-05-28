@@ -635,7 +635,7 @@ public class DocWriterTests
     // ── 글상자 / 부유 이미지 / 머리말 토큰 ─────────────────────────────────────
 
     [Fact]
-    public void TextBox_Emits_Positioned_Bordered_Frame_With_Content()
+    public void TextBox_Emits_Box_Shape_Plus_Text_Frame()
     {
         var tb = new TextBoxObject
         {
@@ -646,17 +646,15 @@ public class DocWriterTests
         tb.Content.Add(Paragraph.Of("box text"));
         var rtf = WriteRtf(DocWith(tb));
 
-        // 위치 지정 프레임
-        Assert.Contains(@"\phpg\pvpg", rtf);
-        Assert.Contains(@"\posx",      rtf);
-        Assert.Contains(@"\absw",      rtf);
-        // 4면 테두리
-        Assert.Contains(@"\brdrt",     rtf);
-        Assert.Contains(@"\brdrl",     rtf);
-        Assert.Contains(@"\brdrb",     rtf);
-        Assert.Contains(@"\brdrr",     rtf);
-        // 텍스트가 단락 안에 직접 존재
-        Assert.Contains("box text",    rtf);
+        // (1) 박스 외곽선 도형 (사각형 + 선)
+        Assert.Contains(@"{\sv 1}",        rtf);   // shapeType 1 = rectangle
+        Assert.Contains(@"\sn lineColor",  rtf);
+        Assert.Contains(@"\sn fLine",      rtf);
+        // (2) 같은 위치의 텍스트 프레임
+        Assert.Contains(@"\phpg\pvpg",     rtf);
+        Assert.Contains(@"\posx",          rtf);
+        Assert.Contains(@"\absw",          rtf);
+        Assert.Contains("box text",        rtf);
     }
 
     [Fact]
