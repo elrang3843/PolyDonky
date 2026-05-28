@@ -929,7 +929,7 @@ public sealed class DocBinaryWriter
         using var stshi = new MemoryStream();
         var sw = new BinaryWriter(stshi);
         sw.Write((ushort)1);        // cstd = 1 (Normal only)
-        sw.Write((ushort)0x000A);   // cbSTDBaseInFile = 10 (Word 97 STD base)
+        sw.Write((ushort)0x0012);   // cbSTDBaseInFile = 18 (Word 97+ STD base: StdfBase + StdfPost2000)
         sw.Write((ushort)0x0000);   // fStdStylenamesWritten + grfReserved
         sw.Write((ushort)0);        // stiMaxWhenSaved
         sw.Write((ushort)1);        // istdMaxFixedWhenSaved
@@ -944,12 +944,16 @@ public sealed class DocBinaryWriter
         // ── rgLPStd[0] = Normal: cbStd(2) + STD ──
         using var std = new MemoryStream();
         var dw = new BinaryWriter(std);
-        // StdfBase (10 byte)
+        // StdfBase (10 byte) + StdfPost2000 (8 byte) = 18 byte (cbSTDBaseInFile)
         dw.Write((ushort)0x0000);   // sti=0 + flags
         dw.Write((ushort)0xFFF1);   // stk=1(para) | istdBase=0xFFF<<4
         dw.Write((ushort)0x0002);   // cupx=2 | istdNext=0
         dw.Write((ushort)0);        // bchUpe
         dw.Write((ushort)0);        // grfstd
+        // StdfPost2000 (8 byte): istdLink(12bit)+fHasOriginalStyle(1)+... + rsid(4) + iftcBi/cbSlnk 등 — 0 으로 충분
+        dw.Write((ushort)0x0FFF);   // istdLink=0xFFF (nil) | flags
+        dw.Write((ushort)0);
+        dw.Write((uint)0);          // rsid
         // xstzName "Normal": cchData(2) + UTF-16 + null(2)
         const string name = "Normal";
         dw.Write((ushort)name.Length);
@@ -1040,6 +1044,9 @@ public sealed class DocBinaryWriter
     }
 
     /// <summary>SttbfFfn extended format. FFN 내용은 40 byte zero header + UTF-16LE 이름 + null terminator.</summary>
+    /// <summary>SttbfFfn — extended STTB 안에 FFN([MS-DOC] §2.9.102) 구조들.
+    /// FFN 고정부 40 byte: cbFfnM1(1)=FFN전체크기-1 + flags(1) + wWeight(2) + chs(1) + ixchSzAlt(1) + panose(10) + fs(24).
+    /// cbFfnM1 이 0 이면 Word 가 FFN 을 1 byte 로 오인 → 폰트 테이블 파싱 실패 → 문서 거부.</summary>
     private static byte[] BuildSttbfFfn(List<string> fonts)
     {
         var ms = new MemoryStream();
@@ -1050,15 +1057,22 @@ public sealed class DocBinaryWriter
 
         foreach (var name in fonts)
         {
-            // FFN byte length = 40 (header) + (name + null) * 2
             byte[] nameUtf16 = Encoding.Unicode.GetBytes(name);
-            int ffnBytes = 40 + nameUtf16.Length + 2;   // +2 = null terminator (UTF-16 0x0000)
-            ushort cchData = (ushort)(ffnBytes / 2);
+            int ffnBytes = 40 + nameUtf16.Length + 2;   // 고정부 40 + 이름 + null(2)
+            ushort cchData = (ushort)(ffnBytes / 2);     // STTB 엔트리 길이 (16-bit unit)
 
             bw.Write(cchData);
-            for (int k = 0; k < 40; k++) bw.Write((byte)0);   // FFN header — Reader 가 무시
+            // FFN 고정부 (40 byte)
+            bw.Write((byte)(ffnBytes - 1));      // cbFfnM1 = FFN 전체 크기 - 1
+            bw.Write((byte)0x07);                // prq=3(variable) + fTrueType(0x04) → 0x07 (실제 Word 와 유사)
+            bw.Write((ushort)400);               // wWeight = 400 (normal)
+            bw.Write((byte)0);                   // chs = 0 (ANSI charset)
+            bw.Write((byte)0);                   // ixchSzAlt = 0 (대체 이름 없음)
+            for (int k = 0; k < 10; k++) bw.Write((byte)0);  // panose (10)
+            for (int k = 0; k < 24; k++) bw.Write((byte)0);  // fs (24)
+            // xszFfn: null-terminated UTF-16 이름
             bw.Write(nameUtf16);
-            bw.Write((ushort)0);                              // null terminator
+            bw.Write((ushort)0);                 // null terminator
         }
         return ms.ToArray();
     }
