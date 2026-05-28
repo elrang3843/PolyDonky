@@ -17,7 +17,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"/></a>
   <a href="#시스템-요구사항"><img src="https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6.svg" alt="Platform: Windows 10+"/></a>
-  <a href="#프로젝트-상태"><img src="https://img.shields.io/badge/Status-Alpha-yellow.svg" alt="Status: Alpha"/></a>
+  <a href="#프로젝트-상태"><img src="https://img.shields.io/badge/Status-Beta-blue.svg" alt="Status: Beta"/></a>
   <a href="#소스에서-빌드하기"><img src="https://img.shields.io/badge/Lang-C%23%20%2F%20WPF-512BD4.svg" alt="Language: C# / WPF"/></a>
   <a href="#소스에서-빌드하기"><img src="https://img.shields.io/badge/.NET-10.0-512BD4.svg" alt=".NET 10"/></a>
 </p>
@@ -105,9 +105,9 @@ PolyDonky는 모든 문서를 **공통 의미 모델 + 포맷별 보존 캡슐 +
 | HWPX  | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Hwpx` (자체 구현, KS X 6101) |
 | HTML / HTM | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Html` (AngleSharp) |
 | XML / XHTML | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Xml`       |
-| RTF   | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Doc` (자체 구현) |
+| RTF   | ✅  | ✅  | 외부 CLI — `PolyDonky.Convert.Doc` (자체 구현, `.rtf` ↔ IWPF) |
 | HWP   | ✅  | ⚠️  | 외부 CLI — `PolyDonky.Convert.Hwp` (import 전용; 출력은 HWPX/DOCX 권장) |
-| DOC (OLE2) | ⏳ | ⚠️ | v1.0.0 이후 자체 파서 추가 예정             |
+| DOC (Word 97-2003) | ✅ | ✅ | 외부 CLI — `PolyDonky.Convert.Doc` (읽기: OLE2 binary 파서; 쓰기: RTF 내용으로 출력 — Word·한글·LibreOffice 호환) |
 
 > 다른 포맷으로 저장할 때는 **항상 한 번 더 확인 다이얼로그**가 뜹니다.
 > 외부 포맷에서는 일부 정보가 손실될 수 있고, 정본 보존을 위해 IWPF 저장을 권장합니다.
@@ -137,10 +137,9 @@ PolyDonky는 외부 포맷 변환을 **독립 CLI 실행 파일**로 분리합�
 
 ## 프로젝트 상태
 
-> 🚧 **Alpha — 핵심 포맷 구현 완료, 안정화 진행 중입니다.**
-> IWPF, DOCX, HWPX, HTML, XML, RTF, HWP 변환이 동작하며 WPF 편집기가 실행됩니다.
-> 변경추적·수식·목차 등 3단계 기능은 구현 중입니다.
-> 정식 릴리스 빌드는 아직 제공되지 않습니다.
+> 🚧 **Beta — v1.0.0 정식 릴리스 완료, 안정화 진행 중입니다.**
+> IWPF, DOCX, HWPX, HTML, XML, RTF, DOC(Word 97-2003), HWP 변환이 동작하며 WPF 편집기가 실행됩니다.
+> 변경추적·수식 등 3단계 기능은 구현 중입니다.
 > 진행 상황은 [Issues](../../issues) / [Releases](../../releases) / [`HISTORY.md`](HISTORY.md) 에서 확인하세요.
 
 ### 버전 정책
@@ -152,8 +151,8 @@ PolyDonky는 외부 포맷 변환을 **독립 CLI 실행 파일**로 분리합�
 ### 개발 단계
 
 1. **1단계 ✅** — DOCX, HWPX 주력 포맷 지원 (외부 CLI) / IWPF 저장·로드 / 기본 편집 / HTML·XML·RTF·HWP 외부 CLI
-2. **2단계 (진행 중)** — 안정화, 고급 도형/텍스트박스, 표 편집 강화, DOC OLE2 ingest
-3. **3단계** — 변경추적, 주석, 수식, 필드/목차, 고급 표, 특수 조판
+2. **2단계 ✅** — DOC(Word 97-2003) 읽기/쓰기 구현, DOCX·HWPX·DOC 충실도 캡슐, RTF writer 완성도 개선, HWP 렌더링 대폭 향상
+3. **3단계 (진행 중)** — 변경추적, 주석, 수식, 고급 표, 특수 조판
 
 ---
 
@@ -386,10 +385,11 @@ IWPF 패키지 구조, 보존 캡슐 설계, provenance / dirty tracking, opaque
 - [x] **M2** — DOCX import/export, HWPX import/export
 - [x] **M3** — 표, 이미지, 머리말/꼬리말, 각주/미주
 - [x] **M4** — 도형/텍스트박스, 글상자 다단, HWP/HTML/RTF/XML 외부 CLI
-- [ ] **M5** — 변경추적, 주석, 수식 (OMML/LaTeX), DOC OLE2 ingest
+- [x] **M4-b** — DOC(Word 97-2003) 읽기/쓰기 완전 구현, DOCX·HWPX·DOC 충실도 캡슐, RTF writer 표·도형·글상자 렌더링 개선
+- [ ] **M5** — 변경추적, 주석, 수식 (OMML/LaTeX)
 - [ ] **M6** — 목차/필드 완성, 고급 표(시트형), 특수 조판
 - [x] **M7** — 테마 다중화(6종), i18n(한/영) 완성, 인쇄/미리보기
-- [x] **M8** — MSIX 인스톨러 구성 완료 (`Package.appxmanifest` + 자동화 워크플로). 첫 정식 릴리스 **`v1.0.0`** 은 메인테이너 명시 지시 시 컷
+- [x] **M8** — MSIX 인스톨러 구성 완료 (`Package.appxmanifest` + 자동화 워크플로). 첫 정식 릴리스 **`v1.0.0`** 컷 (2026-05-20)
 
 진행 상황은 [Projects](../../projects) / [Milestones](../../milestones) 에서 추적합니다.
 

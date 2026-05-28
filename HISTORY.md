@@ -44,6 +44,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Docs
+- **README.md, USER_GUIDE.md, WORK_PLAN.md 문서 보완**: DOC(Word 97-2003) 포맷 상태 ⏳→✅ 반영, 프로젝트 상태 Beta 갱신, 개발 단계 2단계 완료 표기, M4-b 로드맵 항목 추가, USER_GUIDE.md 에 RTF/XML/XHTML 지원 포맷 추가·DOCX/HWPX 아키텍처 설명 정정·각주/미주·목차·필드 코드·블록 그룹·서식 툴바·충실도 캡슐 섹션 신설, WORK_PLAN.md 에 DOC binary reader/writer 완료·테스트 수 416개 갱신.
+
 ### Changed
 - **DOC export (`.iwpf → .doc`) — Word 97-2003 OLE2 바이너리 대신 RTF 내용 출력으로 전환** (`tools/PolyDonky.Convert.Doc/Program.cs`): 사용자가 올린 한컴 한글 저장 `빈문서.doc` 를 분석한 결과 **한글 자신이 `.doc` 저장 시 OLE2 바이너리가 아니라 RTF 를 생성**(`{\rtf1\ansi\kis94\deflang1042\ansicpg949...`)함을 확인. Word / 한글 / Doc Viewer / Office 365 는 모두 `.doc` 확장자라도 `{\rtf1` 시그니처를 보고 RTF 로 인식해 정상적으로 연다. 우리 `DocBinaryWriter` (OLE2 바이너리) 는 wvWare 등 독립 파서는 통과하나 MS 계열(Office 365·Doc Viewer)·한글 strict parser 가 모두 거부했다 — Word 97 binary 의 수십 개 cross-validated 구조를 100% 맞추기 어렵고 검증할 MS 환경도 없음. 따라서 `.iwpf → .doc` 를 이미 완성도 높은 `DocWriter` (RTF) 로 출력하도록 전환 — 글자/단락 서식·표·이미지·도형·하이퍼링크·필드·각주/미주·주석·변경추적·페이지설정·머리말/꼬리말 모두 지원. 한글이 하는 방식 그대로이고 모든 주요 워드프로세서가 즉시 연다. `DocBinaryWriter` 는 `.doc` ingest 라운드트립 검증·향후용으로 코드베이스에 유지.
 

@@ -159,9 +159,9 @@ PolyDonky/
 - ✅ E19 목차 자동 생성 (전 페이지 스캔 + 페이지 번호 삽입 구현)
 - ✅ E20 필드 코드 자동 갱신 — FieldRenderContext 도입, 페이지네이션 시 Page/NumPages/Author/Title 실제 값 반영
 
-### Phase F — RTF/HWP ingest
+### Phase F — RTF/HWP/DOC ingest
 
-**결정**: LibreOffice 미사용. RTF 는 자체 구현(`DocWriter`), HWP·DOC 는 v1.0.0 이후 자체 CLI 파서로 진행.
+**결정**: LibreOffice 미사용. RTF 는 자체 구현(`DocWriter`/`DocReader`), DOC binary 는 자체 CLI 파서(`DocBinaryReader`/`DocBinaryWriter`), HWP 는 자체 CLI 파서 구현.
 
 **F1 RTF export/import** ✅
 - `tools/PolyDonky.Convert.Doc` CLI: IWPF ↔ RTF (`DocWriter`/`DocReader` 자체 구현)
@@ -169,13 +169,31 @@ PolyDonky/
 - 글자/단락 서식·위첨자/아래첨자·표·이미지·메타데이터 완전 지원
 - 도형(`\shp`) 아웃라인 지원: 위치·크기·종류·채우기/선 색상 ✅
 - OLE 개체(`\object`) 아웃라인 지원: OpaqueBlock 보존 ✅
+- RTF writer: 표 테두리(셀/그리드 레벨 cascade), 도형 직선 방향, 글상자(도형+텍스트 프레임), 부유 이미지 위치, 머리말·꼬리말 필드, 페이지 번호 필드 정확도 개선 ✅
 
-**F1-후속 RTF 도형/OLE 전체 지원** ☐ (v1.0.0 이후)
+**F1-b DOC (Word 97-2003) binary reader** ✅
+- `DocBinaryReader` (`OpenMcdf` 기반): OLE2 컨테이너 → FIB → CLX piece table → WordDocument stream 전처리
+- Phase 1a-1g: 본문 추출, 글자/단락 서식(PAPX/CHPX FKP), 폰트(SttbfFfn), STSH 스타일 상속, 들여쓰기·간격·색상, 폰트 패밀리, istdBase 체이닝
+- Phase 2a-2d: 표 인식(sprmPFInTable/Fttp), 셀 너비·테두리·배경
+- Phase 3a-3n: 하이퍼링크·필드·책갈피, 각주/미주, 헤더/푸터 run-rich, 주석, 변경추적, 이미지(BStore/OfficeArt), OLE 임베드, VBA 매크로 격리, 디지털 서명 격리, 알 수 없는 storage 보존
+
+**F1-c DOC (Word 97-2003) binary writer** ✅ (export: RTF 내용 출력)
+- `DocBinaryWriter` (OLE2 바이너리): FIB + CLX + FKP + STSH + PlcfSed + SEPX + SttbfFfn + 책갈피 + FidelityCapsules 복원 — 라운드트립 검증용
+- **DOC export 방향**: `.iwpf → .doc` 는 `DocWriter`(RTF 내용)으로 출력 — 한컴 한글이 `.doc` 저장 시 RTF 내용을 쓰는 것과 동일. Word·한글·LibreOffice 모두 즉시 인식.
+- `DocBinaryWriter`는 코드베이스 유지 (라운드트립 검증·향후용)
+
+**F1-d 충실도 캡슐(FidelityCapsules)** ✅
+- DOCX: `ooxml/<path>` 에 비표준 파트(VBA, customXml, 서명 등) 격리 → 라운드트립 시 ZIP 파트로 복원
+- HWPX: `hwpx/<path>` 에 비표준 파트(Scripts 등) 격리 → 라운드트립 시 ZIP 파트로 복원
+- DOC: `msdoc/macros/`, `msdoc/signatures/`, `msdoc/preserved/` 에 격리 → IWPF 패키지 저장 → `.doc` export 시 OLE2 storage 복원
+- App UI: 상태바 "⚠ 매크로 포함"/"🔏 서명됨" 표시 + 파일 메뉴 "문서 정보 / 보존 데이터"
+
+**F1-후속 RTF 도형/OLE 전체 지원** ☐ (v1.1.0+ 이후)
 - `\shp` 전체 속성: 그림자·3D·곡선 경로(polyline/spline)·텍스트 레이아웃 등
 - `\object` OLE 데이터 완전 복원: 바이너리 역직렬화 + 뷰어 연동
 
-**F2 HWP import/export** ☐ (v1.0.0 이후)
-- `tools/PolyDonky.Convert.Hwp` CLI: 자체 HWP 파서 구현 예정
+**F2 HWP ingest (고급)** ☐ (v1.1.0 이후)
+- `tools/PolyDonky.Convert.Hwp` CLI: 기본 텍스트·서식·표·이미지·도형 ✅, 고급 기능(변경추적·수식 등) 추가 예정
 
 **F3 Opaque island 정책 전면 적용** ☐
 - 이해 못 한 개체를 read-only 보존, HWPX export 원형 직렬화
@@ -183,13 +201,14 @@ PolyDonky/
 ### Phase G — 고급 기능
 - ✅ G-Themes 다중 테마 — Light/Dark/Soft/Student/Youth/Senior 6종 완료 (2026-05-20)
 
-### Phase H — 인스톨러 / `1.0.0` 릴리즈
+### Phase H — 인스톨러 / 릴리즈
 - ✅ H1 MSIX 인스톨러 패키징 — `Package.appxmanifest` + `MSIX.pubxml` + CI 워크플로 자동화 (2026-05-20)
-- ☐ G5 사용자 명시 지시 후 `1.0.0` 컷 — `[Unreleased]` → `[1.0.0]` 승격, `v1.0.0` 태그
+- ✅ G5 `1.0.0` 컷 — 2026-05-20 (사용자 확인 완료)
+- ☐ 다음 릴리즈 — v1.1.0 (DOC binary reader/writer, 충실도 캡슐, RTF 완성도 포함)
 
 ---
 
-## 현재 테스트 현황 (Linux 환경, 2026-05-07 기준)
+## 현재 테스트 현황 (Linux 환경, 2026-05-28 기준)
 
 | 프로젝트 | 테스트 수 | 상태 |
 |---|---|---|
@@ -201,7 +220,8 @@ PolyDonky/
 | PolyDonky.Codecs.Hwpx.Tests | 52 | ✅ |
 | PolyDonky.Codecs.Html.Tests | 95 | ✅ |
 | PolyDonky.Codecs.Xml.Tests | 30 | ✅ |
-| **Linux 합계** | **299** | **All green** |
+| PolyDonky.Convert.Doc.Tests | 117 | ✅ |
+| **Linux 합계** | **416** | **All green** |
 | PolyDonky.App.Tests | (WPF — Windows 전용) | 별도 검증 |
 
 ---
@@ -215,7 +235,7 @@ PolyDonky/
 | G2 | Phase B 시작 | Windows build/run 검증 | ✅ 완료 |
 | G3 | Phase C 종료 | HWPX·DOCX·HTML·XML 시각 검증 | ✅ 완료 (2026-05-20) |
 | G4 | Phase F 진입 시 | HWP/DOC 변환 노선 확정 | ✅ **LibreOffice 미사용, 자체 CLI 파서로 결정** |
-| G5 | Phase H 진입 시 | "릴리즈하자" 명시 — `1.0.0` 컷 | ☐ 미진입 |
+| G5 | Phase H 진입 시 | "릴리즈하자" 명시 — `1.0.0` 컷 | ✅ 완료 (2026-05-20) |
 
 ---
 
@@ -226,17 +246,21 @@ PolyDonky/
 - **Phase B** ✅ — WPF 앱 완전 구현. 메인 윈도우·메뉴 6단·FlowDocument 편집기·PaperHost 레이어·Undo/Redo·찾기/바꾸기·테마·i18n·설정·인쇄 미리보기·암호화·전 편집 다이얼로그. G2 통과.
 - **Phase C** ✅ — DOCX/HWPX 1급 시민, HTML5/XML 코덱 완전 구현 (SVG 도형 양방향, 편집용지 직렬화 포함). 274개 Linux 테스트 전 그린.
 - **Phase D** ✅ — CLI 컨버터 4종 (Html/Xml/Docx/Hwpx) 분리, ExternalConverter.cs IPC 서비스.
-- **Phase E (부분)** ✅ — 표·이미지·도형·텍스트박스·각주·하이퍼링크·특수문자·이모지·수식·편집용지·글자서식·단락서식·머리말/꼬리말·페이지나누기·문서정보·개요서식·사전 Shell 구현.
+- **Phase E** ✅ — 표·이미지·도형·텍스트박스·각주·하이퍼링크·특수문자·이모지·수식·편집용지·글자서식·단락서식·머리말/꼬리말·페이지나누기·문서정보·개요서식·사전·목차 자동 생성(E19)·필드 코드 갱신(E20)·블록 그룹 구현.
+- **Phase F (RTF/DOC)** ✅ — RTF reader/writer, DOC binary reader(Phase 1a-3n), DOC binary writer(Phase W2a-W2e), 충실도 캡슐(DOCX/HWPX/DOC). DOC export는 RTF 내용 출력으로 전환.
+- **Phase H** ✅ — MSIX 인스톨러, v1.0.0 정식 릴리즈 (2026-05-20).
 
 ### 미완료 / 다음 작업 후보
 
-1. ~~**G3 완료**~~ ✅ 완료 (2026-05-20) — HWPX·DOCX·HTML·XML·App.Tests 모두 사용자 검증 통과.
+1. **v1.1.0 릴리즈** — `[Unreleased]` 내용을 `[1.1.0]` 으로 승격. 사용자 명시 지시 시.
 
-2. ~~**E19 목차 자동 생성**~~ ✅ 완료.
+2. **F2 HWP ingest (고급)** — 자체 CLI 파서(`tools/PolyDonky.Convert.Hwp`) 에 고급 기능(변경추적·수식 등) 추가.
 
-3. **F2 HWP ingest** — v1.0.0 이후. 자체 CLI 파서(`tools/PolyDonky.Convert.Hwp`) 구현.
+3. **F3 Opaque island 정책** — HWPX export 시 미인식 개체 원형 직렬화.
 
-4. ~~**H1 MSIX 인스톨러**~~ ✅ 완료 (2026-05-20) — `Package.appxmanifest` + 게시 프로파일 + CI 워크플로.
+4. **Phase M5** — 변경추적, 주석, 수식 (OMML/LaTeX).
+
+5. **Phase M6** — 고급 표(시트형), 특수 조판.
 
 ### 알려진 한계·주의사항
 
@@ -245,6 +269,7 @@ PolyDonky/
 - **FlowDocument 표현 한계**: 장평·자간·Provenance 등은 FlowDocument 표현 불가. `FlowDocumentParser.Parse(fd, originalForMerge: _document)` 로 비파괴 보존 — 편집 후 Save 경로에서 반드시 호출.
 - **WPF 빌드 검증**: Linux 환경에서 App 코드 변경 후 `csproj ProjectReference` 누락 및 namespace 충돌(`DocumentFormat.OpenXml` 과 충돌한 선례 있음) 을 반드시 점검.
 - **이모지 유니코드**: EmojiWindow 에서 삽입한 이모지는 `Run.Text` 에 직접 저장. HWPX export 시 UTF-8 직렬화 범위 확인 필요.
+- **DOC binary writer**: `.iwpf → .doc` export는 RTF 내용으로 출력. `DocBinaryWriter`(OLE2 binary)는 라운드트립 검증용으로 코드베이스에 유지.
 
 ### 사용자 작업이 필요한 항목
 
@@ -252,3 +277,4 @@ PolyDonky/
 - [x] **G3 HTML/XML import 검증**: 완료 (2026-05-20)
 - [x] **App.Tests 검증**: 완료 (2026-05-20)
 - [ ] **H1 MSIX 인스톨러 검증**: Windows 에서 MSIX 설치 → 앱 실행 확인.
+- [ ] **v1.1.0 릴리즈 결정**: `[Unreleased]` 내용 (DOC binary reader/writer, 충실도 캡슐, RTF 개선) 릴리즈 시 명시.
