@@ -164,6 +164,27 @@ public class DocWriter
         return _colors.Count - 1;
     }
 
+    /// <summary>RTF \highlight 팔레트(1~16) 중 RGB 에 가장 가까운 색 인덱스.
+    /// 1 black, 2 blue, 3 cyan, 4 green, 5 magenta, 6 red, 7 yellow, 8 white, 9 dkblue,
+    /// 10 dkcyan(teal), 11 dkgreen, 12 dkmagenta, 13 dkred, 14 dkyellow(olive), 15 dkgray, 16 ltgray.</summary>
+    private static int NearestHighlightIndex(Color c)
+    {
+        (int idx, byte r, byte g, byte b)[] pal =
+        {
+            (1,0,0,0), (2,0,0,255), (3,0,255,255), (4,0,255,0), (5,255,0,255), (6,255,0,0),
+            (7,255,255,0), (8,255,255,255), (9,0,0,128), (10,0,128,128), (11,0,128,0),
+            (12,128,0,128), (13,128,0,0), (14,128,128,0), (15,128,128,128), (16,192,192,192),
+        };
+        int best = 7; long bestDist = long.MaxValue;   // 기본값 노랑(흔한 형광펜)
+        foreach (var (idx, r, g, b) in pal)
+        {
+            long dr = c.R - r, dg = c.G - g, db = c.B - b;
+            long d = dr * dr + dg * dg + db * db;
+            if (d < bestDist) { bestDist = d; best = idx; }
+        }
+        return best;
+    }
+
     // ── RTF 헤더 ────────────────────────────────────────────────────────────────
 
     private void WriteFontTable(StringBuilder sb)
@@ -655,16 +676,16 @@ public class DocWriter
         int ci = rs.Foreground.HasValue ? RegisterColor(rs.Foreground.Value) : 0;
         sb.Append($@"\cf{ci}");
 
-        // 배경색 (하이라이트) — Word 는 \cb 를 거의 렌더 안 하므로 character shading
-        //   \chshdng0\chcbpat{N} (배경 100% 채움) 을 함께 출력. \cb 는 다른 reader 용 폴백.
+        // 배경색 (하이라이트) — Word 는 \cb / \chcbpat 를 안정적으로 렌더하지 않아(검정으로 나옴),
+        //   형광펜 팔레트 \highlight{N} (1~16) 으로 출력. RGB 를 최근접 팔레트색으로 매핑.
+        //   \cb 는 임의 RGB 를 보존하는 다른 reader 용 폴백.
         Color? bg = rs.Background;
         if (!bg.HasValue && ps.BackgroundColor is { Length: > 0 } hex)
             try { bg = Color.FromHex(hex); } catch { }
         bool hasBg = bg.HasValue;
         if (hasBg)
         {
-            int bgi = RegisterColor(bg!.Value);
-            sb.Append($@"\chshdng0\chcbpat{bgi}\cb{bgi}");
+            sb.Append($@"\highlight{NearestHighlightIndex(bg!.Value)}\cb{RegisterColor(bg.Value)}");
         }
 
         // 글자 크기 (half-point)
@@ -688,7 +709,7 @@ public class DocWriter
         if (rs.Underline)     sb.Append(@"\ulnone");
         if (rs.Strikethrough) sb.Append(@"\strike0");
         if (rs.Superscript || rs.Subscript) sb.Append(@"\nosupersub");
-        if (hasBg)            sb.Append(@"\chcbpat0\cb0");
+        if (hasBg)            sb.Append(@"\highlight0\cb0");
 
         sb.Append(' ');
     }

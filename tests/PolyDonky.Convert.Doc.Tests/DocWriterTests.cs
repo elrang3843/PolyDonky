@@ -70,16 +70,29 @@ public class DocWriterTests
     }
 
     [Fact]
-    public void Run_Background_Emits_Character_Shading_For_Word()
+    public void Run_Background_Emits_Highlight_Palette_For_Word()
     {
         var p = new Paragraph();
         p.AddText("highlighted", new RunStyle { Background = new Color(0x00, 0xFF, 0xFF) });  // cyan
         var rtf = WriteRtf(DocWith(p));
 
-        // Word 가 인식하는 character shading (배경 100%)
-        Assert.Contains(@"\chcbpat", rtf);
-        Assert.Contains(@"\chshdng0", rtf);
-        Assert.Contains("highlighted", rtf);
+        // cyan = \highlight 팔레트 index 3
+        Assert.Contains(@"\highlight3", rtf);
+        Assert.Contains(@"\highlight0", rtf);   // 리셋
+        Assert.Contains("highlighted",  rtf);
+    }
+
+    [Theory]
+    [InlineData(0xFF, 0xFF, 0x00, 7)]   // yellow → 7
+    [InlineData(0xFF, 0x00, 0x00, 6)]   // red → 6
+    [InlineData(0x00, 0xFF, 0x00, 4)]   // green → 4
+    [InlineData(0x00, 0xFF, 0xFF, 3)]   // cyan → 3
+    public void Highlight_Maps_To_Nearest_Palette(int r, int g, int b, int idx)
+    {
+        var p = new Paragraph();
+        p.AddText("hl", new RunStyle { Background = new Color((byte)r, (byte)g, (byte)b) });
+        var rtf = WriteRtf(DocWith(p));
+        Assert.Contains($@"\highlight{idx}", rtf);
     }
 
     [Fact]
