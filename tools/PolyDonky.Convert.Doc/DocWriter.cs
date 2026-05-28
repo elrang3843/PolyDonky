@@ -676,17 +676,15 @@ public class DocWriter
         int ci = rs.Foreground.HasValue ? RegisterColor(rs.Foreground.Value) : 0;
         sb.Append($@"\cf{ci}");
 
-        // 배경색 (하이라이트) — Word 는 \cb / \chcbpat 를 안정적으로 렌더하지 않아(검정으로 나옴),
-        //   형광펜 팔레트 \highlight{N} (1~16) 으로 출력. RGB 를 최근접 팔레트색으로 매핑.
-        //   \cb 는 임의 RGB 를 보존하는 다른 reader 용 폴백.
+        // 배경색 (하이라이트) — 형광펜 팔레트 \highlight{N} (1~16) 으로만 출력.
+        //   \cb / \chcbpat 는 Word 가 안정적으로 렌더 안 하고(검정), 특히 \cb0 은 "끄기"가 아니라
+        //   "배경=색상0(검정)" 이라 후속 run 으로 검정 배경이 새는 버그가 있어 사용 안 함.
         Color? bg = rs.Background;
         if (!bg.HasValue && ps.BackgroundColor is { Length: > 0 } hex)
             try { bg = Color.FromHex(hex); } catch { }
         bool hasBg = bg.HasValue;
         if (hasBg)
-        {
-            sb.Append($@"\highlight{NearestHighlightIndex(bg!.Value)}\cb{RegisterColor(bg.Value)}");
-        }
+            sb.Append($@"\highlight{NearestHighlightIndex(bg!.Value)}");
 
         // 글자 크기 (half-point)
         double fsz = rs.FontSizePt > 0 ? rs.FontSizePt : 11;
@@ -709,7 +707,7 @@ public class DocWriter
         if (rs.Underline)     sb.Append(@"\ulnone");
         if (rs.Strikethrough) sb.Append(@"\strike0");
         if (rs.Superscript || rs.Subscript) sb.Append(@"\nosupersub");
-        if (hasBg)            sb.Append(@"\highlight0\cb0");
+        if (hasBg)            sb.Append(@"\highlight0");
 
         sb.Append(' ');
     }
