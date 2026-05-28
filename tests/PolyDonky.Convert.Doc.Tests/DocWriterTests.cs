@@ -824,4 +824,36 @@ public class DocWriterTests
         Assert.Contains(@"\red255\green0\blue0;", rtf);
         Assert.Matches(@"\\clbrdrt\\brdrs\\brdrw20\\brdrcf\d+", rtf);
     }
+
+    [Fact]
+    public void Table_Inner_Borders_Are_Applied_To_Cells()
+    {
+        // 그리드 표는 셀별 테두리 없이 표 레벨 InnerBorderHorizontal/Vertical 로만
+        // 테두리를 보관한다 — 이것이 셀 면으로 풀려야 Word 에서 표 테두리가 보인다.
+        var grid = new CellBorderSide(0.75, "#C8C8C8");
+        var table = new Table
+        {
+            BorderTop = grid, BorderBottom = grid, BorderLeft = grid, BorderRight = grid,
+            InnerBorderHorizontal = grid, InnerBorderVertical = grid,
+        };
+        for (int r = 0; r < 2; r++)
+        {
+            var row = new TableRow();
+            for (int c = 0; c < 2; c++)
+            {
+                var cell = new TableCell();
+                cell.Blocks.Add(Paragraph.Of($"r{r}c{c}"));
+                row.Cells.Add(cell);
+            }
+            table.Rows.Add(row);
+        }
+        var rtf = WriteRtf(DocWith(table));
+
+        // 안쪽 면이 풀려 모든 셀에 테두리가 emit 되어야 한다 (0.75pt = 15twips).
+        Assert.Contains(@"\brdrw15", rtf);
+        Assert.Contains(@"\red200\green200\blue200;", rtf);
+        // 4 셀 × 4 면 = 16 개 \clbrdr 가 나와야 한다.
+        int count = System.Text.RegularExpressions.Regex.Matches(rtf, @"\\clbrdr[tblr]\\brdrs").Count;
+        Assert.Equal(16, count);
+    }
 }

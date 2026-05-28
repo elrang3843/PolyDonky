@@ -107,11 +107,16 @@ public class DocWriter
             case Table t:
                 ScanBorderColor(t.BorderTop);    ScanBorderColor(t.BorderBottom);
                 ScanBorderColor(t.BorderLeft);   ScanBorderColor(t.BorderRight);
+                ScanBorderColor(t.InnerBorderHorizontal); ScanBorderColor(t.InnerBorderVertical);
+                if (!string.IsNullOrEmpty(t.BorderColor))
+                    try { RegisterColor(Color.FromHex(t.BorderColor!)); } catch { }
                 foreach (var row in t.Rows)
                     foreach (var cell in row.Cells)
                     {
                         if (!string.IsNullOrEmpty(cell.BackgroundColor))
                             try { RegisterColor(Color.FromHex(cell.BackgroundColor!)); } catch { }
+                        if (!string.IsNullOrEmpty(cell.BorderColor))
+                            try { RegisterColor(Color.FromHex(cell.BorderColor!)); } catch { }
                         ScanBorderColor(cell.BorderTop);    ScanBorderColor(cell.BorderBottom);
                         ScanBorderColor(cell.BorderLeft);   ScanBorderColor(cell.BorderRight);
                         foreach (var b in cell.Blocks) ScanBlock(b);
@@ -830,6 +835,7 @@ public class DocWriter
 
             // 셀 경계 정의
             int cumWidth = 0;
+            int lastCi   = row.Cells.Count - 1;
             for (int ci = 0; ci < row.Cells.Count && ci < colCount; ci++)
             {
                 var cell = row.Cells[ci];
@@ -838,7 +844,11 @@ public class DocWriter
                 for (int k = ci; k < ci + span && k < colWidths.Count; k++) cw += colWidths[k];
                 cumWidth += cw;
 
-                WriteCellDef(cell, table, cumWidth, sb);
+                bool isTop    = ri == 0;
+                bool isBottom = ri == table.Rows.Count - 1;
+                bool isLeft   = ci == 0;
+                bool isRight  = ci == lastCi;
+                WriteCellDef(cell, table, cumWidth, isTop, isBottom, isLeft, isRight, sb);
             }
             sb.AppendLine();
 
@@ -863,7 +873,8 @@ public class DocWriter
         }
     }
 
-    private void WriteCellDef(TableCell cell, Table table, int rightEdgeTwips, StringBuilder sb)
+    private void WriteCellDef(TableCell cell, Table table, int rightEdgeTwips,
+        bool isTopEdge, bool isBottomEdge, bool isLeftEdge, bool isRightEdge, StringBuilder sb)
     {
         // 수직 정렬
         sb.Append(cell.VerticalAlign switch
@@ -884,11 +895,18 @@ public class DocWriter
             catch { }
         }
 
-        // 셀 테두리
-        WriteCellBorder(@"\clbrdrt", cell.BorderTop   ?? table.BorderTop,   sb);
-        WriteCellBorder(@"\clbrdrb", cell.BorderBottom?? table.BorderBottom, sb);
-        WriteCellBorder(@"\clbrdrl", cell.BorderLeft  ?? table.BorderLeft,   sb);
-        WriteCellBorder(@"\clbrdrr", cell.BorderRight ?? table.BorderRight,  sb);
+        // 셀 테두리 — 렌더러(FlowDocumentBuilder.ResolveBorderSide)와 동일 cascade:
+        //   셀 면 지정 > (외곽이면 표 외곽 면 / 안쪽이면 InnerBorderH·V) > 셀·표 공통값.
+        //   그리드 표는 InnerBorderHorizontal/Vertical 로만 테두리를 보관하므로 반드시 반영해야
+        //   Word 에서 표 테두리가 보인다.
+        WriteCellBorder(@"\clbrdrt",
+            ResolveBorder(cell.BorderTop,    isTopEdge,    table.BorderTop,    table.InnerBorderHorizontal, cell, table), sb);
+        WriteCellBorder(@"\clbrdrb",
+            ResolveBorder(cell.BorderBottom, isBottomEdge, table.BorderBottom, table.InnerBorderHorizontal, cell, table), sb);
+        WriteCellBorder(@"\clbrdrl",
+            ResolveBorder(cell.BorderLeft,   isLeftEdge,   table.BorderLeft,   table.InnerBorderVertical,   cell, table), sb);
+        WriteCellBorder(@"\clbrdrr",
+            ResolveBorder(cell.BorderRight,  isRightEdge,  table.BorderRight,  table.InnerBorderVertical,   cell, table), sb);
 
         // 패딩 (twips)
         double pt = cell.PaddingTopMm    > 0 ? cell.PaddingTopMm    : table.DefaultCellPaddingTopMm;
@@ -903,9 +921,26 @@ public class DocWriter
         sb.Append($@"\cellx{rightEdgeTwips}");
     }
 
+    /// <summary>면별 테두리 cascade. 두께가 0 이하로 귀결되면 null(테두리 없음).
+    /// FlowDocumentBuilder.ResolveBorderSide 와 동일한 우선순위.</summary>
+    private static CellBorderSide? ResolveBorder(
+        CellBorderSide? cellSide, bool isEdge,
+        CellBorderSide? tableEdge, CellBorderSide? tableInner,
+        TableCell cell, Table table)
+    {
+        if (cellSide.HasValue) return cellSide;
+        var edgeOrInner = isEdge ? tableEdge : tableInner;
+        if (edgeOrInner.HasValue) return edgeOrInner;
+
+        double thk = cell.BorderThicknessPt > 0 ? cell.BorderThicknessPt : table.BorderThicknessPt;
+        if (thk <= 0) return null;
+        string? clr = !string.IsNullOrEmpty(cell.BorderColor) ? cell.BorderColor : table.BorderColor;
+        return new CellBorderSide(thk, clr);
+    }
+
     private void WriteCellBorder(string rtfKey, CellBorderSide? side, StringBuilder sb)
     {
-        if (side is null) return;
+        if (side is null || side.Value.ThicknessPt <= 0) return;
         sb.Append(rtfKey);
         sb.Append(side.Value.LineStyle switch
         {
