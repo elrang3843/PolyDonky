@@ -48,13 +48,17 @@ public sealed class DocBinaryWriter
     private const ushort FibFlags  = 0x12F0;
     private const ushort Csw       = 0x000E;          // FibRgW97 size (14 shorts)
     private const ushort Cslw      = 0x0016;          // FibRgLw97 size (22 longs)
-    private const ushort CbRgFcLcb = 0x005D;          // FibRgFcLcb97 pair count (93) — Word 97
-    /// <summary>cswNew — [MS-DOC] §2.5.1: 0이면 순수 Word 97 (FibRgCswNew 없음).
-    /// cbRgFcLcb=0x5D(=FibRgFcLcb97) 와 짝이 맞으려면 반드시 0. 비-0 이면 nFibNew 가 newer 버전을 가리켜야 하고
-    /// cbRgFcLcb 도 그에 맞게 커져야 하므로, 0으로 두는 게 Word 97 문서로 일관된다.</summary>
-    private const ushort CswNew    = 0x0000;
-    /// <summary>FIB 영역 패딩 — Reader 가드(최대 0x0316) + cswNew(0x0382) 까지 충분.</summary>
-    private const int    FibPadSize = 0x400;
+    // Word 2003 FIB 변종 — 실제로 한글/Doc Viewer 가 여는 doc 들은 모두 Word 2000+ 형식이다
+    //   (sample5.doc = cbRgFcLcb 0xA4 / cswNew 2 / nFibNew 0x010C). 순수 Word 97 (cbRgFcLcb 0x5D,
+    //   cswNew 0) 은 MS Doc Viewer / 한글이 거부하는 정황이라 sample5.doc 과 동일하게 맞춘다.
+    private const ushort CbRgFcLcb = 0x00A4;          // FibRgFcLcb2003 pair count (164)
+    /// <summary>cswNew = 2 → FibRgCswNew 존재 (Word 2000+). nFibNew 가 실제 버전, 이어서 cQuickSavesNew.</summary>
+    private const ushort CswNew    = 0x0002;
+    /// <summary>nFibNew — Word 2003 (0x010C). cbRgFcLcb=0xA4 와 짝.</summary>
+    private const ushort NFibNew   = 0x010C;
+    /// <summary>FIB 영역 패딩 — cbRgFcLcb=0xA4 → FibRgFcLcbBlob 끝 0x5BA + cswNew(2)+FibRgCswNew(4) = 0x5C0.
+    /// 512 경계로 0x600 까지 패딩하고 본문 텍스트는 그 뒤(0x600)에서 시작.</summary>
+    private const int    FibPadSize = 0x600;
 
     /// <summary>Word.Document.8 CLSID (Word 97-2003 binary). 한글/Word 등 OLE consumer 가 이 CLSID 로
     /// 파일 종류를 판단하므로 RootStorage 에 반드시 박혀 있어야 한다.</summary>
@@ -1130,10 +1134,12 @@ public sealed class DocBinaryWriter
         WritePair(wd, PairFcPlcfSed,     ctx.FcPlcfSed,     ctx.LcbPlcfSed);
         WritePair(wd, PairFcDop,         ctx.FcDop,         ctx.LcbDop);
 
-        // cswNew = 0 → 순수 Word 97 FIB (FibRgCswNew 없음). cbRgFcLcb=0x5D 와 일관.
-        //   nFibNew 등을 쓰지 않는다 — 비-0 cswNew + nFibNew=0xC1 조합은 모순이라 strict parser 가 거부.
-        int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;
-        WriteUInt16(wd, cswNewOffset, CswNew);   // 0
+        // FibRgCswNew (Word 2000+) — cswNew(2) + nFibNew(2) + cQuickSavesNew(2).
+        //   cbRgFcLcb=0xA4 와 nFibNew=0x010C 가 일관된 Word 2003 문서.
+        int cswNewOffset = RgFcLcbBase + CbRgFcLcb * 8;   // 0x9A + 0xA4*8 = 0x5BA
+        WriteUInt16(wd, cswNewOffset,     CswNew);         // cswNew = 2
+        WriteUInt16(wd, cswNewOffset + 2, NFibNew);        // FibRgCswNew[0] = nFibNew (0x010C)
+        WriteUInt16(wd, cswNewOffset + 4, 0);              // FibRgCswNew[1] = cQuickSavesNew = 0
 
         _ = tableLength;
     }

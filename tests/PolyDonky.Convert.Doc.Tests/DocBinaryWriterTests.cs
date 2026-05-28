@@ -708,7 +708,7 @@ public class DocBinaryWriterTests
     // ── Word strict-parser 호환 skeleton (STSH / PlcfSed / SEPX) ───────────
 
     [Fact]
-    public void Fib_Is_Consistent_Word97_Configuration()
+    public void Fib_Is_Consistent_Word2003_Configuration()
     {
         var bytes = WriteDoc(DocWith(Paragraph.Of("x")));
         using var ms = new MemoryStream(bytes);
@@ -722,11 +722,13 @@ public class DocBinaryWriterTests
         Assert.True(BitConverter.ToUInt32(wb, 0x1C) > BitConverter.ToUInt32(wb, 0x18), "fcMac > fcMin");
         // flags: cQuickSaves=0xF + fWhichTblStm + fExtChar = 0x12F0
         Assert.Equal((ushort)0x12F0, BitConverter.ToUInt16(wb, 0x0A));
-        // cbRgFcLcb = 0x5D (FibRgFcLcb97), cswNew = 0 (순수 Word 97, FibRgCswNew 없음) — 일관성
-        Assert.Equal((ushort)0x005D, BitConverter.ToUInt16(wb, 0x98));
-        int cswNewOffset = 0x009A + 0x005D * 8;
-        Assert.Equal((ushort)0, BitConverter.ToUInt16(wb, cswNewOffset));
-        // lid = 한국어
+        // Word 2003 변종: cbRgFcLcb = 0xA4 (164), cswNew = 2, nFibNew = 0x010C — 실제 doc 과 일관성
+        Assert.Equal((ushort)0x00A4, BitConverter.ToUInt16(wb, 0x98));
+        int cswNewOffset = 0x009A + 0x00A4 * 8;
+        Assert.Equal((ushort)0x0002, BitConverter.ToUInt16(wb, cswNewOffset));
+        Assert.Equal((ushort)0x010C, BitConverter.ToUInt16(wb, cswNewOffset + 2));
+        // nFib (FibBase) 는 여전히 0xC1, lid = 한국어
+        Assert.Equal((ushort)0x00C1, BitConverter.ToUInt16(wb, 0x02));
         Assert.Equal((ushort)0x0412, BitConverter.ToUInt16(wb, 0x06));
     }
 
