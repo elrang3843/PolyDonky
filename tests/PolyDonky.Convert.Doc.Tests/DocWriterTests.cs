@@ -632,22 +632,93 @@ public class DocWriterTests
         Assert.DoesNotContain(@"{\footer", rtf);
     }
 
+    // ── 글상자 / 부유 이미지 / 머리말 토큰 ─────────────────────────────────────
+
     [Fact]
-    public void Header_Paragraph_With_Page_Field_Is_Preserved()
+    public void TextBox_Emits_Shp_TextBox_With_Content()
+    {
+        var tb = new TextBoxObject { OverlayXMm = 20, OverlayYMm = 180, WidthMm = 50, HeightMm = 25 };
+        tb.Content.Clear();
+        tb.Content.Add(Paragraph.Of("box text"));
+        var rtf = WriteRtf(DocWith(tb));
+
+        Assert.Contains(@"{\sv 202}", rtf);     // shapeType 202 = text box
+        Assert.Contains(@"\shptxt",   rtf);
+        Assert.Contains("box text",   rtf);
+    }
+
+    [Fact]
+    public void Floating_Image_Emits_Page_Positioned_Frame()
     {
         var doc = new PolyDonkyument();
         var sec = new Section();
-        var hp = new Paragraph();
-        hp.AddText("Page ");
-        hp.Runs.Add(new Run { Text = "1", Field = FieldType.Page });
-        sec.Page.Header.Center.Paragraphs.Add(hp);
+        sec.Blocks.Add(new ImageBlock
+        {
+            MediaType = "image/png",
+            Data      = new byte[] { 1, 2, 3, 4 },
+            WidthMm   = 30, HeightMm = 20,
+            WrapMode  = ImageWrapMode.InFrontOfText,
+            OverlayXMm = 120, OverlayYMm = 90,
+        });
+        doc.Sections.Add(sec);
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"\phpg\pvpg", rtf);   // page-relative absolute frame
+        Assert.Contains(@"\posx",      rtf);
+        Assert.Contains(@"\posy",      rtf);
+        Assert.Contains(@"\pict",      rtf);
+    }
+
+    [Fact]
+    public void Inline_Image_Stays_Inline_Pict()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(new ImageBlock
+        {
+            MediaType = "image/png", Data = new byte[] { 1, 2, 3, 4 },
+            WidthMm = 30, HeightMm = 20, WrapMode = ImageWrapMode.Inline,
+        });
+        doc.Sections.Add(sec);
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains(@"\pict", rtf);
+        Assert.DoesNotContain(@"\phpg\pvpg", rtf);   // 인라인은 frame 안 씀
+    }
+
+    [Theory]
+    [InlineData("{PAGE}",     "PAGE")]
+    [InlineData("{페이지}",    "PAGE")]
+    [InlineData("{NUMPAGES}", "NUMPAGES")]
+    [InlineData("{전체페이지}", "NUMPAGES")]
+    [InlineData("{DATE}",     "DATE")]
+    [InlineData("{TITLE}",    "TITLE")]
+    public void Footer_Token_Becomes_Rtf_Field(string token, string keyword)
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.Footer.Center.Paragraphs.Add(Paragraph.Of(token));
         sec.Blocks.Add(Paragraph.Of("body"));
         doc.Sections.Add(sec);
-
         var rtf = WriteRtf(doc);
-        int header = rtf.IndexOf(@"{\header", StringComparison.Ordinal);
-        Assert.True(header > 0);
-        string h = rtf[header..];
-        Assert.Contains(@"\fldinst PAGE", h);
+
+        Assert.Contains($@"\fldinst {keyword}", rtf);
+        Assert.DoesNotContain(token, rtf);   // 리터럴 토큰이 남으면 안 됨
+    }
+
+    [Fact]
+    public void Header_Token_Mixed_With_Literal_Text_Splits_Correctly()
+    {
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Page.Header.Center.Paragraphs.Add(Paragraph.Of("Page {PAGE} of {NUMPAGES}"));
+        sec.Blocks.Add(Paragraph.Of("body"));
+        doc.Sections.Add(sec);
+        var rtf = WriteRtf(doc);
+
+        Assert.Contains("Page",            rtf);   // 리터럴 보존
+        Assert.Contains(" of ",            rtf);
+        Assert.Contains(@"\fldinst PAGE",     rtf);
+        Assert.Contains(@"\fldinst NUMPAGES", rtf);
     }
 }

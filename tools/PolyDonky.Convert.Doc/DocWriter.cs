@@ -280,7 +280,86 @@ public class DocWriter
         {
             var p = src.Clone();
             p.Style.Alignment = align;  // 슬롯 정렬을 단락 정렬보다 우선
+            // 머리말/꼬리말 텍스트 안의 {PAGE} 등 토큰을 RTF 필드 Run 으로 분해.
+            ExpandHeaderFooterTokens(p);
             WriteParagraph(p, sb, inTable: false);
+        }
+    }
+
+    /// <summary>머리말/꼬리말 Run.Text 안의 <c>{PAGE}</c>/<c>{페이지}</c> 등 토큰을 RTF 필드로 변환한다.
+    /// HeaderFooterTokens 와 같은 토큰 집합을 인식 — 토큰 Run 은 <see cref="Run.Field"/> 로,
+    /// 일반 텍스트는 그대로 둔다. <c>{PAGE}</c> 가 리터럴로 찍히던 회귀를 방지.</summary>
+    private static void ExpandHeaderFooterTokens(Paragraph p)
+    {
+        var newRuns = new List<Run>();
+        foreach (var run in p.Runs)
+        {
+            if (string.IsNullOrEmpty(run.Text) || run.Text.IndexOf('{') < 0)
+            {
+                newRuns.Add(run);
+                continue;
+            }
+            SplitTokenRuns(run, newRuns);
+        }
+        p.Runs = newRuns;
+    }
+
+    private static void SplitTokenRuns(Run run, List<Run> output)
+    {
+        string text = run.Text;
+        int i = 0;
+        var literal = new StringBuilder();
+
+        void FlushLiteral()
+        {
+            if (literal.Length == 0) return;
+            var r = run.Clone();
+            r.Text = literal.ToString();
+            r.Field = null; r.FieldArg = null;
+            output.Add(r);
+            literal.Clear();
+        }
+
+        while (i < text.Length)
+        {
+            if (text[i] == '{')
+            {
+                int end = text.IndexOf('}', i + 1);
+                if (end > i + 1)
+                {
+                    var name = text.Substring(i + 1, end - i - 1).Trim();
+                    if (TryMapHeaderFooterToken(name, out var fieldType))
+                    {
+                        FlushLiteral();
+                        var fr = run.Clone();
+                        fr.Text = string.Empty;   // 결과는 Word 가 채움
+                        fr.Field = fieldType;
+                        fr.FieldArg = null;
+                        output.Add(fr);
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+            literal.Append(text[i]);
+            i++;
+        }
+        FlushLiteral();
+    }
+
+    /// <summary>HeaderFooterTokens 와 동일한 토큰명 → FieldType 매핑 (영문 + 한국어 별칭).</summary>
+    private static bool TryMapHeaderFooterToken(string name, out FieldType fieldType)
+    {
+        switch (name.ToUpperInvariant())
+        {
+            case "PAGE":     case "페이지":     fieldType = FieldType.Page;     return true;
+            case "NUMPAGES": case "전체페이지": fieldType = FieldType.NumPages; return true;
+            case "DATE":     case "날짜":       fieldType = FieldType.Date;     return true;
+            case "TIME":     case "시간":       fieldType = FieldType.Time;     return true;
+            case "TITLE":    case "제목":       fieldType = FieldType.Title;    return true;
+            case "AUTHOR":   case "저자":       fieldType = FieldType.Author;   return true;
+            case "FILENAME": case "파일명":     fieldType = FieldType.FileName; return true;
+            default:         fieldType = default; return false;
         }
     }
 
@@ -290,15 +369,72 @@ public class DocWriter
     {
         switch (block)
         {
-            case Paragraph p:    WriteParagraph(p, sb, inTable); break;
-            case Table t:        WriteTable(t, sb); break;
-            case ImageBlock img: WriteImage(img, sb); break;
-            case ShapeObject s:  WriteShape(s, sb); break;
-            case OpaqueBlock o:  WriteOpaque(o, sb); break;
+            case Paragraph p:      WriteParagraph(p, sb, inTable); break;
+            case Table t:          WriteTable(t, sb); break;
+            case ImageBlock img:   WriteImage(img, sb); break;
+            case ShapeObject s:    WriteShape(s, sb); break;
+            case TextBoxObject tb: WriteTextBox(tb, sb); break;
+            case OpaqueBlock o:    WriteOpaque(o, sb); break;
             case ContainerBlock c:
                 foreach (var b in c.Children) WriteBlock(b, sb, inTable);
                 break;
         }
+    }
+
+    // ── 글상자 (TextBox) ─────────────────────────────────────────────────────────
+
+    /// <summary>글상자 → RTF \shp (shapeType 202 = text box). 테두리·배경·위치·내부 단락 출력.
+    /// 내부 텍스트는 \shptxt 그룹에 담아 Word/한글이 글상자 안 텍스트로 렌더링.</summary>
+    private void WriteTextBox(TextBoxObject tb, StringBuilder sb)
+    {
+        int left   = T(tb.OverlayXMm);
+        int top    = T(tb.OverlayYMm);
+        int right  = T(tb.OverlayXMm + Math.Max(1, tb.WidthMm));
+        int bottom = T(tb.OverlayYMm + Math.Max(1, tb.HeightMm));
+
+        sb.Append(@"{\shp");
+        sb.Append($@"\shpleft{left}\shptop{top}\shpright{right}\shpbottom{bottom}");
+        sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
+        sb.Append(@"{\shpinst");
+        sb.Append(@"{\sp{\sn shapeType}{\sv 202}}");          // 202 = text box
+
+        // 채우기 배경색
+        if (!string.IsNullOrEmpty(tb.BackgroundColor))
+        {
+            try
+            {
+                var c = Color.FromHex(tb.BackgroundColor);
+                int abgr = c.R | (c.G << 8) | (c.B << 16);
+                sb.Append($@"{{\sp{{\sn fillColor}}{{\sv {abgr}}}}}");
+                sb.Append(@"{\sp{\sn fFilled}{\sv 1}}");
+            }
+            catch { }
+        }
+        // 테두리 색·두께
+        if (!string.IsNullOrEmpty(tb.BorderColor))
+        {
+            try
+            {
+                var c = Color.FromHex(tb.BorderColor);
+                int abgr = c.R | (c.G << 8) | (c.B << 16);
+                sb.Append($@"{{\sp{{\sn lineColor}}{{\sv {abgr}}}}}");
+                sb.Append(@"{\sp{\sn fLine}{\sv 1}}");
+            }
+            catch { }
+        }
+        if (tb.BorderThicknessPt > 0)
+            sb.Append($@"{{\sp{{\sn lineWidth}}{{\sv {(int)(tb.BorderThicknessPt * 12700)}}}}}");
+
+        // 내부 텍스트
+        sb.Append(@"{\shptxt ");
+        if (tb.Content.Count == 0)
+            sb.Append(@"\pard ");
+        else
+            foreach (var b in tb.Content) WriteBlock(b, sb, inTable: false);
+        sb.Append('}');
+
+        sb.Append("}}");
+        sb.AppendLine();
     }
 
     // ── 단락 ────────────────────────────────────────────────────────────────────
@@ -741,6 +877,28 @@ public class DocWriter
     {
         if (img.Data is not { Length: > 0 }) return;
 
+        bool floating = img.WrapMode is ImageWrapMode.InFrontOfText or ImageWrapMode.BehindText
+                        && (img.OverlayXMm > 0 || img.OverlayYMm > 0);
+
+        if (floating)
+        {
+            // 부유 이미지 — 페이지 절대 위치 frame 단락 안에 \pict 배치.
+            //   \phpg/\pvpg = 페이지 기준, \posx/\posy = 절대 위치(twips), \absw/\absh = frame 크기.
+            int x = T(img.OverlayXMm), y = T(img.OverlayYMm);
+            int w = img.WidthMm  > 0 ? T(img.WidthMm)  : 5040;
+            int h = img.HeightMm > 0 ? T(img.HeightMm) : 3780;
+            sb.Append($@"{{\pard\phpg\pvpg\posx{x}\posy{y}\absw{w}\absh{h}\dxfrtext0 ");
+            WritePictBody(img, sb);
+            sb.Append(@"\par}");
+            sb.AppendLine();
+            return;
+        }
+
+        WritePictBody(img, sb);
+    }
+
+    private static void WritePictBody(ImageBlock img, StringBuilder sb)
+    {
         bool isPng = img.MediaType?.Contains("png",  StringComparison.OrdinalIgnoreCase) == true;
         bool isJpg = img.MediaType?.Contains("jpeg", StringComparison.OrdinalIgnoreCase) == true
                   || img.MediaType?.Contains("jpg",  StringComparison.OrdinalIgnoreCase) == true;
@@ -788,7 +946,8 @@ public class DocWriter
 
         sb.Append(@"{\shp");
         sb.Append($@"\shpleft{left}\shptop{top}\shpright{right}\shpbottom{bottom}");
-        sb.Append(@"\shpfhdr0\shpbxcolumn\shpbypage");
+        // OverlayXMm/OverlayYMm 는 페이지 기준 좌표이므로 bx/by 모두 page-relative.
+        sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
         sb.Append(@"{\shpinst");
 
         // 도형 종류
