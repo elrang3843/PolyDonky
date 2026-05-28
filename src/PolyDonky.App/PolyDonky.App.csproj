@@ -71,7 +71,7 @@
 
 
   <!--
-    이식형(portable) 배포 — --self-contained true -r win-x64 로 Publish 할 때
+    이식형(portable) 배포: SelfContained=true + RuntimeIdentifier 지정으로 Publish 할 때
     CLI 변환기도 동일한 PublishDir 에 self-contained 로 함께 게시.
     MSIX 빌드(WindowsPackageType=MSIX) 에서는 실행하지 않는다.
   -->
