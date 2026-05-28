@@ -46,6 +46,10 @@ public sealed class DocBinaryWriter
     /// <summary>FIB 영역 패딩 — Reader 가드(최대 0x0316) + cswNew(0x0382) 까지 충분.</summary>
     private const int    FibPadSize = 0x400;
 
+    /// <summary>Word.Document.8 CLSID (Word 97-2003 binary). 한글/Word 등 OLE consumer 가 이 CLSID 로
+    /// 파일 종류를 판단하므로 RootStorage 에 반드시 박혀 있어야 한다.</summary>
+    private static readonly Guid WordDocument8ClsId = new("00020906-0000-0000-C000-000000000046");
+
     // FibRgFcLcbBlob 안의 (fc, lcb) pair 시작 — FIB offset 0x009A. pair index = (offset - 0x9A) / 8.
     private const int RgFcLcbBase = 0x009A;
     private const int PairFcPlcfBteChpx = 12;   // FIB 0x00FA / 0x00FE
@@ -74,13 +78,140 @@ public sealed class DocBinaryWriter
 
         // OpenMcdf v3 — 비-Transacted 모드는 stream Dispose 시점에 flush. LeaveOpen 으로 호출 측 stream 보존.
         using var root = RootStorage.Create(output, OpenMcdf.Version.V3, StorageModeFlags.LeaveOpen);
+
+        // OLE consumer (한글/Word/LibreOffice 등) 가 root CLSID 로 파일 종류를 식별.
+        // 누락 시 한글이 "지원하지 않는 파일 형식" 오류를 내며 거부.
+        root.CLSID = WordDocument8ClsId;
+
         WriteStream(root, "WordDocument", wd);
         WriteStream(root, "1Table",       table);
+        // OLE compatibility — 한글/Word 가 root CLSID 와 별도로 \1CompObj / \5SummaryInformation 도
+        // 점검할 수 있어 표준 형식의 빈 스트림이라도 박아 둔다.
+        WriteStream(root, "CompObj",            BuildCompObjStream());
+        WriteStream(root, "SummaryInformation", BuildSummaryInformationStream(doc.Metadata));
+        WriteStream(root, "DocumentSummaryInformation", BuildDocumentSummaryInformationStream());
 
         // Phase F1-W2e — FidelityCapsules 복원 (VBA 매크로 / 디지털 서명 / 미인식 root storage).
         //   Reader 가 .doc → .iwpf 할 때 fidelity/capsules/msdoc/... 로 저장한 raw bytes 를
         //   원래 OLE2 storage 위치로 복원해 .doc → .iwpf → .doc 라운드트립을 닫는다.
         WriteFidelityCapsules(root, doc.FidelityCapsules);
+    }
+
+    // ── OLE Compatibility 스트림 ────────────────────────────────────────────────
+
+    /// <summary>\1CompObj — OLE 가 문서 클래스(Word.Document.8) 와 user-friendly 이름을 식별하는 데 사용.
+    /// [MS-OLEDS] §2.3.6 CompObjStream 의 최소 변형.
+    /// 28-byte 헤더 + LengthPrefixedAnsiString (AnsiUserType) + ClipboardFormatOrAnsiString 만 작성 — 한글이
+    /// 요구하는 최소 필드만 채우고 Unicode 섹션은 생략 (UnicodeMarker 없이 종료).</summary>
+    private static byte[] BuildCompObjStream()
+    {
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+
+        // Header (28 byte) — [MS-OLEDS] §2.3.7
+        bw.Write((uint)0xFFFE0001);                // Reserved1 magic
+        bw.Write((uint)0x00000A03);                // Version (Office 2.0 binary)
+        // Reserved2 (20 byte): 16 byte CLSID (Word.Document.8) + 4 byte 0
+        bw.Write(WordDocument8ClsId.ToByteArray());
+        bw.Write((uint)0);
+
+        // AnsiUserType: LengthPrefixedAnsiString — length(4) + bytes + null
+        var userType = "Microsoft Word Document\0";
+        bw.Write((uint)userType.Length);
+        bw.Write(System.Text.Encoding.ASCII.GetBytes(userType));
+
+        // AnsiClipboardFormat: ClipboardFormatOrAnsiString — length(4) + bytes + null
+        var clipFmt = "MSWordDoc\0";
+        bw.Write((uint)clipFmt.Length);
+        bw.Write(System.Text.Encoding.ASCII.GetBytes(clipFmt));
+
+        // Reserved1: LengthPrefixedAnsiString — Word.Document.8 ProgID (null-terminated)
+        var progId = "Word.Document.8\0";
+        bw.Write((uint)progId.Length);
+        bw.Write(System.Text.Encoding.ASCII.GetBytes(progId));
+
+        // UnicodeMarker + Unicode 섹션은 생략. 한글/Word 는 Ansi 섹션만으로도 동작.
+        return ms.ToArray();
+    }
+
+    /// <summary>\5SummaryInformation — Document metadata. [MS-OLEPS] §2.18 PropertySetStream.
+    /// Title/Author/Application 등 최소 정보만 박는 4KB 미만 스트림.</summary>
+    private static byte[] BuildSummaryInformationStream(DocumentMetadata meta)
+    {
+        // SummaryInformation FMTID = F29F85E0-4FF9-1068-AB91-08002B27B3D9
+        // PID 값: 0x02=Title, 0x04=Author, 0x12=AppName ([MS-OLEPS] §2.18)
+        var fmtId = new Guid("F29F85E0-4FF9-1068-AB91-08002B27B3D9");
+        return BuildPropertySetStream(fmtId, new (int Pid, object? Value)[]
+        {
+            (0x02, meta.Title),
+            (0x04, meta.Author),
+            (0x12, meta.Application ?? "PolyDonky"),
+        });
+    }
+
+    /// <summary>\5DocumentSummaryInformation — 보조 metadata. 한글이 SummaryInformation 만 있어도 동작하지만,
+    /// 둘 다 있어야 "정상 Word 문서" 로 인식하는 경우가 있어 빈 PropertySet 으로 채워둠.</summary>
+    private static byte[] BuildDocumentSummaryInformationStream()
+    {
+        // DocumentSummaryInformation FMTID = D5CDD502-2E9C-101B-9397-08002B2CF9AE
+        var fmtId = new Guid("D5CDD502-2E9C-101B-9397-08002B2CF9AE");
+        return BuildPropertySetStream(fmtId, Array.Empty<(int, object?)>());
+    }
+
+    /// <summary>최소 PropertySet 직렬화 — [MS-OLEPS] §2.21 PropertySetStream 의 1-PropertySet 변형.
+    /// Header(28) + FMTID/Offset(20) + PropertySet (size + count + idAndOffset[count] + properties).
+    /// 지원 Variant: VT_LPSTR (0x001E, ANSI string). 값이 null/빈 문자열이면 property 자체 생략.</summary>
+    private static byte[] BuildPropertySetStream(Guid fmtId, IReadOnlyList<(int Pid, object? Value)> entries)
+    {
+        // PropertySet 본체 먼저 빌드 (size 계산 위해 두 패스 필요).
+        var nonNull = entries.Where(e => e.Value is string s && s.Length > 0).ToList();
+        int count = nonNull.Count;
+
+        using var psBody = new MemoryStream();
+        var pw = new BinaryWriter(psBody);
+
+        // PropertySet 헤더: size(4) + count(4) + idAndOffset[count] (각 8 byte: pid + offset)
+        int propsArrayStart = 8 + count * 8;
+        var propBytes = new List<byte[]>();
+        var offsets   = new List<int>();
+
+        foreach (var (pid, value) in nonNull)
+        {
+            var s = (string)value!;
+            offsets.Add(propsArrayStart + propBytes.Sum(b => b.Length));
+            using var pms = new MemoryStream();
+            var pbw = new BinaryWriter(pms);
+            pbw.Write((uint)0x001E);   // VT_LPSTR
+            var ansi = System.Text.Encoding.UTF8.GetBytes(s + "\0");
+            pbw.Write((uint)ansi.Length);
+            pbw.Write(ansi);
+            // 4-byte align
+            while (pms.Length % 4 != 0) pbw.Write((byte)0);
+            propBytes.Add(pms.ToArray());
+        }
+
+        int psSize = propsArrayStart + propBytes.Sum(b => b.Length);
+        pw.Write((uint)psSize);
+        pw.Write((uint)count);
+        for (int i = 0; i < count; i++)
+        {
+            pw.Write((uint)nonNull[i].Pid);
+            pw.Write((uint)offsets[i]);
+        }
+        foreach (var b in propBytes) pw.Write(b);
+
+        // Outer PropertySetStream
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write((ushort)0xFFFE);                  // ByteOrder (LE marker)
+        bw.Write((ushort)0x0000);                  // Version 0
+        bw.Write((uint)0x00020105);                // SystemIdentifier (Windows 2.0+)
+        bw.Write(Guid.Empty.ToByteArray());        // CLSID (16 byte, 0 OK)
+        bw.Write((uint)1);                         // cSections = 1
+        bw.Write(fmtId.ToByteArray());             // FMTID
+        bw.Write((uint)(28 + 20));                 // Offset to PropertySet
+        bw.Write(psBody.ToArray());
+        return ms.ToArray();
     }
 
     // ─────────────────────────────── BuildContext ──────────────────────────────
