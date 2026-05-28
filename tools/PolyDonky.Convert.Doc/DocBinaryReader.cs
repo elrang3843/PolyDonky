@@ -369,13 +369,15 @@ public class DocBinaryReader
         uint fcSttbfRMark  = wd.Length >= 0x0146 ? BitConverter.ToUInt32(wd, 0x0142) : 0u;
         uint lcbSttbfRMark = wd.Length >= 0x014A ? BitConverter.ToUInt32(wd, 0x0146) : 0u;
 
-        // Phase 3i — Bookmarks (FibRgFcLcb97 pair 29 / 30 / 31).
-        uint fcSttbfBkmk  = wd.Length >= 0x0186 ? BitConverter.ToUInt32(wd, 0x0182) : 0u;
-        uint lcbSttbfBkmk = wd.Length >= 0x018A ? BitConverter.ToUInt32(wd, 0x0186) : 0u;
-        uint fcPlcfBkf    = wd.Length >= 0x018E ? BitConverter.ToUInt32(wd, 0x018A) : 0u;
-        uint lcbPlcfBkf   = wd.Length >= 0x0192 ? BitConverter.ToUInt32(wd, 0x018E) : 0u;
-        uint fcPlcfBkl    = wd.Length >= 0x0196 ? BitConverter.ToUInt32(wd, 0x0192) : 0u;
-        uint lcbPlcfBkl   = wd.Length >= 0x019A ? BitConverter.ToUInt32(wd, 0x0196) : 0u;
+        // Bookmarks — [MS-DOC] §2.5.5 canonical offset (실제 sample5.doc 디코드로 검증):
+        //   fcSttbfBkmk @ 0x0142, fcPlcfBkf @ 0x014A, fcPlcfBkl @ 0x0152.
+        //   (이전 0x0182/0x018A/0x0192 는 사실 fcPrEnvLand/fcWss/fcDop 슬롯이라 오독이었음.)
+        uint fcSttbfBkmk  = wd.Length >= 0x0146 ? BitConverter.ToUInt32(wd, 0x0142) : 0u;
+        uint lcbSttbfBkmk = wd.Length >= 0x014A ? BitConverter.ToUInt32(wd, 0x0146) : 0u;
+        uint fcPlcfBkf    = wd.Length >= 0x014E ? BitConverter.ToUInt32(wd, 0x014A) : 0u;
+        uint lcbPlcfBkf   = wd.Length >= 0x0152 ? BitConverter.ToUInt32(wd, 0x014E) : 0u;
+        uint fcPlcfBkl    = wd.Length >= 0x0156 ? BitConverter.ToUInt32(wd, 0x0152) : 0u;
+        uint lcbPlcfBkl   = wd.Length >= 0x015A ? BitConverter.ToUInt32(wd, 0x0156) : 0u;
 
         // Phase 3j — Comments (FibRgFcLcb97 pair 4 / 5).
         uint fcPlcfAtnRef  = wd.Length >= 0x00BE ? BitConverter.ToUInt32(wd, 0x00BA) : 0u;

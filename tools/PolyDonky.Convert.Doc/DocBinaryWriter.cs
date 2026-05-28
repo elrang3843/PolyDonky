@@ -68,10 +68,12 @@ public sealed class DocBinaryWriter
     private const int PairFcPlcfBtePapx = 13;   // FIB 0x0102 / 0x0106
     private const int PairFcSttbfFfn    = 15;   // FIB 0x0112 / 0x0116  ← 14 가 아님 (0x10A = pair 14 는 fcPlcfFldMom)
     private const int PairFcClx         = 33;   // FIB 0x01A2 / 0x01A6
-    // Phase F1-W2c — bookmarks. FibRgFcLcb97 pair 29 / 30 / 31.
-    private const int PairFcSttbfBkmk   = 29;   // FIB 0x0182 / 0x0186
-    private const int PairFcPlcfBkf     = 30;   // FIB 0x018A / 0x018E
-    private const int PairFcPlcfBkl     = 31;   // FIB 0x0192 / 0x0196
+    // 책갈피 — [MS-DOC] §2.5.5 canonical offset (실제 sample5.doc 디코드로 검증).
+    //   이전에 0x182/0x18A/0x192 로 잘못 썼는데 0x192 는 사실 fcDop 슬롯이라 DOP 와 충돌했음.
+    private const int PairFcSttbfBkmk   = 21;   // FIB 0x0142 / 0x0146
+    private const int PairFcPlcfBkf     = 22;   // FIB 0x014A / 0x014E
+    private const int PairFcPlcfBkl     = 23;   // FIB 0x0152 / 0x0156
+    private const int PairFcDop         = 31;   // FIB 0x0192 / 0x0196 — DOP (Document Properties)
 
     // FKP 페이지 크기 — [MS-DOC] §2.7 FKP 는 항상 512 byte.
     private const int FkpPageSize = 512;
@@ -248,9 +250,10 @@ public sealed class DocBinaryWriter
         public uint FcSttbfBkmk,   LcbSttbfBkmk;
         public uint FcPlcfBkf,     LcbPlcfBkf;
         public uint FcPlcfBkl,     LcbPlcfBkl;
-        // 한글/Word strict parser 호환용 skeleton 구조 — STSH(스타일시트) + PlcfSed(섹션테이블).
+        // 한글/Word strict parser 호환용 skeleton 구조 — STSH(스타일시트) + PlcfSed(섹션테이블) + DOP(문서속성).
         public uint FcStshf,       LcbStshf;
         public uint FcPlcfSed,     LcbPlcfSed;
+        public uint FcDop,         LcbDop;
         /// <summary>SEPX 의 WordDocument stream 내 위치 — BuildWordDocument 가 append 후 채움.</summary>
         public uint SepxFc;
         /// <summary>첫 번째 섹션의 페이지 설정 — SEPX 에 page width/height/margin sprm 으로 기록.</summary>
@@ -849,7 +852,26 @@ public sealed class DocBinaryWriter
         ms.Write(plcfSed, 0, plcfSed.Length);
         ctx.LcbPlcfSed = (uint)plcfSed.Length;
 
+        // 9. DOP (Document Properties) — 실제 Word 문서가 항상 갖는 구조. strict parser 가 요구.
+        ctx.FcDop = (uint)ms.Position;
+        byte[] dop = BuildDop();
+        ms.Write(dop, 0, dop.Length);
+        ctx.LcbDop = (uint)dop.Length;
+
         return ms.ToArray();
+    }
+
+    /// <summary>DOP (Document Properties) — [MS-DOC] §2.7.1. Dop97 (500 byte) 변형.
+    /// 대부분 0 (= 기본값) 이지만 strict parser 가 존재 자체를 요구하므로 작성. 몇 가지 안전한 기본값만 설정.</summary>
+    private static byte[] BuildDop()
+    {
+        var dop = new byte[500];   // lcbDop = 0x01F4 → Dop97
+        // DopBase (§2.7.2) 첫 16 bit 플래그: fpc(2 bit, 각주 위치) 등 — 0 = 기본.
+        // grfDocEvents·여러 플래그는 0 으로 두면 "기본 문서". 안전한 비-0 기본값만 채운다.
+        // dxaTab (기본 탭 간격, 720 twips = 0.5인치) — DopBase offset 0x0A.
+        WriteUInt16(dop, 0x0A, 720);
+        // nfcFtnRef / nfcEdnRef 등은 0. 나머지는 0 으로 충분.
+        return dop;
     }
 
     // ── 한글/Word strict parser 호환 skeleton 구조 ──────────────────────────────
@@ -1071,7 +1093,16 @@ public sealed class DocBinaryWriter
 
         WriteUInt16(wd, 0x0020, Csw);
         WriteUInt16(wd, 0x003E, Cslw);
+        // FibRgLw97[0] cbMac @ 0x0040 — WordDocument stream 의 "의미 있는 byte 수".
+        //   [MS-DOC] §2.5.4: cbMac 이후 byte 는 모두 무시된다. 0 으로 두면 reader 가 전체를 무시해
+        //   빈/손상 문서로 판단 → 한글 거부. WordDocument stream 전체 길이로 설정.
+        WriteUInt32(wd, 0x0040, (uint)wd.Length);
         WriteUInt32(wd, 0x004C, ctx.CcpText);
+        // deprecated pnFbpChpFirst / pnFbpPapFirst / pnFbpLvcFirst (Word 6 fast-save 잔재) —
+        //   실제 Word 문서는 "미사용" sentinel 0x000FFFFF 로 채운다.
+        WriteUInt32(wd, 0x006C, 0x000FFFFF);
+        WriteUInt32(wd, 0x0078, 0x000FFFFF);
+        WriteUInt32(wd, 0x0084, 0x000FFFFF);
 
         WriteUInt16(wd, 0x0098, CbRgFcLcb);
         WritePair(wd, PairFcPlcfBteChpx, ctx.FcPlcfBteChpx, ctx.LcbPlcfBteChpx);
@@ -1083,6 +1114,7 @@ public sealed class DocBinaryWriter
         WritePair(wd, PairFcPlcfBkl,     ctx.FcPlcfBkl,     ctx.LcbPlcfBkl);
         WritePair(wd, PairFcStshf,       ctx.FcStshf,       ctx.LcbStshf);
         WritePair(wd, PairFcPlcfSed,     ctx.FcPlcfSed,     ctx.LcbPlcfSed);
+        WritePair(wd, PairFcDop,         ctx.FcDop,         ctx.LcbDop);
 
         // cswNew = 0 → 순수 Word 97 FIB (FibRgCswNew 없음). cbRgFcLcb=0x5D 와 일관.
         //   nFibNew 등을 쓰지 않는다 — 비-0 cswNew + nFibNew=0xC1 조합은 모순이라 strict parser 가 거부.
