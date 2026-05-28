@@ -395,7 +395,7 @@ public class DocWriter
         sb.Append(@"{\shp");
         sb.Append($@"\shpleft{left}\shptop{top}\shpright{right}\shpbottom{bottom}");
         sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
-        sb.Append(@"{\shpinst");
+        sb.Append(@"{\*\shpinst");
         sb.Append(@"{\sp{\sn shapeType}{\sv 202}}");          // 202 = text box
 
         // 채우기 배경색
@@ -948,7 +948,7 @@ public class DocWriter
         sb.Append($@"\shpleft{left}\shptop{top}\shpright{right}\shpbottom{bottom}");
         // OverlayXMm/OverlayYMm 는 페이지 기준 좌표이므로 bx/by 모두 page-relative.
         sb.Append(@"\shpfhdr0\shpbxpage\shpbypage\shpwr3");
-        sb.Append(@"{\shpinst");
+        sb.Append(@"{\*\shpinst");
 
         // 도형 종류
         sb.Append($@"{{\sp{{\sn shapeType}}{{\sv {shapeType}}}}}");
