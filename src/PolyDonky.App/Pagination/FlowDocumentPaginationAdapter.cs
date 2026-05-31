@@ -75,8 +75,14 @@ public static class FlowDocumentPaginationAdapter
         // ComputePageCountSync 와 tableFragmentMap 구성을 완전히 건너뛴다.
         // 두 작업 모두 WPF paginator 레이아웃을 전체 문서에 대해 수행하므로
         // 대용량 문서에서 분 단위로 UI 스레드를 멈출 수 있다.
-        int earlyBlockCount = FlattenBlocks(fd.Blocks).Count();
-        bool isFastPathDoc  = earlyBlockCount > MaxBlocksForPreciseMapping;
+        // 표는 FlattenBlocks 에서 행 수와 무관하게 1블록으로 집계되지만, 정밀 페이지네이션
+        // 비용(ComputePageCountSync 전체 레이아웃 + 표별 GetRowGroups 행 질의 +
+        // SplitTableByPageMeasurement 이진탐색 RTB 측정)은 표의 행 수에 비례한다.
+        // 따라서 블록 수가 아니라 "행 수를 포함한 복잡도" 로 fast-path 를 판정해야,
+        // 블록 수는 적지만 표가 많은 문서(표 위주 교재 등)가 정밀 경로에서 수십 초~분
+        // 단위로 UI 스레드를 멈추는 것을 방지할 수 있다.
+        int earlyComplexity = ComputePaginationComplexity(FlattenBlocks(fd.Blocks));
+        bool isFastPathDoc  = earlyComplexity > MaxBlocksForPreciseMapping;
 
         // 2. 페이지 수 산출: 정밀(paginator) 또는 추정(fast-path).
         var tableFragmentMap =
@@ -90,8 +96,10 @@ public static class FlowDocumentPaginationAdapter
             // 정밀 레이아웃 없이 블록 수 기반으로 페이지 수를 추정한다.
             // A4 기준 경험치: ~200 블록/페이지 (텍스트·이미지 혼합 기준).
             const int EstimatedBlocksPerPage = 200;
+            // 복잡도(행 수 포함) 기준으로 페이지 수를 추정해, 표가 많은 문서가 page 0 에
+            // 한꺼번에 몰려 단일 RTB 가 거대해지는 것을 방지하고 슬라이스마다 적게 분배한다.
             pageCount = Math.Max(1,
-                (earlyBlockCount + EstimatedBlocksPerPage - 1) / EstimatedBlocksPerPage);
+                (earlyComplexity + EstimatedBlocksPerPage - 1) / EstimatedBlocksPerPage);
 
             // 표가 있으면 최대 MaxPagesForFastPathTableSplit 페이지까지만 paginator 를 실행해
             // 표 행 분할을 수행한다. 전체 페이지를 계산하지 않으므로 대용량 문서에서도 멈추지 않는다.
@@ -257,7 +265,10 @@ public static class FlowDocumentPaginationAdapter
         // 경계를 잃지만 — 페이지 수는 ComputePageCountSync 결과를 그대로 사용 — 문서를 즉시
         // 표시할 수 있게 한다.
         var flat = FlattenBlocks(fd.Blocks).ToList();
-        if (flat.Count > MaxBlocksForPreciseMapping)
+        // Paginate() 의 fast-path 판정과 반드시 동일한 복잡도 기준을 사용한다.
+        // (블록 수만 비교하면 표가 많은 문서에서 Paginate 는 fast-path 로 판정했는데
+        //  여기서는 정밀 측정 경로로 빠져 SplitTableByPageMeasurement 가 실행되며 멈춘다.)
+        if (ComputePaginationComplexity(flat) > MaxBlocksForPreciseMapping)
         {
             // 블록을 page 0 에 일괄 배정하는 대신 pageCount 에 균등 분배한다.
             // 이렇게 하면 PerPageDocumentSplitter 가 N 개의 슬라이스를 만들고,
@@ -1263,6 +1274,27 @@ public static class FlowDocumentPaginationAdapter
             // Wpf.List 자식 단락은 MapBodyBlocksToPages 의 List 전용 핸들러에서 직접 처리.
             // 여기서 개별 yield 하면 Y collapse 로 slotFill 이 과소평가되므로 재귀하지 않는다.
         }
+    }
+
+    /// <summary>
+    /// 페이지네이션 복잡도 점수 = 블록 수 + 모든 표의 총 행 수.
+    /// 표는 <see cref="FlattenBlocks"/> 에서 단일 블록으로 집계되지만, 정밀 페이지네이션 비용
+    /// (ComputePageCountSync 전체 레이아웃, 표별 행 그룹 paginator 질의,
+    /// SplitTableByPageMeasurement 이진 탐색 RTB 측정)은 행 수에 비례한다.
+    /// fast-path 판정·페이지 추정에 이 점수를 사용해, 블록 수는 적지만 표가 많은 문서가
+    /// 정밀 경로에서 UI 스레드를 장시간 멈추는 것을 방지한다.
+    /// </summary>
+    private static int ComputePaginationComplexity(IEnumerable<WpfDocs.Block> flat)
+    {
+        int score = 0;
+        foreach (var b in flat)
+        {
+            score++;
+            if (b is WpfDocs.Table table)
+                foreach (var rg in table.RowGroups)
+                    score += rg.Rows.Count;
+        }
+        return score;
     }
 
     /// <summary>

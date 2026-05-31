@@ -40,6 +40,11 @@ public partial class ImagePropertiesWindow : Window
         WidthBox.Text  = _image.WidthMm.ToString("F1");
         HeightBox.Text = _image.HeightMm.ToString("F1");
 
+        // 모델에 크기가 없으면(예: DOC 등에서 표시 크기 미보존) 렌더러와 동일하게
+        // 비트맵 고유 픽셀 크기를 mm 로 환산해 보여준다 — 다이얼로그가 "0.0" 대신
+        // 실제 표시 크기를 표시하고, 확인 시 그 값이 모델에 명시적으로 반영된다.
+        TryFillIntrinsicSize();
+
         AlignLeft.IsChecked   = _image.HAlign == ImageHAlign.Left;
         AlignCenter.IsChecked = _image.HAlign == ImageHAlign.Center;
         AlignRight.IsChecked  = _image.HAlign == ImageHAlign.Right;
@@ -71,6 +76,43 @@ public partial class ImagePropertiesWindow : Window
 
         _suppressSync = false;
         UpdateBorderPreview();
+    }
+
+    /// <summary>
+    /// 모델 크기가 비어 있을 때(WidthMm/HeightMm ≤ 0) 비트맵 데이터를 디코드해
+    /// 고유 픽셀 크기를 mm 로 환산해 입력란을 채운다. SVG(벡터)·디코드 불가 포맷은 건너뛴다.
+    /// FlowDocumentBuilder.BuildImage 의 "크기 미지정 → 고유 크기 렌더" 동작과 표시 크기를 맞춘다.
+    /// </summary>
+    private void TryFillIntrinsicSize()
+    {
+        bool needW = _image.WidthMm  <= 0;
+        bool needH = _image.HeightMm <= 0;
+        if (!needW && !needH) return;
+        if (_image.Data is not { Length: > 0 }) return;
+        if (_image.MediaType == "image/svg+xml") return; // 벡터 — 비트맵 디코드 대상 아님
+
+        try
+        {
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption  = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bmp.StreamSource = new System.IO.MemoryStream(_image.Data, writable: false);
+            bmp.EndInit();
+
+            // WPF Image(Stretch=Uniform, 크기 미지정)는 PixelWidth × 96 / DpiX (DIP) 로 렌더된다.
+            // mm = DIP × 25.4 / 96 = PixelWidth × 25.4 / DpiX.
+            double dpiX = bmp.DpiX > 0 ? bmp.DpiX : 96.0;
+            double dpiY = bmp.DpiY > 0 ? bmp.DpiY : 96.0;
+            double wMm = bmp.PixelWidth  * 25.4 / dpiX;
+            double hMm = bmp.PixelHeight * 25.4 / dpiY;
+
+            if (needW && wMm > 0) WidthBox.Text  = wMm.ToString("F1");
+            if (needH && hMm > 0) HeightBox.Text = hMm.ToString("F1");
+        }
+        catch
+        {
+            // 지원되지 않는 포맷(EMF/WMF/OLE 등) — 입력란은 모델 값(0.0) 유지.
+        }
     }
 
     private void OnTitleStyleClick(object sender, RoutedEventArgs e)

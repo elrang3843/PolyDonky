@@ -1099,7 +1099,8 @@ public partial class MainWindow : Window
                     rawBlocks.Add(b);
         }
         // 줄 단위 분할로 생성된 조각 단락(§f0/§f1 접미사)을 원본 단락으로 재결합한다.
-        var mergedBlocks = MergeColumnFragments(rawBlocks).ToList();
+        // 페이지 경계를 가로질러 분할된 표 조각(§t0/§t1 접미사)도 원본 표 하나로 재결합한다.
+        var mergedBlocks = MergeTableFragments(MergeColumnFragments(rawBlocks)).ToList();
 
         // 섹션 경계 단락 Id → 사용자 지정 PageSettings 맵.
         // ForcePageBreakBefore=true 인 단락의 Id 를 키로, 그 단락이 시작하는 섹션의 PageSettings 를 저장.
@@ -1239,6 +1240,132 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 페이지 경계에서 TableRowSplitter 가 만든 표 조각(Id 에 "§t{n}" 접미사)을
+    /// 원본 표 하나로 재결합한다. MergeColumnFragments 와 같은 역할을 표에 대해 수행.
+    /// 조각이 없거나 조각이 1개인 표는 Id 를 원본으로 복원하고 그대로 반환한다.
+    /// </summary>
+    private static System.Collections.Generic.IEnumerable<PolyDonky.Core.Block>
+        MergeTableFragments(System.Collections.Generic.IEnumerable<PolyDonky.Core.Block> blocks)
+    {
+        const string FragSep = "§t";
+
+        var result           = new System.Collections.Generic.List<PolyDonky.Core.Block>();
+        // groupId → List<Table> (페이지 순 — RTB 순서대로 추가됨)
+        var fragGroups       = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<PolyDonky.Core.Table>>();
+        // groupId → result 내 첫 조각의 인덱스 (나중에 병합 결과로 교체)
+        var placeholderIdx   = new System.Collections.Generic.Dictionary<string, int>();
+
+        foreach (var block in blocks)
+        {
+            if (block is PolyDonky.Core.Table tbl && tbl.Id is { } id)
+            {
+                int sepIdx = id.LastIndexOf(FragSep, StringComparison.Ordinal);
+                if (sepIdx > 0 && int.TryParse(id[(sepIdx + FragSep.Length)..], out _))
+                {
+                    string groupId = id[..sepIdx];
+                    if (!fragGroups.TryGetValue(groupId, out var list))
+                    {
+                        list = new System.Collections.Generic.List<PolyDonky.Core.Table>();
+                        fragGroups[groupId] = list;
+                        placeholderIdx[groupId] = result.Count;
+                        result.Add(null!); // 첫 조각 자리 예약
+                    }
+                    list.Add(tbl);
+                    continue; // 결과에 직접 추가하지 않음
+                }
+            }
+            result.Add(block);
+        }
+
+        // 각 조각 그룹을 병합해 예약 자리에 교체
+        foreach (var (groupId, frags) in fragGroups)
+        {
+            PolyDonky.Core.Block resolved;
+            if (frags.Count <= 1)
+            {
+                // 단일 조각 — Id 를 원본으로 복원하고 그대로 사용
+                var single = frags[0];
+                single.Id = string.IsNullOrEmpty(groupId) ? null : groupId;
+                resolved = single;
+            }
+            else
+            {
+                resolved = MergeFragmentTables(groupId, frags);
+            }
+            result[placeholderIdx[groupId]] = resolved;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 표 조각 목록(페이지 순)을 단일 Core.Table 로 병합한다.
+    /// - 기본 속성(테두리·패딩·정렬 등): 첫 조각 기준
+    /// - OuterMarginBottomMm: 마지막 조각에서 복원 (CreateFragment 에서 마지막이 아닌 조각은 0으로 설정됨)
+    /// - 열(Columns): 첫 조각 그대로 (TableRowSplitter 가 공유 객체로 연결)
+    /// - 행(Rows): 전체 조각에서 수집, RepeatHeaderRowsOnBreak=true 면 비첫 조각의 헤더 행 중복 제거
+    /// </summary>
+    private static PolyDonky.Core.Table MergeFragmentTables(
+        string sourceId,
+        System.Collections.Generic.List<PolyDonky.Core.Table> frags)
+    {
+        var first = frags[0];
+        var last  = frags[^1];
+
+        var merged = new PolyDonky.Core.Table
+        {
+            Id                           = string.IsNullOrEmpty(sourceId) ? null : sourceId,
+            Status                       = first.Status,
+            WrapMode                     = first.WrapMode,
+            HAlign                       = first.HAlign,
+            Caption                      = first.Caption,
+            BackgroundColor              = first.BackgroundColor,
+            WidthMm                      = first.WidthMm,
+            HeightMm                     = 0,          // 재측정 시 갱신
+            IsFlexLayout                 = first.IsFlexLayout,
+            BorderCollapse               = first.BorderCollapse,
+            BorderThicknessPt            = first.BorderThicknessPt,
+            BorderColor                  = first.BorderColor,
+            BorderTop                    = first.BorderTop,
+            BorderBottom                 = first.BorderBottom,
+            BorderLeft                   = first.BorderLeft,
+            BorderRight                  = first.BorderRight,
+            InnerBorderHorizontal        = first.InnerBorderHorizontal,
+            InnerBorderVertical          = first.InnerBorderVertical,
+            DefaultCellPaddingTopMm      = first.DefaultCellPaddingTopMm,
+            DefaultCellPaddingBottomMm   = first.DefaultCellPaddingBottomMm,
+            DefaultCellPaddingLeftMm     = first.DefaultCellPaddingLeftMm,
+            DefaultCellPaddingRightMm    = first.DefaultCellPaddingRightMm,
+            OuterMarginTopMm             = first.OuterMarginTopMm,
+            OuterMarginBottomMm          = last.OuterMarginBottomMm, // 마지막 조각에서 복원
+            OuterMarginLeftMm            = first.OuterMarginLeftMm,
+            OuterMarginRightMm           = first.OuterMarginRightMm,
+            RepeatHeaderRowsOnBreak      = first.RepeatHeaderRowsOnBreak,
+            AnchorPageIndex              = first.AnchorPageIndex,
+            OverlayXMm                   = first.OverlayXMm,
+            OverlayYMm                   = first.OverlayYMm,
+        };
+
+        foreach (var col in first.Columns)
+            merged.Columns.Add(col);
+
+        bool isFirstFrag = true;
+        foreach (var frag in frags)
+        {
+            foreach (var row in frag.Rows)
+            {
+                // RepeatHeaderRowsOnBreak=true 인 경우 비첫 조각의 반복 헤더 행은 중복 제거
+                if (!isFirstFrag && row.IsHeader && first.RepeatHeaderRowsOnBreak)
+                    continue;
+                merged.Rows.Add(row);
+            }
+            isFirstFrag = false;
+        }
+
+        return merged;
+    }
+
+    /// <summary>
     /// Del 키가 표 셀 끝에서 눌렸을 때 기본 WPF 동작(다음 셀 내용을 현재 셀에 병합)을 차단.
     /// caret 이 TableCell 안에 있고 Del 로 이동할 다음 위치가 다른 셀/셀 밖이면 e.Handled=true 반환.
     /// </summary>
@@ -1335,10 +1462,20 @@ public partial class MainWindow : Window
                 {
                     var savedCaret = SaveCaretState();
                     SetupPageEditors();
+                    // ① _viewModel.Document 를 freshDoc 으로 동기화: SetupPageEditors 이후
+                    //    _viewModel.Document 가 freshDoc-based RTB 와 어긋나면 이후 PushUndo·
+                    //    BeginUndoableAction 이 낡은 스냅샷을 사용해 Undo 시 편집 내용이 소실됨.
+                    _viewModel?.SyncDocumentFromLive(freshDoc);
                     RestoreCaretState(savedCaret);
+                    // ② 페이지 재구성 후 오버레이(글상자·이미지·도형·표) 를 새 페이지 기하에
+                    //    맞춰 재배치. 미호출 시 오버레이가 잘못된 Y 좌표에 고정되어 "튕겨나감"
+                    //    현상이 발생하고, RebuildPageFrames 도 내부에서 호출된다.
+                    RebuildOverlays();
                 }
-
-                RebuildPageFrames();
+                else
+                {
+                    RebuildPageFrames();
+                }
             }
             catch
             {
@@ -3942,7 +4079,9 @@ public partial class MainWindow : Window
             }
 
             // 이 셀의 왼쪽 경계선: 현재 셀 ContentStart.Left
-            if (cellColPos > 0)
+            // cellColPos - 1 < colCount 를 확인 — 변환 파일에서 ColumnSpan 합계가
+            // Columns.Count 를 초과하면 유효하지 않은 WPF 열 인덱스가 되어 AOOR 발생.
+            if (cellColPos > 0 && cellColPos <= colCount)
             {
                 var thisRect = cell.ContentStart
                                     .GetCharacterRect(System.Windows.Documents.LogicalDirection.Forward);
@@ -4133,6 +4272,10 @@ public partial class MainWindow : Window
         int leftColIdx, double startX,
         RichTextBox? rtb = null)
     {
+        // TryHitTableColumnBorder 가 이미 검증하지만, 변환 파일의 ColumnSpan 이상 등
+        // 예외 경로에서 범위를 벗어난 인덱스가 전달될 경우를 대비한 안전 가드.
+        if (leftColIdx < 0 || leftColIdx >= wpfTable.Columns.Count) return;
+
         _tableColResizeActive = true;
         _colRszRtb     = rtb;
         _colRszWpf     = wpfTable;

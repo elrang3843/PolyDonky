@@ -44,6 +44,16 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
+### Fixed
+- 변환 파일 편집 시 글상자·표 내용 소실·튕김 3종 수정:
+  ① `ScheduleLivePaginationRefresh`에서 페이지 재구성(needsRebuild=true) 후 `SyncDocumentFromLive` 미호출로 `_viewModel.Document`가 낡은 상태로 남던 문제 — Undo 스냅샷 오염 및 오버레이 내용 소실의 원인
+  ② 같은 경로에서 `RebuildOverlays()` 미호출로 글상자·이미지·도형이 새 페이지 기하 기준으로 재배치되지 않아 시각적으로 "튕겨나가던" 문제
+  ③ `ParseAllPageEditors`에 `MergeTableFragments` 추가 — 여러 페이지에 걸친 표 편집 후 조각 표(`§t`) 2개가 원본 표 1개로 재결합되지 않아 저장·재오픈 시 표가 두 개로 분리되던 구조 손상 수정
+- 변환 파일(DOCX/HWPX) 표 열 리사이즈 시 `System.ArgumentOutOfRangeException` 크래시 수정 — `TryHitTableColumnBorder` 왼쪽 경계 감지 경로에서 `cellColPos - 1 >= colCount` 검사 누락; 병합 셀의 ColumnSpan 합계가 선언된 열 수를 초과할 때 발생. `StartTableColumnResize`에도 범위 이탈 방어 가드 추가.
+- 표가 많은 문서 열기 시 UI 스레드가 수십 초~분 단위로 멈추던(hang) 문제 수정 — 페이지네이션 fast-path 판정이 표를 행 수와 무관하게 1블록으로만 세어, 블록 수는 적지만 표가 많은 문서(예: 표 위주 교재)가 정밀 경로에서 `ComputePageCountSync` 전체 레이아웃 + 표별 `SplitTableByPageMeasurement` 이진탐색 측정을 동기 수행하며 멈췄다. `ComputePaginationComplexity`(블록 수 + 표 총 행 수) 도입으로 fast-path 판정·페이지 추정을 복잡도 기준으로 변경.
+- DOC 변환 인라인 이미지의 그림 속성 창에서 너비·높이가 `0.0`으로 표시되던 문제 수정 — `DocBinaryReader`가 PICF 표시 크기(dxaGoal/dyaGoal × mx/my)를 읽지 않아 `ImageBlock.WidthMm/HeightMm`가 0으로 저장되었다. (1) 변환기가 PICF 크기를 mm로 환산해 설정하도록 수정(`TryReadPicfSizeMm`), (2) 그림 속성 창은 모델 크기가 비어 있으면 비트맵 고유 픽셀 크기를 mm로 환산해 표시하도록 폴백 추가 — 기존 변환 파일도 즉시 실제 크기가 올라온다.
+- DOC(Word 97-2003) 바이너리 변환 시 표가 "1행 N셀"로 뭉개져 모든 셀 텍스트가 세로로 깨지던 문제 수정 — `DocBinaryReader`가 0x0D(단락 마크)에서만 flush 해, 단일 단락 셀이 0x0D 없이 0x07(셀 마크)로만 끝나는 표 전체가 한 버퍼에 쌓이고 행 종료(TTP)도 감지되지 않았다. 0x07 을 셀 경계로 처리해 즉시 flush 하고, fTtp(sprmPFTtp) 단락에서 마지막 셀 마감 + 행 커밋하도록 수정. 4×9·5×4·3×3 표가 올바른 행/열 격자로 복원된다(열 너비 정밀도는 sprmTDefTable 부재 문서에서 균등 폭 폴백 — 후속 과제).
+
 ### Added
 - **이식형(Portable) ZIP 배포 지원**: `scripts/publish-portable.ps1` 스크립트 신설 + `Portable.pubxml` 게시 프로파일 추가. `dotnet publish -p:PublishProfile=Portable` 한 줄로 .NET 10 별도 설치 없이 바로 실행 가능한 win-x64 ZIP 이 생성된다. `PolyDonky.App.csproj` 에 `PublishExternalConverters` MSBuild 타깃 추가 — self-contained publish 시 CLI 변환기 6종(Html/Xml/Docx/Hwpx/Doc/Hwp)을 같은 출력 디렉터리에 자동으로 함께 게시.
 

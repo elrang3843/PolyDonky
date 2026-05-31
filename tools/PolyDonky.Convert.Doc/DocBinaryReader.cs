@@ -640,6 +640,11 @@ public class DocBinaryReader
                     break;
                 case '\u0007':  // cell mark
                     paraChars.Add('\u0007'); paraFcs.Add(fc);
+                    // 0x07 을 셀 경계로 보고 즉시 flush 한다. 이 단락 PAPX 의 fTtp(sprmPFTtp)가
+                    // set 이면 FlushParagraph 가 행 종료(TTP)로 처리해 행을 커밋하고 열 너비를 읽는다.
+                    // 단일 단락 셀은 0x0D 없이 0x07 로만 끝나므로, 이 flush 가 없으면 표 전체가 다음
+                    // 0x0D 까지 한 버퍼에 쌓여 1행 N셀로 뭉개진다(모든 셀이 세로로 깨져 보임).
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
                     break;
                 case '\u0013':  // field begin → field code 모드 (폐기)
                     fieldMode = 1;
@@ -706,6 +711,15 @@ public class DocBinaryReader
                                 {
                                     img.MediaType = extracted.Value.MediaType;
                                     img.Data      = extracted.Value.Data;
+                                }
+                                // PICF 의 표시 크기(dxaGoal×mx / dyaGoal×my)를 mm 로 환산해 설정.
+                                // 미설정 시 그림 속성 창에 0 이 표시되고 렌더러가 비트맵 고유 크기로
+                                // 폴백한다 — 저자가 지정한 표시 크기와 다를 수 있다.
+                                var picfSize = TryReadPicfSizeMm(fmt.DataStream, picFc.Value);
+                                if (picfSize.HasValue)
+                                {
+                                    img.WidthMm  = picfSize.Value.widthMm;
+                                    img.HeightMm = picfSize.Value.heightMm;
                                 }
                             }
                         }
@@ -828,8 +842,15 @@ public class DocBinaryReader
         // TTP — 행 종료. Phase 2b: rgdxa → 컬럼 너비.
         if (isTtp)
         {
-            if (top.Row is { Cells.Count: > 0 }) top.RowsRaw.Add((top.Row, cellProps));
+            top.Row ??= new TableRow();
+            // 행 종료 마크(0x07-TTP) 앞에 마지막 셀 내용이 남아 있으면 셀로 마감한다.
+            // (Word 97-2003 은 행의 마지막 셀 마크가 곧 TTP 이므로 그 앞 내용 = 마지막 셀.)
+            // 버퍼가 마크 1개뿐이면(별도 TTP 단락) 빈 셀을 만들지 않도록 건너뛴다.
+            if (top.CellBlocks.Count > 0 || paraChars.Count > 1)
+                SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, top.Row, top.CellBlocks);
+            if (top.Row.Cells.Count > 0) top.RowsRaw.Add((top.Row, cellProps));
             top.Row = null;
+            top.CellBlocks.Clear();
             if (rgdxa is { Length: > 1 } && top.Table.Columns.Count == 0)
             {
                 for (int j = 0; j < rgdxa.Length - 1; j++)
@@ -1155,6 +1176,26 @@ public class DocBinaryReader
     // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
     // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw byte 가 인라인. signature 위치부터
     // PICF 끝까지를 image data 로 본다.
+    // [MS-DOC] §2.9.197 PICF — 그림의 표시 크기.
+    //   0x1C dxaGoal (2, signed twips)  — 초기 너비
+    //   0x1E dyaGoal (2, signed twips)  — 초기 높이
+    //   0x20 mx      (2, unsigned)      — 가로 배율, 1000 = 100%
+    //   0x22 my      (2, unsigned)      — 세로 배율
+    // 실제 표시 크기 = dxaGoal × mx / 1000 (twips) → mm.
+    private static (double widthMm, double heightMm)? TryReadPicfSizeMm(byte[] data, int fcPic)
+    {
+        if (fcPic < 0 || fcPic + 0x24 > data.Length) return null;
+        short  dxaGoal = BitConverter.ToInt16(data, fcPic + 0x1C);
+        short  dyaGoal = BitConverter.ToInt16(data, fcPic + 0x1E);
+        ushort mx      = BitConverter.ToUInt16(data, fcPic + 0x20);
+        ushort my      = BitConverter.ToUInt16(data, fcPic + 0x22);
+        if (dxaGoal <= 0 || dyaGoal <= 0) return null;
+        const double TwipsToMm = 1.0 / 56.692;   // 1440 twips/inch ÷ 25.4 mm/inch
+        double sx = mx > 0 ? mx / 1000.0 : 1.0;
+        double sy = my > 0 ? my / 1000.0 : 1.0;
+        return (dxaGoal * sx * TwipsToMm, dyaGoal * sy * TwipsToMm);
+    }
+
     private static (string MediaType, byte[] Data)? TryExtractImage(
         byte[] data, int fcPic,
         IReadOnlyList<(string MediaType, byte[] Data)>? bstore)
