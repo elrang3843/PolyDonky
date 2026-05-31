@@ -707,6 +707,15 @@ public class DocBinaryReader
                                     img.MediaType = extracted.Value.MediaType;
                                     img.Data      = extracted.Value.Data;
                                 }
+                                // PICF 의 표시 크기(dxaGoal×mx / dyaGoal×my)를 mm 로 환산해 설정.
+                                // 미설정 시 그림 속성 창에 0 이 표시되고 렌더러가 비트맵 고유 크기로
+                                // 폴백한다 — 저자가 지정한 표시 크기와 다를 수 있다.
+                                var picfSize = TryReadPicfSizeMm(fmt.DataStream, picFc.Value);
+                                if (picfSize.HasValue)
+                                {
+                                    img.WidthMm  = picfSize.Value.widthMm;
+                                    img.HeightMm = picfSize.Value.heightMm;
+                                }
                             }
                         }
                         if (tableStack.Count > 0)
@@ -1155,6 +1164,26 @@ public class DocBinaryReader
     // [MS-DOC] §2.9.197 PICF 의 lcb 가 전체 영역 크기. PICF 내부에 OfficeArt blob 가 들어가는데
     // 가장 흔한 modern Word 이미지는 그 blob 끝부분에 raw byte 가 인라인. signature 위치부터
     // PICF 끝까지를 image data 로 본다.
+    // [MS-DOC] §2.9.197 PICF — 그림의 표시 크기.
+    //   0x1C dxaGoal (2, signed twips)  — 초기 너비
+    //   0x1E dyaGoal (2, signed twips)  — 초기 높이
+    //   0x20 mx      (2, unsigned)      — 가로 배율, 1000 = 100%
+    //   0x22 my      (2, unsigned)      — 세로 배율
+    // 실제 표시 크기 = dxaGoal × mx / 1000 (twips) → mm.
+    private static (double widthMm, double heightMm)? TryReadPicfSizeMm(byte[] data, int fcPic)
+    {
+        if (fcPic < 0 || fcPic + 0x24 > data.Length) return null;
+        short  dxaGoal = BitConverter.ToInt16(data, fcPic + 0x1C);
+        short  dyaGoal = BitConverter.ToInt16(data, fcPic + 0x1E);
+        ushort mx      = BitConverter.ToUInt16(data, fcPic + 0x20);
+        ushort my      = BitConverter.ToUInt16(data, fcPic + 0x22);
+        if (dxaGoal <= 0 || dyaGoal <= 0) return null;
+        const double TwipsToMm = 1.0 / 56.692;   // 1440 twips/inch ÷ 25.4 mm/inch
+        double sx = mx > 0 ? mx / 1000.0 : 1.0;
+        double sy = my > 0 ? my / 1000.0 : 1.0;
+        return (dxaGoal * sx * TwipsToMm, dyaGoal * sy * TwipsToMm);
+    }
+
     private static (string MediaType, byte[] Data)? TryExtractImage(
         byte[] data, int fcPic,
         IReadOnlyList<(string MediaType, byte[] Data)>? bstore)
