@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+/samples/운영체계(OS).iwpf
+/PolyDonky-1.0.0-win-x64.zip
+/.gitignore
