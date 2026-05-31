@@ -640,6 +640,11 @@ public class DocBinaryReader
                     break;
                 case '\u0007':  // cell mark
                     paraChars.Add('\u0007'); paraFcs.Add(fc);
+                    // 0x07 을 셀 경계로 보고 즉시 flush 한다. 이 단락 PAPX 의 fTtp(sprmPFTtp)가
+                    // set 이면 FlushParagraph 가 행 종료(TTP)로 처리해 행을 커밋하고 열 너비를 읽는다.
+                    // 단일 단락 셀은 0x0D 없이 0x07 로만 끝나므로, 이 flush 가 없으면 표 전체가 다음
+                    // 0x0D 까지 한 버퍼에 쌓여 1행 N셀로 뭉개진다(모든 셀이 세로로 깨져 보임).
+                    FlushParagraph(section, paraChars, paraFcs, fc, fmt, tableStack);
                     break;
                 case '\u0013':  // field begin → field code 모드 (폐기)
                     fieldMode = 1;
@@ -837,8 +842,15 @@ public class DocBinaryReader
         // TTP — 행 종료. Phase 2b: rgdxa → 컬럼 너비.
         if (isTtp)
         {
-            if (top.Row is { Cells.Count: > 0 }) top.RowsRaw.Add((top.Row, cellProps));
+            top.Row ??= new TableRow();
+            // 행 종료 마크(0x07-TTP) 앞에 마지막 셀 내용이 남아 있으면 셀로 마감한다.
+            // (Word 97-2003 은 행의 마지막 셀 마크가 곧 TTP 이므로 그 앞 내용 = 마지막 셀.)
+            // 버퍼가 마크 1개뿐이면(별도 TTP 단락) 빈 셀을 만들지 않도록 건너뛴다.
+            if (top.CellBlocks.Count > 0 || paraChars.Count > 1)
+                SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, top.Row, top.CellBlocks);
+            if (top.Row.Cells.Count > 0) top.RowsRaw.Add((top.Row, cellProps));
             top.Row = null;
+            top.CellBlocks.Clear();
             if (rgdxa is { Length: > 1 } && top.Table.Columns.Count == 0)
             {
                 for (int j = 0; j < rgdxa.Length - 1; j++)
