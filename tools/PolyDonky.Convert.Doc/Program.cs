@@ -120,13 +120,20 @@ if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
     }
 }
 
+// 다른 프로세스(워드/한글 등)가 파일을 잡고 있어도 읽기로 통과시키는 헬퍼.
+//   File.OpenRead 기본값은 FileShare.Read 라 다른 프로세스의 쓰기 잠금에 차단되지만,
+//   변환기는 어차피 읽기 전용이므로 ReadWrite|Delete 공유를 허용해도 안전하다.
+static FileStream OpenReadShared(string path)
+    => new FileStream(path, FileMode.Open, FileAccess.Read,
+                      FileShare.ReadWrite | FileShare.Delete);
+
 try
 {
     PolyDonkyument doc;
     if (isRtfImport)
     {
         ConverterProgress.Write(0, "RTF 읽는 중");
-        using (var fs = File.OpenRead(inPath))
+        using (var fs = OpenReadShared(inPath))
             doc = new DocReader().Read(fs);
 
         ConverterProgress.Write(80, "IWPF 로 변환 중");
@@ -137,7 +144,7 @@ try
     {
         ConverterProgress.Write(0, "DOC (Word 97-2003 binary) 읽는 중");
         var docReader = new DocBinaryReader();
-        using (var fs = File.OpenRead(inPath))
+        using (var fs = OpenReadShared(inPath))
             doc = docReader.Read(fs);
 
         // Phase 3n/3n-2/3n-3 — fidelity capsule 에 매크로 / 디지털 서명 / 미인식 root storage 적재.
@@ -151,7 +158,7 @@ try
     else if (isRtfExport)
     {
         ConverterProgress.Write(0, "IWPF 읽는 중");
-        using (var fs = File.OpenRead(inPath))
+        using (var fs = OpenReadShared(inPath))
             doc = new IwpfReader().Read(fs);
 
         ConverterProgress.Write(50, "RTF 로 변환 중");
@@ -161,7 +168,7 @@ try
     else // isDocExport
     {
         ConverterProgress.Write(0, "IWPF 읽는 중");
-        using (var fs = File.OpenRead(inPath))
+        using (var fs = OpenReadShared(inPath))
             doc = new IwpfReader().Read(fs);
 
         // .doc 출력은 RTF 내용을 .doc 확장자로 쓴다.

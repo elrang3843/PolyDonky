@@ -1617,7 +1617,8 @@ public class DocBinaryReader
             int yaTop     = BitConverter.ToInt32(table, spaOff + 8);
             int xaRight   = BitConverter.ToInt32(table, spaOff + 12);
             int yaBottom  = BitConverter.ToInt32(table, spaOff + 16);
-            list.Add(new FspaEntry(cp, spid, xaLeft, yaTop, xaRight, yaBottom));
+            ushort flags  = BitConverter.ToUInt16(table, spaOff + 20);
+            list.Add(new FspaEntry(cp, spid, xaLeft, yaTop, xaRight, yaBottom, flags));
         }
         return list;
     }
@@ -1634,6 +1635,11 @@ public class DocBinaryReader
         if (FspaEntries.Count == 0 || ShapeImageIndex.Count == 0
             || BStoreImages.Count == 0 || doc.Sections.Count == 0)
             return;
+
+        // WrapLeft/Right/Inline 모드(본문 흐름)는 앵커 단락 인덱스에 Insert 해야 한다.
+        // 그러나 Insert 는 그 뒤 인덱스를 시프트시키므로, 일단 큐에 모아 두고 인덱스 큰 순서로
+        // 마지막에 일괄 Insert 한다.
+        var pendingFlowInserts = new List<(Section Sec, int Idx, ImageBlock Img)>();
 
         foreach (var fspa in FspaEntries)
         {
@@ -1711,11 +1717,41 @@ public class DocBinaryReader
                 yMm += page.MarginTopMm;
             }
 
+            // [MS-DOC] §2.8.32 FSPA flags wr (bit 5-7) → ImageWrapMode.
+            //   ※ Apache POI / LibreOffice 호환 매핑 — MS 명세 표기와 실제 동작이 어긋나는 부분이
+            //     실측으로 확인된 케이스 다수. 정렬 기준:
+            //   0=around  → 사각형 wrap (텍스트가 이미지 주위를 둘러쌈)
+            //   1=none(top/bottom only) → 텍스트가 이미지 위/아래로만 흐름 — Inline 근사
+            //   2=square wrap (사각형 영역 둘러쌈) — 실측: 텍스트가 이미지 영역을 피해 흐름
+            //   3=none (in front of text) → 이미지가 텍스트 위
+            //   4=tight (이미지 윤곽선 둘러쌈) / 5=through (구멍 포함)
+            //   wrk(bit 8-11): 0=both/1=left only/2=right only/3=largest — 이미지가 어느 쪽에 있는지.
+            //
+            //   둘러쌈 종류(0/2/4/5)는 이미지가 좌측이면 WrapLeft(이미지 좌측, 텍스트 우측),
+            //   우측이면 WrapRight 로 매핑한다. 이미지 위치는 posh(우선) → 페이지 중앙 비교(폴백).
+            int wr  = (fspa.Flags >> 5) & 0x07;
+            int wrk = (fspa.Flags >> 8) & 0x0F;
+            bool imageOnRight = ShapePositions.TryGetValue(fspa.Spid, out var sp2)
+                                 ? sp2.Posh is 3 or 5 || (sp2.Posh == 0 && xMm + widthMm / 2 > page.EffectiveWidthMm / 2)
+                                 : xMm + widthMm / 2 > page.EffectiveWidthMm / 2;
+            ImageWrapMode wrapMode = wr switch
+            {
+                0 or 2 or 4 or 5 => wrk switch
+                {
+                    1 => ImageWrapMode.WrapLeft,
+                    2 => ImageWrapMode.WrapRight,
+                    _ => imageOnRight ? ImageWrapMode.WrapRight : ImageWrapMode.WrapLeft,
+                },
+                1 => ImageWrapMode.Inline,
+                3 => ImageWrapMode.InFrontOfText,
+                _ => ImageWrapMode.InFrontOfText,
+            };
+
             var img = new ImageBlock
             {
                 MediaType       = mime,
                 Data            = data,
-                WrapMode        = ImageWrapMode.InFrontOfText,
+                WrapMode        = wrapMode,
                 OverlayXMm      = xMm,
                 OverlayYMm      = yMm,
                 WidthMm         = widthMm,
@@ -1732,13 +1768,34 @@ public class DocBinaryReader
                 img.CropRightFraction  = cr.Right;
             }
 
-            // 앵커 단락에 연결 → 메인 앱 페이지네이션이 그 단락의 실제 페이지로 배치.
-            if (haveAnchor)
+            // WrapLeft/Right 모드는 부유 객체가 아니라 본문 흐름의 일부 — 앵커 단락 위치에 Insert.
+            // 그 외 모드(InFrontOfText/BehindText)는 절대좌표 부유 객체로 Section.Blocks 끝에 Add
+            // + AnchorParagraphBlockIndex 로 페이지 배치.
+            bool isFlow = wrapMode is ImageWrapMode.WrapLeft or ImageWrapMode.WrapRight or ImageWrapMode.Inline;
+            if (isFlow && haveAnchor)
             {
-                img.AnchorParagraphBlockIndex = anchor.Blk;
-                img.AnchorRelativeYMm         = yMm - page.MarginTopMm;  // 콘텐츠 기준 상대 Y
+                // 인덱스 큰 순서로 처리하기 위해 일단 큐에 모은다(아래 finalizer 에서 역순 Insert).
+                pendingFlowInserts.Add((doc.Sections[anchor.Sec], anchor.Blk, img));
             }
-            target.Blocks.Add(img);
+            else
+            {
+                // 부유(절대좌표) — 앵커 페이지로 배치되도록 단락 인덱스 연결.
+                if (haveAnchor)
+                {
+                    img.AnchorParagraphBlockIndex = anchor.Blk;
+                    img.AnchorRelativeYMm         = yMm - page.MarginTopMm;
+                }
+                target.Blocks.Add(img);
+            }
+        }
+
+        // WrapLeft/Right/Inline 본문 흐름 이미지는 앵커 단락 인덱스에 Insert.
+        // 인덱스 큰 순서로 처리해 시프트 충돌 방지.
+        pendingFlowInserts.Sort((a, b) => b.Idx.CompareTo(a.Idx));
+        foreach (var (sec, idx, img) in pendingFlowInserts)
+        {
+            int clamped = System.Math.Min(System.Math.Max(0, idx), sec.Blocks.Count);
+            sec.Blocks.Insert(clamped, img);
         }
     }
 
@@ -4102,7 +4159,15 @@ public sealed record FspaEntry(
     int XaLeftTwips,
     int YaTopTwips,
     int XaRightTwips,
-    int YaBottomTwips);
+    int YaBottomTwips,
+    // [MS-DOC] §2.8.32 FSPA 의 16-bit flags (offset 20). bit fields:
+    //   bit 0  : fHdr  (헤더에 위치)
+    //   bit 1-2: bx    (x 좌표 anchor: 0=margin, 1=page, 2=text)
+    //   bit 3-4: by    (y 좌표 anchor)
+    //   bit 5-7: wr    (text wrap: 0=around, 1=top/bottom, 2=behind, 3=in front, 4=tight, 5=through)
+    //   bit 8-11: wrk  (wrap kind: 0=both sides, 1=left only, 2=right only, 3=largest)
+    //   bit 13 : fBelowText (true 면 BehindText)
+    ushort Flags);
 
 /// <summary>
 /// Phase 3i — DOC 본문 책갈피 entry. SttbfBkmk + PlcfBkf + PlcfBkl 의 결합 결과.
