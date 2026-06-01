@@ -378,7 +378,27 @@ public static class PageViewBuilder
 
             foreach (var run in para.Runs)
             {
-                var resolvedText = HeaderFooterTokens.Resolve(run.Text, ctx);
+                // Run.Field 가 set 이면 텍스트 토큰 치환이 아니라 필드 타입에 따라 동적 치환.
+                //   DOC import 는 PAGE/NUMPAGES field 를 별도 Run 으로 만든다(text='1', field=page)
+                //   — 그 정적 text 를 그대로 표시하면 모든 페이지가 같은 값으로 보인다.
+                string resolvedText;
+                if (run.Field is { } fieldType)
+                {
+                    resolvedText = fieldType switch
+                    {
+                        FieldType.Page     => ctx.PageNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        FieldType.NumPages => ctx.TotalPages.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        FieldType.Date     => ctx.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                        FieldType.Time     => ctx.Now.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+                        FieldType.Title    => ctx.Title  ?? run.Text,
+                        FieldType.Author   => ctx.Author ?? run.Text,
+                        _                  => run.Text,  // 미지원 필드는 원본 text 표시
+                    };
+                }
+                else
+                {
+                    resolvedText = HeaderFooterTokens.Resolve(run.Text, ctx);
+                }
                 if (string.IsNullOrEmpty(resolvedText)) continue;
 
                 var wpfRun = new WpfDoc.Run(resolvedText);
