@@ -65,6 +65,12 @@ public class DocBinaryReader
     public IReadOnlyDictionary<int, int> ShapeImageIndex { get; private set; }
         = new Dictionary<int, int>();
 
+    /// <summary>spid → Word 위치 기준 속성 (OfficeArt FOPT 0xF122 의 posh/posrelh/posv/posrelv).
+    ///   posh: 0=absolute,1=left,2=center,3=right,4=inside,5=outside.
+    ///   posrelh/posrelv: 0=margin,1=page,2=text(단락),3=char,4=…. FSPA 사각형보다 이쪽이 실제 정렬을 결정.</summary>
+    public IReadOnlyDictionary<int, (int Posh, int Posrelh, int Posv, int Posrelv)> ShapePositions { get; private set; }
+        = new Dictionary<int, (int, int, int, int)>();
+
     /// <summary>
     /// Phase 3i — 본문 책갈피 목록. 각 entry 는 (Name, StartCp, EndCp). SttbfBkmk + PlcfBkf + PlcfBkl 결합.
     /// </summary>
@@ -161,7 +167,9 @@ public class DocBinaryReader
             // Phase 3f-4 — PlcSpaMom 에서 floating shape anchor 목록 추출.
             FspaEntries  = ParseFspaEntries(table, fib);
             // Phase 3f-5 — DggContainer 의 SpContainer 들에서 spid → pib (BStore index) 맵 추출.
-            ShapeImageIndex = ParseShapeImageIndex(table, fib, wd);
+            var (shapePib, shapePos) = ParseShapeImageIndex(table, fib, wd);
+            ShapeImageIndex = shapePib;
+            ShapePositions  = shapePos;
             // Phase 3i — Bookmarks 데이터 추출 (BuildDocument 보다 먼저 — char-walk 이 CP-event 를 본다).
             Bookmarks = ParseBookmarks(table, fib);
             fmt.SetBookmarks(Bookmarks);
@@ -1632,23 +1640,48 @@ public class DocBinaryReader
             if (widthMm  < 0) widthMm  = 0;
             if (heightMm < 0) heightMm = 0;
 
+            // 앵커 CP → (섹션, 블록 인덱스). 우선 대상 섹션 결정(위치 계산에 그 섹션 페이지 사용).
+            Section target = doc.Sections[0];
+            bool haveAnchor = drawingAnchors.TryGetValue(fspa.Cp, out var anchor)
+                              && anchor.Sec < doc.Sections.Count;
+            if (haveAnchor) target = doc.Sections[anchor.Sec];
+
+            double xMm = fspa.XaLeftTwips / 56.692;
+
+            // Word 위치 속성(posh/posrelh)이 있으면 FSPA xaLeft 대신 정렬 기준으로 X 재계산.
+            //   posh: 1=left,2=center,3=right(,4=inside,5=outside). posrelh: 0=margin,1=page.
+            //   (posh=0 absolute 또는 속성 없음 → FSPA xaLeft 그대로 — 텍스트/단락 기준 절대 위치.)
+            if (ShapePositions.TryGetValue(fspa.Spid, out var sp) && sp.Posh >= 1)
+            {
+                var page = target.Page;
+                bool relPage = sp.Posrelh == 1;  // 1=page edge, 그 외(0=margin 등)는 본문 영역 기준
+                double leftEdge  = relPage ? 0 : page.MarginLeftMm;
+                double rightEdge = relPage ? page.EffectiveWidthMm
+                                           : page.EffectiveWidthMm - page.MarginRightMm;
+                xMm = sp.Posh switch
+                {
+                    2 => (leftEdge + rightEdge) / 2 - widthMm / 2,   // center
+                    3 or 5 => rightEdge - widthMm,                    // right / outside
+                    _ => leftEdge,                                    // 1=left / 4=inside
+                };
+                if (xMm < 0) xMm = 0;
+            }
+
             var img = new ImageBlock
             {
                 MediaType       = mime,
                 Data            = data,
                 WrapMode        = ImageWrapMode.InFrontOfText,
-                OverlayXMm      = fspa.XaLeftTwips / 56.692,
+                OverlayXMm      = xMm,
                 OverlayYMm      = fspa.YaTopTwips  / 56.692,
                 WidthMm         = widthMm,
                 HeightMm        = heightMm,
                 Description     = $"[floating shape spid={fspa.Spid}]",
             };
 
-            // 앵커 CP → (섹션, 블록 인덱스). 찾으면 해당 섹션에 추가하고 단락 앵커로 연결.
-            Section target = doc.Sections[0];
-            if (drawingAnchors.TryGetValue(fspa.Cp, out var anchor) && anchor.Sec < doc.Sections.Count)
+            // 앵커 단락에 연결 → 메인 앱 페이지네이션이 그 단락의 실제 페이지로 배치.
+            if (haveAnchor)
             {
-                target = doc.Sections[anchor.Sec];
                 img.AnchorParagraphBlockIndex = anchor.Blk;
                 img.AnchorRelativeYMm         = fspa.YaTopTwips / 56.692;
             }
@@ -1711,19 +1744,24 @@ public class DocBinaryReader
     //     - Sp atom (0xF009, body 8 byte: spid(4) + flags(4)) — shape ID
     //     - OPT atom (0xF00B, body = N 개 property × 6 byte) — pib (id=260, fBid=1) 가 BLIP 인덱스
     //   spid != 0 이고 pib > 0 일 때만 맵에 등록.
-    private static IReadOnlyDictionary<int, int> ParseShapeImageIndex(byte[] table, Fib fib, byte[]? wordDoc)
+    private static (Dictionary<int, int> Pib,
+                    Dictionary<int, (int Posh, int Posrelh, int Posv, int Posrelv)> Pos)
+        ParseShapeImageIndex(byte[] table, Fib fib, byte[]? wordDoc)
     {
         var map = new Dictionary<int, int>();
+        var pos = new Dictionary<int, (int, int, int, int)>();
         // 도형(OfficeArtSpContainer 0xF004)은 fcDggInfo 영역이 아니라 Table/WordDocument 스트림의
         // OfficeArtDgContainer 안에 흩어져 있다. 컨테이너 경계 추적이 불안정하므로(레코드 사이 패딩·비정렬)
-        // 0xF004 헤더를 바이트 스캔으로 직접 찾아 각 SpContainer 에서 spid(0xF00A)+pib(0xF00B prop260) 추출.
-        ScanSpContainersByteWise(table, map);
-        if (wordDoc is not null) ScanSpContainersByteWise(wordDoc, map);
-        return map;
+        // 0xF004 헤더를 바이트 스캔으로 직접 찾아 각 SpContainer 에서 spid(0xF00A)+pib(0xF00B prop260)
+        // + 위치속성(0xF122 의 posh/posrelh/posv/posrelv) 추출.
+        ScanSpContainersByteWise(table, map, pos);
+        if (wordDoc is not null) ScanSpContainersByteWise(wordDoc, map, pos);
+        return (map, pos);
     }
 
-    // 버퍼 전체를 byte 단위로 훑어 유효한 0xF004 SpContainer 헤더를 찾고 spid→pib 를 map 에 채운다.
-    private static void ScanSpContainersByteWise(byte[] buf, Dictionary<int, int> map)
+    // 버퍼 전체를 byte 단위로 훑어 유효한 0xF004 SpContainer 헤더를 찾고 spid→pib, spid→위치속성 채움.
+    private static void ScanSpContainersByteWise(byte[] buf, Dictionary<int, int> map,
+        Dictionary<int, (int, int, int, int)> posMap)
     {
         for (int s = 0; s + 8 <= buf.Length; s++)
         {
@@ -1736,7 +1774,49 @@ public class DocBinaryReader
             int spid = ExtractSpid(buf, s + 8, (int)dataEnd);
             int pib  = ExtractPib(buf, s + 8, (int)dataEnd);
             if (spid != 0 && pib > 0) map[spid] = pib;
+            if (spid != 0)
+            {
+                var p = ExtractPosition(buf, s + 8, (int)dataEnd);
+                if (p is { } pos) posMap[spid] = pos;
+            }
         }
+    }
+
+    // SpContainer 의 0xF122(secondary FOPT) 에서 posh(0x38F)/posrelh(0x390)/posv(0x391)/posrelv(0x392) 추출.
+    private static (int Posh, int Posrelh, int Posv, int Posrelv)? ExtractPosition(byte[] data, int start, int end)
+    {
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort verInst = BitConverter.ToUInt16(data, pos);
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint recLen = BitConverter.ToUInt32(data, pos + 4);
+            int ds = pos + 8; long de = (long)ds + recLen;
+            if (de > end) return null;
+            if (recType == 0xF122)
+            {
+                int propCount = (verInst >> 4) & 0x0FFF;
+                int avail = (int)((de - ds) / 6);
+                if (propCount > avail) propCount = avail;
+                int posh = -1, posrelh = -1, posv = -1, posrelv = -1;
+                for (int i = 0; i < propCount; i++)
+                {
+                    int off = ds + i * 6;
+                    int propId = BitConverter.ToUInt16(data, off) & 0x3FFF;
+                    int v = BitConverter.ToInt32(data, off + 2);
+                    switch (propId)
+                    {
+                        case 0x38F: posh    = v; break;
+                        case 0x390: posrelh = v; break;
+                        case 0x391: posv    = v; break;
+                        case 0x392: posrelv = v; break;
+                    }
+                }
+                if (posh >= 0 || posv >= 0) return (posh, posrelh, posv, posrelv);
+            }
+            pos = (int)de;
+        }
+        return null;
     }
 
     private static void WalkSpContainers(byte[] data, int start, int end, Dictionary<int, int> map, int depth)
