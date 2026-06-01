@@ -789,7 +789,7 @@ public class DocBinaryReader
     {
         public Table Table { get; } = new();
         public TableRow? Row { get; set; }
-        public List<(TableRow Row, TableCellProps[]? Cp)> RowsRaw { get; } = new();
+        public List<(TableRow Row, TableCellProps[]? Cp, short[]? Rgdxa)> RowsRaw { get; } = new();
         // 셀의 누적 Block 들. Paragraph + 중첩 Table 둘 다 가능.
         public List<Block> CellBlocks { get; } = new();
     }
@@ -801,7 +801,7 @@ public class DocBinaryReader
         while (stack.Count > targetDepth)
         {
             var top = stack.Pop();
-            if (top.Row is { Cells.Count: > 0 }) top.RowsRaw.Add((top.Row, null));
+            if (top.Row is { Cells.Count: > 0 }) top.RowsRaw.Add((top.Row, null, null));
             FinalizeTable(top.Table, top.RowsRaw);
             if (top.Table.Rows.Count == 0) continue;  // 빈 표는 버림
             if (stack.Count > 0) stack.Peek().CellBlocks.Add(top.Table);
@@ -815,7 +815,8 @@ public class DocBinaryReader
         Section section, List<char> paraChars, List<int> paraFcs, int paraEndFc, FormatStyles fmt,
         Stack<TableState> tableStack)
     {
-        var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps, itap) = fmt.GetParagraphInfo(paraEndFc);
+        var (paraIstd, ps, inTable, isTtp, rgdxa, cellProps, itap,
+             rowHeightTwips, tableWidthTwips, tableWidthFts, tableIndTwips) = fmt.GetParagraphInfo(paraEndFc);
 
         // 1) Stack depth 를 itap 에 맞춤. depth > itap 면 표 마감, depth < itap 면 새 표 push.
         FinalizeStack(section, tableStack, targetDepth: itap);
@@ -848,11 +849,19 @@ public class DocBinaryReader
             // 버퍼가 마크 1개뿐이면(별도 TTP 단락) 빈 셀을 만들지 않도록 건너뛴다.
             if (top.CellBlocks.Count > 0 || paraChars.Count > 1)
                 SplitIntoCells(paraChars, paraFcs, paraIstd, fmt, top.Row, top.CellBlocks);
-            if (top.Row.Cells.Count > 0) top.RowsRaw.Add((top.Row, cellProps));
+
+            // 행 높이 복원 — sprmTDyaRowHeight. 양수=고정, 음수=최소, 0=자동.
+            if (rowHeightTwips != 0)
+                top.Row.HeightMm = Math.Abs(rowHeightTwips) / 56.692;
+
+            if (top.Row.Cells.Count > 0) top.RowsRaw.Add((top.Row, cellProps, rgdxa));
             top.Row = null;
             top.CellBlocks.Clear();
-            if (rgdxa is { Length: > 1 } && top.Table.Columns.Count == 0)
+
+            // 열 너비 — 가장 많은 열을 가진 행의 rgdxa 로 갱신 (첫 행뿐 아니라 최대 열 수 기준).
+            if (rgdxa is { Length: > 1 } && rgdxa.Length - 1 > top.Table.Columns.Count)
             {
+                top.Table.Columns.Clear();
                 for (int j = 0; j < rgdxa.Length - 1; j++)
                 {
                     double widthMm = (rgdxa[j + 1] - rgdxa[j]) / 56.692;
@@ -860,6 +869,13 @@ public class DocBinaryReader
                     top.Table.Columns.Add(new TableColumn { WidthMm = widthMm });
                 }
             }
+
+            // 표 전체 너비 / 들여쓰기 — 첫 행에서 한 번만 설정.
+            if (top.Table.WidthMm <= 0 && tableWidthFts == 3 && tableWidthTwips > 0)
+                top.Table.WidthMm = tableWidthTwips / 56.692;
+            if (top.Table.OuterMarginLeftMm <= 0 && tableIndTwips > 0)
+                top.Table.OuterMarginLeftMm = tableIndTwips / 56.692;
+
             paraChars.Clear();
             paraFcs.Clear();
             return;
@@ -1046,7 +1062,7 @@ public class DocBinaryReader
 
     // Phase 2f — 표 마감 시 raw rows + cellProps 를 walk 해 (세로 → 가로 병합) 순으로 적용.
     private static void FinalizeTable(
-        Table table, List<(TableRow Row, TableCellProps[]? Cp)> rows)
+        Table table, List<(TableRow Row, TableCellProps[]? Cp, short[]? Rgdxa)> rows)
     {
         if (rows.Count == 0) return;
 
@@ -1075,22 +1091,34 @@ public class DocBinaryReader
             }
         }
 
-        // 2. 각 row 에 (세로 흡수 제거 + 가로 병합) 적용.
+        // 2. 각 row 에 (세로 흡수 제거 + 가로 병합) 적용. 행별 rgdxa 로 셀 너비도 반영.
         for (int r = 0; r < rows.Count; r++)
         {
-            var (row, cp) = rows[r];
-            row.Cells = MergeRowCells(row.Cells, cp, toRemove[r]);
+            var (row, cp, rgdxa) = rows[r];
+            row.Cells = MergeRowCells(row.Cells, cp, toRemove[r], rgdxa);
             if (row.Cells.Count > 0) table.Rows.Add(row);
         }
     }
 
-    // 한 행의 row.Cells 에 (테두리·배경 적용 → 세로 흡수 제거 + 가로 병합) 처리.
+    // 한 행의 row.Cells 에 (테두리·배경 적용 → 세로 흡수 제거 + 가로 병합 + 셀 너비) 처리.
     private static IList<TableCell> MergeRowCells(
-        IList<TableCell> cells, TableCellProps[]? cp, bool[]? toRemove)
+        IList<TableCell> cells, TableCellProps[]? cp, bool[]? toRemove, short[]? rgdxa = null)
     {
         if (cp is null) return cells;
 
         int n = Math.Min(cells.Count, cp.Length);
+
+        // 셀 너비 — rgdxa 가 있으면 각 논리 열의 너비를 TableCell.WidthMm 에 기록.
+        // 가로 병합 흡수(IsMerged && !IsFirstMerged) 셀은 너비를 0 으로 두고, 나중에 merged[^1] 에 합산.
+        if (rgdxa is { Length: > 1 })
+        {
+            for (int i = 0; i < n && i < rgdxa.Length - 1; i++)
+            {
+                double w = (rgdxa[i + 1] - rgdxa[i]) / 56.692;
+                cells[i].WidthMm = w > 0 ? w : 0;
+            }
+        }
+
         for (int i = 0; i < n; i++)
         {
             var cell = cells[i];
@@ -1107,8 +1135,16 @@ public class DocBinaryReader
         {
             if (toRemove is not null && col < toRemove.Length && toRemove[col]) continue;
             bool absorb = cp[col].IsMerged && !cp[col].IsFirstMerged && merged.Count > 0;
-            if (absorb) merged[^1].ColumnSpan++;
-            else        merged.Add(cells[col]);
+            if (absorb)
+            {
+                merged[^1].ColumnSpan++;
+                // 가로 병합 흡수 — 흡수되는 열의 너비를 선두 셀에 합산.
+                merged[^1].WidthMm += cells[col].WidthMm;
+            }
+            else
+            {
+                merged.Add(cells[col]);
+            }
         }
         for (int k = n; k < cells.Count; k++) merged.Add(cells[k]);
         return merged;
@@ -2078,7 +2114,7 @@ public class DocBinaryReader
 
         void FlushPara(int paraEndFc)
         {
-            var (paraIstd, ps, _, _, _, _, _) = fmt.GetParagraphInfo(paraEndFc);
+            var (paraIstd, ps, _, _, _, _, _, _, _, _, _) = fmt.GetParagraphInfo(paraEndFc);
             var para = BuildParaFromChars(paraChars, paraFcs, paraIstd, ps, fmt);
             // 빈 단락이라도 \r 만으로 emit (헤더에 연속 \r 있는 케이스 보존).
             // Phase 3h-3 — paragraph mark 의 rev flag 도 적용.
@@ -2537,10 +2573,12 @@ public class DocBinaryReader
         // Phase 2c — CellProps (sprmTDefTable 의 rgTc 에서 추출한 셀 테두리) 추가.
         // Phase 2h — Itap (sprmPItap 의 nesting level): 0=일반, 1=표 안, 2=중첩 표 안.
         public (int Istd, ParagraphStyle? Style, bool InTable, bool IsTtp,
-                short[]? Rgdxa, TableCellProps[]? CellProps, int Itap) GetParagraphInfo(int paraEndFc)
+                short[]? Rgdxa, TableCellProps[]? CellProps, int Itap,
+                short RowHeightTwips, short TableWidthTwips, byte TableWidthFts,
+                short TableIndTwips) GetParagraphInfo(int paraEndFc)
         {
             var papx = LoadPapx(paraEndFc);
-            if (papx is null) return (-1, null, false, false, null, null, 0);
+            if (papx is null) return (-1, null, false, false, null, null, 0, 0, 0, 0, 0);
 
             var (istd, directSprms) = papx.Value;
             var style = new ParagraphStyle();
@@ -2550,6 +2588,10 @@ public class DocBinaryReader
             short[]? rgdxa = null;
             TableCellProps[]? cellProps = null;
             int itap = 0;
+            short rowHeightTwips = 0;
+            short tableWidthTwips = 0;
+            byte  tableWidthFts   = 0;
+            short tableIndTwips   = 0;
 
             // 1. STSH built-in sti → Outline (Heading N → HN).
             if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
@@ -2565,18 +2607,21 @@ public class DocBinaryReader
                 if (_styles[chainIstd]?.PapxSprms is { Length: > 0 } chainSprms)
                 {
                     touched |= ApplyParagraphSprms(chainSprms, style);
-                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap);
+                    ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap,
+                        ref rowHeightTwips, ref tableWidthTwips, ref tableWidthFts, ref tableIndTwips);
                 }
             }
 
             // 3. 직접 PAPX sprms — 스타일 상속값을 덮어쓴다.
             touched |= ApplyParagraphSprms(directSprms, style);
-            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap);
+            ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap,
+                ref rowHeightTwips, ref tableWidthTwips, ref tableWidthFts, ref tableIndTwips);
 
             // sprmPItap 가 명시 안 되어도 InTable=true / IsTtp=true 면 1-level 표로 간주 — Word 95
             // legacy 호환 + 합성 케이스. itap > 0 이 명시된 경우 (중첩) 는 그대로.
             if (itap == 0 && (inTable || isTtp)) itap = 1;
-            return (istd, touched ? style : null, inTable, isTtp, rgdxa, cellProps, itap);
+            return (istd, touched ? style : null, inTable, isTtp, rgdxa, cellProps, itap,
+                    rowHeightTwips, tableWidthTwips, tableWidthFts, tableIndTwips);
         }
 
         // [MS-DOC] 단락의 표 관련 sprm 일괄 스캔:
@@ -2588,13 +2633,19 @@ public class DocBinaryReader
         // ref 매개변수는 람다 캡처 불가라 로컬에 모은 뒤 호출부에서 합친다.
         private static void ScanTableProps(byte[] grpprl,
             ref bool inTable, ref bool isTtp, ref short[]? rgdxa, ref TableCellProps[]? cellProps,
-            ref int itap)
+            ref int itap,
+            ref short rowHeightTwips, ref short tableWidthTwips, ref byte tableWidthFts,
+            ref short tableIndTwips)
         {
             bool localIn  = inTable;
             bool localTtp = isTtp;
             short[]? localDxa = rgdxa;
             TableCellProps[]? localCp = cellProps;
             int localItap = itap;
+            short localRowH   = rowHeightTwips;
+            short localTblW   = tableWidthTwips;
+            byte  localTblWFts = tableWidthFts;
+            short localTblInd = tableIndTwips;
             WalkSprms(grpprl, (sprm, operand) =>
             {
                 if (sprm == 0x2416 && operand.Length >= 1) localIn = operand[0] != 0;
@@ -2604,6 +2655,26 @@ public class DocBinaryReader
                     // sprmPItap (spra=3, 4-byte signed) — nesting level. itap>=1 면 표 안.
                     int v = BitConverter.ToInt32(operand, 0);
                     if (v >= 0 && v <= 8) localItap = v;
+                }
+                else if (sprm == 0x9407 && operand.Length >= 2)
+                {
+                    // [MS-DOC] §2.9.338 sprmTDyaRowHeight (spra=4, 2-byte signed).
+                    // 양수 = 정확한 행 높이(twips), 음수 = 최소 행 높이(|값| twips), 0 = 자동.
+                    localRowH = BitConverter.ToInt16(operand, 0);
+                }
+                else if (sprm == 0xF614 && operand.Length >= 3)
+                {
+                    // [MS-DOC] §2.9.331 sprmTTableWidth (spra=7, 3-byte).
+                    // ftsWidth(1): 0/1=auto, 2=pct(1/50%), 3=twips. wWidth(2, signed).
+                    localTblWFts = operand[0];
+                    localTblW    = BitConverter.ToInt16(operand, 1);
+                }
+                else if (sprm == 0xF661 && operand.Length >= 3)
+                {
+                    // [MS-DOC] §2.9.332 sprmTTableInd (spra=7, 3-byte) — 표 왼쪽 들여쓰기.
+                    // ftsWidth(1): 3=twips. wWidth(2, signed). 음수 = 음의 들여쓰기(거의 없음).
+                    if (operand[0] == 3)
+                        localTblInd = BitConverter.ToInt16(operand, 1);
                 }
                 else if (sprm == 0xD608)
                 {
@@ -2658,11 +2729,15 @@ public class DocBinaryReader
                         localCp[j] = localCp[j] with { BackgroundHex = hex };
                 }
             });
-            inTable   = localIn;
-            isTtp     = localTtp;
-            rgdxa     = localDxa;
-            cellProps = localCp;
-            itap      = localItap;
+            inTable        = localIn;
+            isTtp          = localTtp;
+            rgdxa          = localDxa;
+            cellProps      = localCp;
+            itap           = localItap;
+            rowHeightTwips = localRowH;
+            tableWidthTwips = localTblW;
+            tableWidthFts  = localTblWFts;
+            tableIndTwips  = localTblInd;
         }
 
         // [MS-DOC] §2.9.16 Brc80 (4 byte border code):
