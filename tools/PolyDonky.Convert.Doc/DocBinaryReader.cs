@@ -1640,21 +1640,6 @@ public class DocBinaryReader
             if (widthMm  < 0) widthMm  = 0;
             if (heightMm < 0) heightMm = 0;
 
-            // 상대 정렬(posh=right 등) 도형은 FSPA 사각형 종횡비가 실제 이미지와 어긋날 수 있다.
-            // 네이티브 픽셀 비율과 10% 이상 차이 나면 면적을 보존하며 네이티브 종횡비로 보정(왜곡 방지).
-            if (widthMm > 0 && heightMm > 0 && TryGetImagePixelSize(data, out int pw, out int ph)
-                && pw > 0 && ph > 0)
-            {
-                double nativeAspect = (double)pw / ph;
-                double fsAspect      = widthMm / heightMm;
-                if (System.Math.Abs(nativeAspect - fsAspect) > nativeAspect * 0.1)
-                {
-                    double area = widthMm * heightMm;
-                    widthMm  = System.Math.Sqrt(area * nativeAspect);
-                    heightMm = System.Math.Sqrt(area / nativeAspect);
-                }
-            }
-
             // 앵커 CP → (섹션, 블록 인덱스). 우선 대상 섹션 결정(위치 계산에 그 섹션 페이지 사용).
             Section target = doc.Sections[0];
             bool haveAnchor = drawingAnchors.TryGetValue(fspa.Cp, out var anchor)
@@ -1702,41 +1687,6 @@ public class DocBinaryReader
             }
             target.Blocks.Add(img);
         }
-    }
-
-    // PNG / JPEG 바이트에서 픽셀 크기(width,height) 추출. 실패 시 false.
-    private static bool TryGetImagePixelSize(byte[] d, out int width, out int height)
-    {
-        width = height = 0;
-        if (d.Length < 24) return false;
-        // PNG: 시그니처(8) + IHDR length(4) + "IHDR"(4) + width(4 BE) + height(4 BE).
-        if (d[0] == 0x89 && d[1] == 0x50 && d[2] == 0x4E && d[3] == 0x47)
-        {
-            width  = (d[16] << 24) | (d[17] << 16) | (d[18] << 8) | d[19];
-            height = (d[20] << 24) | (d[21] << 16) | (d[22] << 8) | d[23];
-            return width > 0 && height > 0;
-        }
-        // JPEG: SOF0..SOF3 / SOF5..SOF7 / SOF9..SOF11 마커에서 height(2 BE) + width(2 BE).
-        if (d[0] == 0xFF && d[1] == 0xD8)
-        {
-            int p = 2;
-            while (p + 9 < d.Length)
-            {
-                if (d[p] != 0xFF) { p++; continue; }
-                byte m = d[p + 1];
-                if (m is >= 0xC0 and <= 0xC3 or >= 0xC5 and <= 0xC7 or >= 0xC9 and <= 0xCB)
-                {
-                    height = (d[p + 5] << 8) | d[p + 6];
-                    width  = (d[p + 7] << 8) | d[p + 8];
-                    return width > 0 && height > 0;
-                }
-                if (m == 0xD8 || m == 0xD9 || (m >= 0xD0 && m <= 0xD7)) { p += 2; continue; }
-                int seg = (d[p + 2] << 8) | d[p + 3];   // 세그먼트 길이로 건너뜀
-                if (seg < 2) return false;
-                p += 2 + seg;
-            }
-        }
-        return false;
     }
 
     // Phase 3i — 본문 책갈피 추출. SttbfBkmk (이름 배열) + PlcfBkf (시작 CP) + PlcfBkl (끝 CP).
