@@ -3488,13 +3488,18 @@ public class DocBinaryReader
                 case 0xC64D:
                     if (operand.Length >= 10)
                     {
-                        byte bCvType = operand[4];   // cvBack byte 0: cvType/cvAuto
-                        // byte 0 = 0x00 (auto/none) 이면 음영 없음, 그 외엔 byte 1~3 을 RGB 로.
-                        if (bCvType != 0x00)
+                        // [MS-DOC] §2.9.263 Shd[New] (10 byte):
+                        //   operand[0..3] = cvFore (R G B cvType)
+                        //   operand[4..6] = cvBack RGB
+                        //   operand[7]    = cvBack cvType (0=auto, 0xFF=indexed, ...)
+                        //   operand[8..9] = ipat
+                        // 실측: ipat=0(clear)·cvBack cvType=0(auto) 이어도 cvBack RGB 가 비-검정·
+                        //   비-흰색이면 워드가 그 색을 음영으로 그린다. (Apache POI 호환)
+                        byte r = operand[4], g = operand[5], b = operand[6];
+                        if (r != 0 || g != 0 || b != 0)   // 0,0,0 = 음영 없음
                         {
-                            string hex = $"#{operand[5]:X2}{operand[6]:X2}{operand[7]:X2}";
-                            // 너무 옅은(거의 흰색) 자동 배경은 무시 — 의미 있는 음영만 적용.
-                            if (hex != "#FFFFFF")
+                            string hex = $"#{r:X2}{g:X2}{b:X2}";
+                            if (hex != "#FFFFFF")          // 흰색 = 음영 없음
                             {
                                 style.BackgroundColor = hex;
                                 return true;
