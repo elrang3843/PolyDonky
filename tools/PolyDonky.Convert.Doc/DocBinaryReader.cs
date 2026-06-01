@@ -2168,28 +2168,51 @@ public class DocBinaryReader
             int cpStart = hddBase + subCps[i];
             int cpEnd   = hddBase + subCps[i + 1];
             if (cpEnd <= cpStart || cpEnd > hddEnd) continue;
-            // Phase 3m — Run-rich 단락 추출.
-            var paras = BuildSubdocParagraphs(wd, table, fib, cpStart, cpEnd, fmt);
-            if (paras.Count == 0) continue;
+            // Phase 3m — Run-rich 단락 추출 (셀별 그룹). 헤더/푸터에 1×N 표가 있으면 각 셀이
+            // left/center/right 슬롯에 해당. 표 없으면 셀 1개에 모두 모임.
+            var cellGroups = BuildSubdocCellGroups(wd, table, fib, cpStart, cpEnd, fmt);
+            // 빈 단락만 있는 셀 제거.
+            var nonEmpty = cellGroups
+                .Where(g => g.Any(p => p.Runs.Count > 0)).ToList();
+            if (nonEmpty.Count == 0) continue;
 
             int sectionIdx = i / 6;
             int storyIdx   = i % 6;
-            // PlcfHdd 의 section 분할이 실제 doc.Sections 개수보다 많을 수 있다 (워드가 빈 PAPX
-            // 기반 section 을 합칠 때 등). 범위를 벗어나면 마지막 section 으로 폴백.
             if (sectionIdx >= doc.Sections.Count) sectionIdx = doc.Sections.Count - 1;
             var page = doc.Sections[sectionIdx].Page;
-            switch (storyIdx)
-            {
-                case 1: case 0: case 4:  // header: odd (1) / even (0) / first (4) — odd 우선
-                    if (page.Header.Center.IsEmpty)
-                        foreach (var pa in paras) page.Header.Center.Paragraphs.Add(pa);
-                    break;
-                case 3: case 2: case 5:  // footer: odd (3) / even (2) / first (5)
-                    if (page.Footer.Center.IsEmpty)
-                        foreach (var pa in paras) page.Footer.Center.Paragraphs.Add(pa);
-                    break;
-            }
+            bool isHeader = storyIdx is 0 or 1 or 4;
+            var slot = isHeader ? page.Header : page.Footer;
+            if (!slot.Center.IsEmpty || !slot.Left.IsEmpty || !slot.Right.IsEmpty)
+                continue;  // 이미 채워졌으면 (odd 우선) 덮어쓰지 않음
+
+            DistributeCellsToSlots(nonEmpty, slot);
         }
+    }
+
+    // 셀 그룹을 left/center/right 슬롯에 분배.
+    //   1 셀 → center 만 (단일 슬롯)
+    //   2 셀 → left + right
+    //   3 셀 → left + center + right
+    //   4+ 셀 → 첫=left, 마지막=right, 중간 셀들을 center 에 순서대로 합침
+    private static void DistributeCellsToSlots(
+        List<List<Paragraph>> cells, PolyDonky.Core.HeaderFooterContent slot)
+    {
+        if (cells.Count == 1)
+        {
+            foreach (var p in cells[0]) slot.Center.Paragraphs.Add(p);
+            return;
+        }
+        if (cells.Count == 2)
+        {
+            foreach (var p in cells[0]) slot.Left.Paragraphs.Add(p);
+            foreach (var p in cells[1]) slot.Right.Paragraphs.Add(p);
+            return;
+        }
+        // 3+
+        foreach (var p in cells[0]) slot.Left.Paragraphs.Add(p);
+        for (int c = 1; c < cells.Count - 1; c++)
+            foreach (var p in cells[c]) slot.Center.Paragraphs.Add(p);
+        foreach (var p in cells[^1]) slot.Right.Paragraphs.Add(p);
     }
 
     // Phase 3g — 각주/미주 sub-document 추출. WordDocument 의 sub-document 순서:
@@ -2416,9 +2439,43 @@ public class DocBinaryReader
     //   Run 빌더로 처리. \r → 단락 경계, 0x13/0x14/0x15 → 필드, bookmark event → marker.
     //   각주/미주/픽처 (0x01/0x02/0x05/0x08) 는 sub-doc 에서 보통 안 쓰여 skip.
     //   각 Paragraph 는 fc 기반 CHPX/STSH 적용 → 헤더/푸터의 굵게·이탤릭·하이퍼링크 등 보존.
-    private static IList<Paragraph> BuildSubdocParagraphs(
+    // BuildSubdocParagraphs 의 셀 인식 변형 — 헤더/푸터 안 1×N 표 의 셀별 단락 그룹을 반환.
+    //   0x07 (cell mark) 를 셀 경계로 처리. 표 없으면 셀 1개에 모든 단락.
+    //   여러 행이면 모든 셀을 평탄화해 한 리스트 (left/center/right 분배에 적합).
+    private static List<List<Paragraph>> BuildSubdocCellGroups(
         byte[] wd, byte[] table, Fib fib, int cpStart, int cpEnd, FormatStyles fmt)
     {
+        var paras = BuildSubdocParagraphsImpl(wd, table, fib, cpStart, cpEnd, fmt,
+            out var cellBoundaries);
+        var groups = new List<List<Paragraph>>();
+        var cur = new List<Paragraph>();
+        groups.Add(cur);
+        for (int i = 0; i < paras.Count; i++)
+        {
+            cur.Add(paras[i]);
+            if (cellBoundaries.Contains(i))   // 이 단락 뒤로 셀 경계 (0x07 마크)
+            {
+                cur = new List<Paragraph>();
+                groups.Add(cur);
+            }
+        }
+        // 빈 trailing 셀 제거
+        while (groups.Count > 0 && groups[^1].Count == 0)
+            groups.RemoveAt(groups.Count - 1);
+        return groups;
+    }
+
+    private static IList<Paragraph> BuildSubdocParagraphs(
+        byte[] wd, byte[] table, Fib fib, int cpStart, int cpEnd, FormatStyles fmt)
+        => BuildSubdocParagraphsImpl(wd, table, fib, cpStart, cpEnd, fmt, out _);
+
+    // BuildSubdocParagraphs 의 실제 구현 — cellBoundaries 에 0x07 직전 단락 인덱스를 채운다.
+    //   호출자가 셀 분리가 필요 없으면 cellBoundaries 출력을 무시한다.
+    private static IList<Paragraph> BuildSubdocParagraphsImpl(
+        byte[] wd, byte[] table, Fib fib, int cpStart, int cpEnd, FormatStyles fmt,
+        out HashSet<int> cellBoundaries)
+    {
+        cellBoundaries = new HashSet<int>();
         var (text, fcs) = ExtractSubdocTextWithFcs(wd, table, fib, cpStart, cpEnd);
         var result = new List<Paragraph>();
         if (text.Length == 0) return result;
@@ -2496,8 +2553,14 @@ public class DocBinaryReader
                     fieldMode = 0; fieldInstr = null;
                     resultStartFc = -1; activeUrl = null; activeFieldType = null; activeFieldArg = null;
                     break;
-                case '': case '': case '': case '': case '':
-                    // 픽처/footnote/comment/cell-mark/drawing — 헤더에선 보통 무시.
+                case '':
+                    // cell mark (0x07) — 셀 경계. 누적 텍스트를 단락으로 flush 후
+                    // 마지막 단락 인덱스를 cellBoundaries 에 기록(그 뒤로 새 셀 시작).
+                    if (paraChars.Count > 0) FlushPara(fc);
+                    if (result.Count > 0) cellBoundaries.Add(result.Count - 1);
+                    break;
+                case '': case '': case '': case '':
+                    // 픽처/footnote/comment/drawing — 헤더에선 보통 무시.
                     break;
                 case '\t':
                 case '\n':
