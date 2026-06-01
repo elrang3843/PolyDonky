@@ -50,6 +50,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
   ① 페이지 — 모든 floating ImageBlock 에 `AnchorPageIndex=0` 을 박아 1페이지로 쏠렸다. 0x08(drawing anchor) 의 CP 가 속한 본문 단락을 추적해 `ImageBlock.AnchorParagraphBlockIndex`(+`AnchorRelativeYMm`) 로 연결 → 메인 앱 페이지네이션이 각 이미지를 앵커 단락의 실제 페이지로 배치(매핑 없으면 page 0 폴백).
   ② 정렬 — FSPA 사각형(xaLeft)만 써서 X 를 정했는데, Word 의 실제 가로 정렬은 OfficeArt FOPT(0xF122)의 posh/posrelh 속성에 들어 있다(예: 우상단 보드 사진은 xaLeft=0 이지만 posh=3=right, posrelh=0=margin = "여백 기준 우측 정렬"이라 좌측이 아닌 우측에 와야 함). posh(1=left/2=center/3=right/5=outside) + posrelh(0=margin/1=page) 를 파싱해 `OverlayXMm` 을 정렬 기준으로 재계산. posh=0(absolute)·속성 없음은 기존 xaLeft 유지. 검증: CORE-3399PRO-JD4.doc 보드 사진이 1페이지 우상단에 정확히 배치, 나머지 5개는 각자 앵커 페이지로 분산.
   ③ 종횡비 — 상대 정렬 도형은 FSPA 사각형 종횡비가 실제 이미지와 어긋나 가로로 찌그러지던 문제(보드 사진 34×42 세로형 ↔ 네이티브 323×177 가로형). 부유 이미지의 표시 종횡비를 네이티브 픽셀 비율(`TryGetImagePixelSize` — PNG IHDR / JPEG SOF)로 강제하되 면적을 보존해 보정(네이티브와 10% 이상 차이날 때만). 이미 일치하는 절대 위치 도형은 무변경. 보드 사진이 51×28 가로형으로 왜곡 없이 복원.
+  ④ 좌표 기준 — 단락 앵커 경로(`ResolveParaAnchoredImages`)는 Y 는 `padTop` 을 더해 콘텐츠→페이지 좌표 보정을 하면서 X 는 안 한다. 그래서 리더가 페이지 좌상단 기준으로 저장한 `OverlayXMm` 이 콘텐츠 영역 기준으로 해석돼 좌측 여백만큼 우측으로 밀려 본문 우측 경계 밖에 닿아 잘렸다(보드 사진 우측이 페이지 끝에 붙어 절반만 보임). 리더가 단락 앵커 경로의 부유 이미지 X 를 콘텐츠 영역 기준으로 저장하도록 통일(`OverlayXMm -= MarginLeftMm`). 폴백(앵커 없음) 경로는 페이지 좌상단 기준 유지.
 - 변환 파일 편집 시 글상자·표 내용 소실·튕김 3종 수정:
   ① `ScheduleLivePaginationRefresh`에서 페이지 재구성(needsRebuild=true) 후 `SyncDocumentFromLive` 미호출로 `_viewModel.Document`가 낡은 상태로 남던 문제 — Undo 스냅샷 오염 및 오버레이 내용 소실의 원인
   ② 같은 경로에서 `RebuildOverlays()` 미호출로 글상자·이미지·도형이 새 페이지 기하 기준으로 재배치되지 않아 시각적으로 "튕겨나가던" 문제

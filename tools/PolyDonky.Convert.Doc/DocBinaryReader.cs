@@ -1682,12 +1682,19 @@ public class DocBinaryReader
                 if (xMm < 0) xMm = 0;
             }
 
+            // 단락 앵커 경로(ResolveParaAnchoredImages)는 OverlayXMm 을 "콘텐츠 영역 기준"으로
+            // 해석한다(Y 는 padTop 을 더해 페이지 좌표로 보정해 주지만 X 는 안 함).
+            // 일관성을 위해 X 를 콘텐츠 영역 기준으로 저장한다 — 페이지 좌상단 절대 X 에서
+            // 좌측 여백(marginLeftMm)을 빼서 넘긴다. 폴백(앵커 없음) 경로는 페이지 좌상단 기준 유지.
+            double overlayX = haveAnchor ? xMm - target.Page.MarginLeftMm : xMm;
+            if (haveAnchor && overlayX < 0) overlayX = 0;
+
             var img = new ImageBlock
             {
                 MediaType       = mime,
                 Data            = data,
                 WrapMode        = ImageWrapMode.InFrontOfText,
-                OverlayXMm      = xMm,
+                OverlayXMm      = overlayX,
                 OverlayYMm      = fspa.YaTopTwips  / 56.692,
                 WidthMm         = widthMm,
                 HeightMm        = heightMm,
