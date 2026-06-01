@@ -71,6 +71,11 @@ public class DocBinaryReader
     public IReadOnlyDictionary<int, (int Posh, int Posrelh, int Posv, int Posrelv)> ShapePositions { get; private set; }
         = new Dictionary<int, (int, int, int, int)>();
 
+    /// <summary>spid → OfficeArt FOPT 0x100~0x103 (cropFromTop/Bottom/Left/Right, FixedPoint 16.16).
+    ///   원본 BLIP 가장자리에서 잘라낼 비율(0~1). 합계 &lt; 1 이어야 유효.</summary>
+    public IReadOnlyDictionary<int, (double Top, double Bottom, double Left, double Right)> ShapeCrops { get; private set; }
+        = new Dictionary<int, (double, double, double, double)>();
+
     /// <summary>
     /// Phase 3i — 본문 책갈피 목록. 각 entry 는 (Name, StartCp, EndCp). SttbfBkmk + PlcfBkf + PlcfBkl 결합.
     /// </summary>
@@ -167,9 +172,10 @@ public class DocBinaryReader
             // Phase 3f-4 — PlcSpaMom 에서 floating shape anchor 목록 추출.
             FspaEntries  = ParseFspaEntries(table, fib);
             // Phase 3f-5 — DggContainer 의 SpContainer 들에서 spid → pib (BStore index) 맵 추출.
-            var (shapePib, shapePos) = ParseShapeImageIndex(table, fib, wd);
+            var (shapePib, shapePos, shapeCrops) = ParseShapeImageIndex(table, fib, wd);
             ShapeImageIndex = shapePib;
             ShapePositions  = shapePos;
+            ShapeCrops      = shapeCrops;
             // Phase 3i — Bookmarks 데이터 추출 (BuildDocument 보다 먼저 — char-walk 이 CP-event 를 본다).
             Bookmarks = ParseBookmarks(table, fib);
             fmt.SetBookmarks(Bookmarks);
@@ -1647,24 +1653,62 @@ public class DocBinaryReader
             if (haveAnchor) target = doc.Sections[anchor.Sec];
 
             double xMm = fspa.XaLeftTwips / 56.692;
+            double yMm = fspa.YaTopTwips  / 56.692;
 
-            // Word 위치 속성(posh/posrelh)이 있으면 FSPA xaLeft 대신 정렬 기준으로 X 재계산.
-            //   posh: 1=left,2=center,3=right(,4=inside,5=outside). posrelh: 0=margin,1=page.
-            //   (posh=0 absolute 또는 속성 없음 → FSPA xaLeft 그대로 — 텍스트/단락 기준 절대 위치.)
-            if (ShapePositions.TryGetValue(fspa.Spid, out var sp) && sp.Posh >= 1)
+            // Word 위치 속성(posh/posv + posrelh/posrelv)으로 좌표 기준 보정 — IWPF 규약은
+            // "OverlayXMm/YMm = 페이지 좌상단 기준". OfficeArt 의 posrelh/posrelv = 0(margin) 이면
+            // FSPA 의 xaLeft/yaTop 은 콘텐츠 영역(여백 안쪽) 기준이므로 marginLeft/Top 을 더해야
+            // 페이지 좌상단 기준이 된다. posrelh/posrelv = 1(page) 이면 이미 페이지 기준이라 그대로.
+            var page = target.Page;
+            if (ShapePositions.TryGetValue(fspa.Spid, out var sp))
             {
-                var page = target.Page;
-                bool relPage = sp.Posrelh == 1;  // 1=page edge, 그 외(0=margin 등)는 본문 영역 기준
-                double leftEdge  = relPage ? 0 : page.MarginLeftMm;
-                double rightEdge = relPage ? page.EffectiveWidthMm
-                                           : page.EffectiveWidthMm - page.MarginRightMm;
-                xMm = sp.Posh switch
+                bool xRelPage = sp.Posrelh == 1;
+                bool yRelPage = sp.Posrelv == 1;
+                double leftEdge  = xRelPage ? 0 : page.MarginLeftMm;
+                double rightEdge = xRelPage ? page.EffectiveWidthMm
+                                            : page.EffectiveWidthMm - page.MarginRightMm;
+
+                // X 정렬: posh ≥ 1 이면 정렬 기준으로 재계산, 0(absolute) 이면 raw 좌표.
+                if (sp.Posh >= 1)
                 {
-                    2 => (leftEdge + rightEdge) / 2 - widthMm / 2,   // center
-                    3 or 5 => rightEdge - widthMm,                    // right / outside
-                    _ => leftEdge,                                    // 1=left / 4=inside
-                };
+                    xMm = sp.Posh switch
+                    {
+                        2      => (leftEdge + rightEdge) / 2 - widthMm / 2,  // center
+                        3 or 5 => rightEdge - widthMm,                        // right / outside
+                        _      => leftEdge,                                   // 1=left / 4=inside
+                    };
+                }
+                else
+                {
+                    // posh=0 absolute: 콘텐츠 기준 좌표면 marginLeft 를 더해 페이지 좌상단 기준화.
+                    if (!xRelPage) xMm += page.MarginLeftMm;
+                }
                 if (xMm < 0) xMm = 0;
+
+                // Y 정렬: posv ≥ 1 이면 (top/center/bottom 정렬), 0(absolute) 이면 raw 좌표.
+                double topEdge    = yRelPage ? 0 : page.MarginTopMm;
+                double bottomEdge = yRelPage ? page.EffectiveHeightMm
+                                             : page.EffectiveHeightMm - page.MarginBottomMm;
+                if (sp.Posv >= 1)
+                {
+                    yMm = sp.Posv switch
+                    {
+                        2      => (topEdge + bottomEdge) / 2 - heightMm / 2,  // center
+                        3 or 5 => bottomEdge - heightMm,                       // bottom / outside
+                        _      => topEdge,                                     // 1=top / 4=inside
+                    };
+                }
+                else
+                {
+                    if (!yRelPage) yMm += page.MarginTopMm;
+                }
+                if (yMm < 0) yMm = 0;
+            }
+            else
+            {
+                // 위치 속성 없음 → FSPA 의 xaLeft/yaTop 은 보통 콘텐츠 영역 기준이라 마진 보정.
+                xMm += page.MarginLeftMm;
+                yMm += page.MarginTopMm;
             }
 
             var img = new ImageBlock
@@ -1673,17 +1717,26 @@ public class DocBinaryReader
                 Data            = data,
                 WrapMode        = ImageWrapMode.InFrontOfText,
                 OverlayXMm      = xMm,
-                OverlayYMm      = fspa.YaTopTwips  / 56.692,
+                OverlayYMm      = yMm,
                 WidthMm         = widthMm,
                 HeightMm        = heightMm,
                 Description     = $"[floating shape spid={fspa.Spid}]",
             };
 
+            // FOPT crop(0x100~0x103) → ImageBlock.Crop*Fraction (WPF 렌더가 CroppedBitmap 으로 적용).
+            if (ShapeCrops.TryGetValue(fspa.Spid, out var cr))
+            {
+                img.CropTopFraction    = cr.Top;
+                img.CropBottomFraction = cr.Bottom;
+                img.CropLeftFraction   = cr.Left;
+                img.CropRightFraction  = cr.Right;
+            }
+
             // 앵커 단락에 연결 → 메인 앱 페이지네이션이 그 단락의 실제 페이지로 배치.
             if (haveAnchor)
             {
                 img.AnchorParagraphBlockIndex = anchor.Blk;
-                img.AnchorRelativeYMm         = fspa.YaTopTwips / 56.692;
+                img.AnchorRelativeYMm         = yMm - page.MarginTopMm;  // 콘텐츠 기준 상대 Y
             }
             target.Blocks.Add(img);
         }
@@ -1745,23 +1798,26 @@ public class DocBinaryReader
     //     - OPT atom (0xF00B, body = N 개 property × 6 byte) — pib (id=260, fBid=1) 가 BLIP 인덱스
     //   spid != 0 이고 pib > 0 일 때만 맵에 등록.
     private static (Dictionary<int, int> Pib,
-                    Dictionary<int, (int Posh, int Posrelh, int Posv, int Posrelv)> Pos)
+                    Dictionary<int, (int Posh, int Posrelh, int Posv, int Posrelv)> Pos,
+                    Dictionary<int, (double Top, double Bottom, double Left, double Right)> Crops)
         ParseShapeImageIndex(byte[] table, Fib fib, byte[]? wordDoc)
     {
         var map = new Dictionary<int, int>();
         var pos = new Dictionary<int, (int, int, int, int)>();
+        var crops = new Dictionary<int, (double, double, double, double)>();
         // 도형(OfficeArtSpContainer 0xF004)은 fcDggInfo 영역이 아니라 Table/WordDocument 스트림의
         // OfficeArtDgContainer 안에 흩어져 있다. 컨테이너 경계 추적이 불안정하므로(레코드 사이 패딩·비정렬)
-        // 0xF004 헤더를 바이트 스캔으로 직접 찾아 각 SpContainer 에서 spid(0xF00A)+pib(0xF00B prop260)
-        // + 위치속성(0xF122 의 posh/posrelh/posv/posrelv) 추출.
-        ScanSpContainersByteWise(table, map, pos);
-        if (wordDoc is not null) ScanSpContainersByteWise(wordDoc, map, pos);
-        return (map, pos);
+        // 0xF004 헤더를 바이트 스캔으로 직접 찾아 각 SpContainer 에서 spid(0xF00A) + pib(0xF00B prop260)
+        // + 위치속성(0xF122 의 posh/posrelh/posv/posrelv) + crop 비율(0xF00B 의 0x100~0x103) 추출.
+        ScanSpContainersByteWise(table, map, pos, crops);
+        if (wordDoc is not null) ScanSpContainersByteWise(wordDoc, map, pos, crops);
+        return (map, pos, crops);
     }
 
-    // 버퍼 전체를 byte 단위로 훑어 유효한 0xF004 SpContainer 헤더를 찾고 spid→pib, spid→위치속성 채움.
+    // 버퍼 전체를 byte 단위로 훑어 유효한 0xF004 SpContainer 헤더를 찾고 spid → pib/위치속성/crop 채움.
     private static void ScanSpContainersByteWise(byte[] buf, Dictionary<int, int> map,
-        Dictionary<int, (int, int, int, int)> posMap)
+        Dictionary<int, (int, int, int, int)> posMap,
+        Dictionary<int, (double, double, double, double)> cropMap)
     {
         for (int s = 0; s + 8 <= buf.Length; s++)
         {
@@ -1778,8 +1834,50 @@ public class DocBinaryReader
             {
                 var p = ExtractPosition(buf, s + 8, (int)dataEnd);
                 if (p is { } pos) posMap[spid] = pos;
+                var c = ExtractCrop(buf, s + 8, (int)dataEnd);
+                if (c is { } cr) cropMap[spid] = cr;
             }
         }
+    }
+
+    // SpContainer 의 0xF00B(primary FOPT) 에서 cropFromTop(0x100)/Bottom(0x101)/Left(0x102)/Right(0x103) 추출.
+    //   값은 FixedPoint 16.16 — 65536 = 1.0(=100%). 비율(0~1) 로 변환해 반환. 전부 0 이면 null.
+    private static (double Top, double Bottom, double Left, double Right)? ExtractCrop(byte[] data, int start, int end)
+    {
+        int pos = start;
+        while (pos + 8 <= end)
+        {
+            ushort verInst = BitConverter.ToUInt16(data, pos);
+            ushort recType = BitConverter.ToUInt16(data, pos + 2);
+            uint recLen = BitConverter.ToUInt32(data, pos + 4);
+            int ds = pos + 8; long de = (long)ds + recLen;
+            if (de > end) return null;
+            if (recType == 0xF00B)
+            {
+                int propCount = (verInst >> 4) & 0x0FFF;
+                int avail = (int)((de - ds) / 6);
+                if (propCount > avail) propCount = avail;
+                int top = 0, bot = 0, lft = 0, rgt = 0;
+                for (int i = 0; i < propCount; i++)
+                {
+                    int off = ds + i * 6;
+                    int propId = BitConverter.ToUInt16(data, off) & 0x3FFF;
+                    int v = BitConverter.ToInt32(data, off + 2);
+                    switch (propId)
+                    {
+                        case 0x100: top = v; break;
+                        case 0x101: bot = v; break;
+                        case 0x102: lft = v; break;
+                        case 0x103: rgt = v; break;
+                    }
+                }
+                if (top == 0 && bot == 0 && lft == 0 && rgt == 0) return null;
+                const double Scale = 1.0 / 65536.0;
+                return (top * Scale, bot * Scale, lft * Scale, rgt * Scale);
+            }
+            pos = (int)de;
+        }
+        return null;
     }
 
     // SpContainer 의 0xF122(secondary FOPT) 에서 posh(0x38F)/posrelh(0x390)/posv(0x391)/posrelv(0x392) 추출.

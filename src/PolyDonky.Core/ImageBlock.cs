@@ -101,6 +101,20 @@ public sealed class ImageBlock : Block, IParaAnchoredOverlay
     /// <summary>HWP 단락 기준 앵커링 시 앵커 단락 상단으로부터의 Y 오프셋 (mm).</summary>
     public double AnchorRelativeYMm { get; set; }
 
+    // ── 이미지 crop (BLIP 일부만 표시) ────────────────────────────────────
+    // 원본 비트맵 가장자리에서 잘라낼 비율(0.0~1.0). 합계 < 1 이어야 유효.
+    // 예: CropLeft=0.297, CropRight=0.303 → 가운데 40% 만 표시.
+    // OfficeArt FOPT 0x100~0x103 (DOC) 처럼 표시 영역 크기는 그대로 두고 내용만 잘라야 하는 케이스용.
+    // 모든 값이 0(기본) 이면 crop 없음 — 원본 그대로 표시.
+    /// <summary>원본 비트맵 위쪽에서 잘라낼 비율(0~1).</summary>
+    public double CropTopFraction    { get; set; }
+    /// <summary>원본 비트맵 아래쪽에서 잘라낼 비율(0~1).</summary>
+    public double CropBottomFraction { get; set; }
+    /// <summary>원본 비트맵 왼쪽에서 잘라낼 비율(0~1).</summary>
+    public double CropLeftFraction   { get; set; }
+    /// <summary>원본 비트맵 오른쪽에서 잘라낼 비율(0~1).</summary>
+    public double CropRightFraction  { get; set; }
+
     // ── 그림 제목(캡션) ──────────────────────────────────────────────────────
 
     /// <summary>그림 제목 표시 여부. 기본 false.</summary>

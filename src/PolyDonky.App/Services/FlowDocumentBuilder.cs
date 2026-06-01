@@ -2008,23 +2008,54 @@ public static class FlowDocumentBuilder
     /// MainWindow 가 InFrontOfText/BehindText 모드 그림을 OverlayImageCanvas/UnderlayImageCanvas 에 배치할 때 사용.
     /// 테두리·크기·툴팁(설명)을 적용하지만, 위치(OverlayXMm/OverlayYMm)는 호출측에서 Canvas.Left/Top 으로 설정.
     /// </summary>
+    /// <summary>ImageBlock 의 Crop*Fraction 이 설정돼 있으면 BitmapSource 의 가운데 부분만 잘라 반환.
+    /// 합계가 1 이상이거나 잘못된 값이면 원본 그대로 반환. WPF Frozen 보장.</summary>
+    private static WpfMedia.Imaging.BitmapSource ApplyImageCrop(
+        WpfMedia.Imaging.BitmapSource src, ImageBlock image)
+    {
+        double t = System.Math.Max(0, image.CropTopFraction);
+        double b = System.Math.Max(0, image.CropBottomFraction);
+        double l = System.Math.Max(0, image.CropLeftFraction);
+        double r = System.Math.Max(0, image.CropRightFraction);
+        if (t + b >= 1.0 || l + r >= 1.0) return src;
+        if (t + b + l + r < 0.001) return src;   // crop 없음
+
+        int sx = (int)System.Math.Round(src.PixelWidth  * l);
+        int sy = (int)System.Math.Round(src.PixelHeight * t);
+        int sw = (int)System.Math.Round(src.PixelWidth  * (1 - l - r));
+        int sh = (int)System.Math.Round(src.PixelHeight * (1 - t - b));
+        if (sw <= 0 || sh <= 0) return src;
+
+        try
+        {
+            var cropped = new WpfMedia.Imaging.CroppedBitmap(src, new Int32Rect(sx, sy, sw, sh));
+            cropped.Freeze();
+            return cropped;
+        }
+        catch
+        {
+            return src;
+        }
+    }
+
     public static System.Windows.FrameworkElement? BuildOverlayImageControl(ImageBlock image)
     {
         if (image.Data.Length == 0) return null;
 
-        WpfMedia.Imaging.BitmapImage? bitmap = null;
+        WpfMedia.Imaging.BitmapSource? bitmap = null;
         try
         {
             // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
             // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
             var imgStream = new MemoryStream(image.Data, writable: false);
-            bitmap = new WpfMedia.Imaging.BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-            bitmap.StreamSource = imgStream;
-            bitmap.EndInit();
+            var bmp = new WpfMedia.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            bmp.StreamSource = imgStream;
+            bmp.EndInit();
             imgStream.Dispose();
-            bitmap.Freeze();
+            bmp.Freeze();
+            bitmap = ApplyImageCrop(bmp, image);
         }
         catch
         {
