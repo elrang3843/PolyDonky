@@ -342,11 +342,13 @@ public class DocBinaryReader
         uint fcPlcfHdd  = BitConverter.ToUInt32(wd, 0x00F2);
         uint lcbPlcfHdd = BitConverter.ToUInt32(wd, 0x00F6);
 
-        // Phase 3f — OfficeArtDggContainer offsets (FibRgFcLcb97 §2.5.5 pair 79):
-        //   fcDggInfo @ 0x0312, lcbDggInfo @ 0x0316
+        // Phase 3f — OfficeArtDggContainer offsets (FibRgFcLcb97 §2.5.5 pair 50):
+        //   fcDggInfo @ 0x022A, lcbDggInfo @ 0x022E
+        //   (이전 0x0312/0x0316(pair 79)는 오독 — 실제 .doc 의 DggContainer(0xF000)는 pair 50 이 가리킨다.
+        //    CORE-3399PRO-JD4.doc 검증: 0x022A == DggContainer 위치, 0x0312 == 0.)
         //   FIB 가 너무 작아 이 offset 까지 없으면 0/0 (BStore 없음) 으로 간주.
-        uint fcDggInfo  = wd.Length >= 0x0316 ? BitConverter.ToUInt32(wd, 0x0312) : 0u;
-        uint lcbDggInfo = wd.Length >= 0x031A ? BitConverter.ToUInt32(wd, 0x0316) : 0u;
+        uint fcDggInfo  = wd.Length >= 0x022E ? BitConverter.ToUInt32(wd, 0x022A) : 0u;
+        uint lcbDggInfo = wd.Length >= 0x0232 ? BitConverter.ToUInt32(wd, 0x022E) : 0u;
 
         // Phase 3f-4 — PlcSpaMom (FibRgFcLcb97 pair 16). fcPlcSpaMom @ 0x011A, lcbPlcSpaMom @ 0x011E.
         uint fcPlcSpaMom  = wd.Length >= 0x011E ? BitConverter.ToUInt32(wd, 0x011A) : 0u;
