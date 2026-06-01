@@ -2153,16 +2153,16 @@ public class DocBinaryReader
         for (int i = 0; i <= n; i++)
             subCps[i] = BitConverter.ToInt32(table, plcStart + i * 4);
 
-        // Phase 3d-2 — [MS-DOC] §2.8.7 PlcfHdd 의 sub-story 순서 (section 별 6 stories block):
-        //   index%6 == 0 : even page footer
-        //   index%6 == 1 : odd page footer  ← 일반 푸터
-        //   index%6 == 2 : even page header
-        //   index%6 == 3 : odd page header  ← 일반 헤더
-        //   index%6 == 4 : first page footer
-        //   index%6 == 5 : first page header
-        // IWPF 의 Page.Header/Footer 는 단일 슬롯이라 odd 만 매핑 (fallback: even → first).
+        // Phase 3d-2 — [MS-DOC] §2.8.7 PlcfHdd 의 sub-story 순서 (Apache POI HWPF 검증):
+        //   index%6 == 0 : even page header
+        //   index%6 == 1 : odd page header  ← 일반 헤더
+        //   index%6 == 2 : even page footer
+        //   index%6 == 3 : odd page footer  ← 일반 푸터
+        //   index%6 == 4 : first page header
+        //   index%6 == 5 : first page footer
+        // IWPF 의 Page.Header/Footer 는 단일 슬롯이라 odd 우선 매핑 (fallback: even → first).
         // 모든 sections 의 sub-stories 를 처리 — sectionIdx = i / 6 로 doc.Sections 에 분배.
-        // sample5.doc 처럼 section 0 헤더가 비어 있고 section 1 에 실제 헤더가 있는 케이스 지원.
+        // sample5.doc 처럼 section 0 헤더가 비어 있고 section 1 에 실제 헤더/푸터가 있는 케이스 지원.
         for (int i = 0; i < n; i++)
         {
             int cpStart = hddBase + subCps[i];
@@ -2180,13 +2180,13 @@ public class DocBinaryReader
             var page = doc.Sections[sectionIdx].Page;
             switch (storyIdx)
             {
-                case 1: case 0: case 4:  // odd footer (1) / even (0) / first (4) — odd 우선, 비어 있으면 fallback
-                    if (page.Footer.Center.IsEmpty)
-                        foreach (var pa in paras) page.Footer.Center.Paragraphs.Add(pa);
-                    break;
-                case 3: case 2: case 5:  // odd header (3) / even (2) / first (5)
+                case 1: case 0: case 4:  // header: odd (1) / even (0) / first (4) — odd 우선
                     if (page.Header.Center.IsEmpty)
                         foreach (var pa in paras) page.Header.Center.Paragraphs.Add(pa);
+                    break;
+                case 3: case 2: case 5:  // footer: odd (3) / even (2) / first (5)
+                    if (page.Footer.Center.IsEmpty)
+                        foreach (var pa in paras) page.Footer.Center.Paragraphs.Add(pa);
                     break;
             }
         }
