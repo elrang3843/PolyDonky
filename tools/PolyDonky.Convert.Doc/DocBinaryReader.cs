@@ -3425,8 +3425,92 @@ public class DocBinaryReader
                         }
                     }
                     return false;
+
+                // [MS-DOC] §2.6.2 단락 테두리 (BRC80 4 byte, spra=3).
+                //   sprmPBrcTop1/Bottom1/Left1/Right1 (0x6424/25/26/27) — legacy.
+                // BRC80: dptLineWidth(byte0, 1/8pt), brcType(byte1, 0=none/1=single/3=double/...),
+                //        ico(byte2, 16-색 팔레트), dptSpace+fShadow+fFrame(byte3).
+                case 0x6424:  // sprmPBrcTop1
+                    if (TryParseParaBrc80(operand, out var btThick, out var btColor))
+                    { style.BorderTopPt = btThick; style.BorderTopColor = btColor; return true; }
+                    return false;
+                case 0x6425:  // sprmPBrcLeft1
+                    if (TryParseParaBrc80(operand, out var blThick, out var blColor))
+                    { style.BorderLeftPt = blThick; style.BorderLeftColor = blColor; return true; }
+                    return false;
+                case 0x6426:  // sprmPBrcBottom1
+                    if (TryParseParaBrc80(operand, out var bbThick, out var bbColor))
+                    { style.BorderBottomPt = bbThick; style.BorderBottomColor = bbColor; return true; }
+                    return false;
+                case 0x6427:  // sprmPBrcRight1
+                    if (TryParseParaBrc80(operand, out var brThick, out var brColor))
+                    { style.BorderRightPt = brThick; style.BorderRightColor = brColor; return true; }
+                    return false;
+
+                // [MS-DOC] §2.9.249 sprmPBrcTop / Bottom / Left / Right (variable length BrcCv).
+                //   첫 4 byte 가 BRC80 호환이라 동일 파서 재사용.
+                case 0xC64E:  // sprmPBrcTop (new)
+                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var ntThick, out var ntColor))
+                    { style.BorderTopPt = ntThick; style.BorderTopColor = ntColor; return true; }
+                    return false;
+                case 0xC64F:  // sprmPBrcLeft (new)
+                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var nlThick, out var nlColor))
+                    { style.BorderLeftPt = nlThick; style.BorderLeftColor = nlColor; return true; }
+                    return false;
+                case 0xC650:  // sprmPBrcBottom (new)
+                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var nbThick, out var nbColor))
+                    { style.BorderBottomPt = nbThick; style.BorderBottomColor = nbColor; return true; }
+                    return false;
+                case 0xC651:  // sprmPBrcRight (new)
+                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var nrThick, out var nrColor))
+                    { style.BorderRightPt = nrThick; style.BorderRightColor = nrColor; return true; }
+                    return false;
+
+                // [MS-DOC] §2.9.262 sprmPShd80 (0x442B, spra=4, 2-byte SHDOperand legacy).
+                //   bits 0-4: ico fore, 5-9: ico back, 10-15: ipat (0=clear/auto, 1=solid, others=pattern).
+                //   ipat=1 이면 ico back 을 단락 배경색으로 (palette → RGB).
+                case 0x442B:
+                    if (operand.Length >= 2)
+                    {
+                        ushort shd = BitConverter.ToUInt16(operand, 0);
+                        int icoBack = (shd >> 5) & 0x1F;
+                        int ipat    = (shd >> 10) & 0x3F;
+                        if (ipat == 1 && WordPaletteColor((byte)icoBack) is { } col)
+                        { style.BackgroundColor = col.ToHex(); return true; }
+                    }
+                    return false;
+
+                // [MS-DOC] §2.9.263 sprmPShd (0xC64D, spra=6 variable Shd[New] 10 byte).
+                //   cvFore(4) + cvBack(4) + ipat(2). cvBack byte 0-2 = RGB, byte 3 = cvType (0xFF=auto).
+                //   ipat=1(solid) 또는 일반 pattern 이면 cvBack 을 배경색으로.
+                case 0xC64D:
+                    if (operand.Length >= 10)
+                    {
+                        byte cvBackAuto = operand[7];
+                        ushort ipat = BitConverter.ToUInt16(operand, 8);
+                        if (cvBackAuto != 0xFF && ipat != 0)
+                        {
+                            style.BackgroundColor = $"#{operand[4]:X2}{operand[5]:X2}{operand[6]:X2}";
+                            return true;
+                        }
+                    }
+                    return false;
             }
             return false;
+        }
+
+        // [MS-DOC] BRC80 (4 byte) → (두께 pt, 색상 hex). brcType=0/없음 면 false.
+        private static bool TryParseParaBrc80(byte[] op, out double thicknessPt, out string? colorHex)
+        {
+            thicknessPt = 0; colorHex = null;
+            if (op.Length < 4) return false;
+            byte dpt  = op[0];   // 1/8 pt
+            byte type = op[1];   // 0=none
+            byte ico  = op[2];   // palette index
+            if (type == 0 || dpt == 0) return false;
+            thicknessPt = dpt / 8.0;
+            if (WordPaletteColor(ico) is { } c) colorHex = c.ToHex();
+            return true;
         }
 
         // Twips → mm 변환 — 1 mm = 56.692 twips (1440/25.4).
