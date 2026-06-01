@@ -2161,8 +2161,9 @@ public class DocBinaryReader
         //   index%6 == 4 : first page footer
         //   index%6 == 5 : first page header
         // IWPF 의 Page.Header/Footer 는 단일 슬롯이라 odd 만 매핑 (fallback: even → first).
-        // 첫 섹션의 6 stories 만 처리.
-        for (int i = 0; i < Math.Min(n, 6); i++)
+        // 모든 sections 의 sub-stories 를 처리 — sectionIdx = i / 6 로 doc.Sections 에 분배.
+        // sample5.doc 처럼 section 0 헤더가 비어 있고 section 1 에 실제 헤더가 있는 케이스 지원.
+        for (int i = 0; i < n; i++)
         {
             int cpStart = hddBase + subCps[i];
             int cpEnd   = hddBase + subCps[i + 1];
@@ -2171,8 +2172,13 @@ public class DocBinaryReader
             var paras = BuildSubdocParagraphs(wd, table, fib, cpStart, cpEnd, fmt);
             if (paras.Count == 0) continue;
 
-            var page = doc.Sections[0].Page;
-            switch (i)
+            int sectionIdx = i / 6;
+            int storyIdx   = i % 6;
+            // PlcfHdd 의 section 분할이 실제 doc.Sections 개수보다 많을 수 있다 (워드가 빈 PAPX
+            // 기반 section 을 합칠 때 등). 범위를 벗어나면 마지막 section 으로 폴백.
+            if (sectionIdx >= doc.Sections.Count) sectionIdx = doc.Sections.Count - 1;
+            var page = doc.Sections[sectionIdx].Page;
+            switch (storyIdx)
             {
                 case 1: case 0: case 4:  // odd footer (1) / even (0) / first (4) — odd 우선, 비어 있으면 fallback
                     if (page.Footer.Center.IsEmpty)
