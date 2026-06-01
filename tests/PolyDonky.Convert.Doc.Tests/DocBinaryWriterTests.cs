@@ -423,6 +423,26 @@ public class DocBinaryWriterTests
     }
 
     [Fact]
+    public void Multiple_Distinct_List_Kinds_RoundTrip_With_Levels()
+    {
+        // [MS-DOC] 규약: lcbPlcfLst 는 LSTF 배열까지만 덮고 LVL 은 그 뒤(lcb 밖)에 온다.
+        // 여러 list(서로 다른 kind) 가 동시에 있을 때 LVL 오프셋 계산이 어긋나지 않는지 검증.
+        // (writer/reader 가 같은 잘못된 레이아웃에 합의해 round-trip 만 통과하는 함정 방지.)
+        var b0 = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.Bullet, Level = 0 } } };       b0.AddText("alpha");
+        var d1 = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.OrderedDecimal, Level = 1 } } }; d1.AddText("beta");
+        var r0 = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.OrderedRoman, UpperCase = false } } }; r0.AddText("gamma");
+        var a0 = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.OrderedAlpha, UpperCase = true } } }; a0.AddText("delta");
+        var doc2 = RoundTrip(DocWith(b0, d1, r0, a0));
+
+        Assert.Equal(ListKind.Bullet,         FirstParaWithText(doc2, "alpha").Style.ListMarker?.Kind);
+        Assert.Equal(ListKind.OrderedDecimal, FirstParaWithText(doc2, "beta").Style.ListMarker?.Kind);
+        Assert.Equal(1,                       FirstParaWithText(doc2, "beta").Style.ListMarker?.Level);
+        Assert.Equal(ListKind.OrderedRoman,   FirstParaWithText(doc2, "gamma").Style.ListMarker?.Kind);
+        Assert.Equal(ListKind.OrderedAlpha,   FirstParaWithText(doc2, "delta").Style.ListMarker?.Kind);
+        Assert.Equal(true,                    FirstParaWithText(doc2, "delta").Style.ListMarker?.UpperCase);
+    }
+
+    [Fact]
     public void Many_Paragraphs_Spill_To_Multiple_Fkp_Pages()
     {
         // 한 FKP 페이지(512 byte) 안에 들어가는 PAPX 항목 수보다 많은 단락을 만들어

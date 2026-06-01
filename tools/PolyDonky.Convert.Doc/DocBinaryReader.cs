@@ -2579,46 +2579,51 @@ public class DocBinaryReader
             var lfoLsids = Array.Empty<int>();
 
             // 1) PlfLst → lsid 별 레벨 정의.
+            //    주의: lcbPlcfLst 는 cLst(2) + rgLstf(cLst×28) 만 덮고, LVL 배열은 포함하지 않는다.
+            //    LVL 배열은 테이블 스트림에서 PlfLst 직후(fcLst+lcbLst)부터 연속으로 이어진다
+            //    (Apache POI ListTables 와 동일). 따라서 LVL 은 별도 커서로 읽고 table.Length 로만 bound.
             if (lcbLst >= 2 && fcLst >= 0 && fcLst + lcbLst <= table.Length)
             {
                 try
                 {
-                    int pos = fcLst;
-                    int cLst = BitConverter.ToUInt16(table, pos); pos += 2;
-                    int end  = fcLst + lcbLst;
-                    if (cLst > 0 && pos + cLst * 28 <= end)
+                    int cLst = BitConverter.ToUInt16(table, fcLst);
+                    int lstEnd = fcLst + lcbLst;
+                    if (cLst > 0 && fcLst + 2 + cLst * 28 <= lstEnd)
                     {
                         var lstHeaders = new (int Lsid, bool Simple)[cLst];
                         for (int i = 0; i < cLst; i++)
                         {
-                            int b = pos + i * 28;
+                            int b = fcLst + 2 + i * 28;
                             int lsid = BitConverter.ToInt32(table, b);
                             bool simple = (table[b + 26] & 0x01) != 0;
                             lstHeaders[i] = (lsid, simple);
                         }
-                        pos += cLst * 28;
-                        // LVL 배열 — LSTF 순서대로 (fSimpleList ? 1 : 9) 개씩.
+                        // LVL 배열 — rgLstf 직후(lstEnd)부터. table.Length 로만 bound.
+                        int pos = lstEnd;
                         for (int i = 0; i < cLst; i++)
                         {
                             int nLvl = lstHeaders[i].Simple ? 1 : 9;
                             var levels = new ListLevelInfo[nLvl];
+                            int got = 0;
                             for (int l = 0; l < nLvl; l++)
                             {
-                                if (pos + 28 > end) { levels = levels[..l]; break; }
+                                if (pos + 28 > table.Length) break;
                                 int iStartAt = BitConverter.ToInt32(table, pos);
                                 byte nfc     = table[pos + 4];
                                 byte cbChpx  = table[pos + 24];
                                 byte cbPapx  = table[pos + 25];
                                 pos += 28 + cbPapx + cbChpx;
                                 // xst (Xst): cch(2) + cch × 2B.
-                                if (pos + 2 > end) { levels = levels[..l]; break; }
+                                if (pos + 2 > table.Length) break;
                                 int cch = BitConverter.ToUInt16(table, pos); pos += 2;
                                 int xstBytes = cch * 2;
-                                if (pos + xstBytes > end) { levels = levels[..l]; break; }
+                                if (pos + xstBytes > table.Length) break;
                                 pos += xstBytes;
                                 levels[l] = MapNfc(nfc, iStartAt);
+                                got = l + 1;
                             }
-                            if (levels.Length > 0) lists[lstHeaders[i].Lsid] = levels;
+                            if (got > 0 && !lists.ContainsKey(lstHeaders[i].Lsid))
+                                lists[lstHeaders[i].Lsid] = got == nLvl ? levels : levels[..got];
                         }
                     }
                 }

@@ -886,13 +886,18 @@ public sealed class DocBinaryWriter
         ms.Write(dop, 0, dop.Length);
         ctx.LcbDop = (uint)dop.Length;
 
-        // 10. Phase 4 (목록) — PlfLst + PlfLfo. 등록된 list 가 있을 때만 기록.
+        // 10. Phase 4 (목록) — PlfLst + LVL 배열 + PlfLfo. 등록된 list 가 있을 때만 기록.
+        //     [MS-DOC] 규약: lcbPlcfLst 는 cLst(2) + rgLstf(cLst×28) 만 덮고, LVL 배열은
+        //     그 직후(fcPlcfLst+lcbPlcfLst)부터 연속 기록 — lcb 에 포함되지 않는다.
         if (ctx.ListDefs.Count > 0)
         {
             ctx.FcPlcfLst = (uint)ms.Position;
-            byte[] plfLst = BuildPlfLst(ctx.ListDefs);
-            ms.Write(plfLst, 0, plfLst.Length);
-            ctx.LcbPlcfLst = (uint)plfLst.Length;
+            byte[] lstHeaders = BuildPlfLstHeaders(ctx.ListDefs);
+            ms.Write(lstHeaders, 0, lstHeaders.Length);
+            ctx.LcbPlcfLst = (uint)lstHeaders.Length;        // ← LSTF 까지만
+
+            byte[] lvls = BuildPlfLstLevels(ctx.ListDefs);   // lcb 밖, 바로 뒤에 기록
+            ms.Write(lvls, 0, lvls.Length);
 
             ctx.FcPlfLfo = (uint)ms.Position;
             byte[] plfLfo = BuildPlfLfo(ctx.ListDefs.Count);
@@ -903,16 +908,13 @@ public sealed class DocBinaryWriter
         return ms.ToArray();
     }
 
-    // [MS-DOC] §2.9.131 PlfLst — cLst(2) + rgLstf(cLst × LSTF 28B) + LVL 배열.
+    // [MS-DOC] §2.9.131 PlfLst 의 cLst(2) + rgLstf(cLst × LSTF 28B). LVL 은 BuildPlfLstLevels 가 별도 기록.
     //   각 list 는 fSimpleList=1 (1 LVL) 로 단순화. lsid = index+1.
-    //   LVLF(28B) 의 nfc 가 번호형식, 뒤이은 빈 grpprl + xst(cch=0).
-    private static byte[] BuildPlfLst(IReadOnlyList<(ListKind Kind, bool? UpperCase)> defs)
+    private static byte[] BuildPlfLstHeaders(IReadOnlyList<(ListKind Kind, bool? UpperCase)> defs)
     {
         using var ms = new MemoryStream();
         var bw = new BinaryWriter(ms);
         bw.Write((ushort)defs.Count);                 // cLst
-
-        // rgLstf — LSTF 28 byte × cLst.
         for (int i = 0; i < defs.Count; i++)
         {
             bw.Write(i + 1);                          // lsid @0
@@ -921,8 +923,15 @@ public sealed class DocBinaryWriter
             bw.Write((byte)0x01);                     // A @26 — bit0 fSimpleList=1
             bw.Write((byte)0x00);                     // grfhic @27
         }
+        return ms.ToArray();
+    }
 
-        // LVL 배열 — list 당 1 LVL (fSimpleList).
+    // PlfLst 의 LVL 배열 — list 당 1 LVL (fSimpleList). LVLF(28B) + 빈 grpprl + xst(cch=0).
+    //   LVLF 의 nfc 가 번호형식. iStartAt=1.
+    private static byte[] BuildPlfLstLevels(IReadOnlyList<(ListKind Kind, bool? UpperCase)> defs)
+    {
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
         foreach (var (kind, upper) in defs)
         {
             byte nfc = KindToNfc(kind, upper);
@@ -939,7 +948,6 @@ public sealed class DocBinaryWriter
             bw.Write((byte)0);                        // grfhic @27
             bw.Write((ushort)0);                      // xst: cch = 0 (마커 문자 없음)
         }
-
         return ms.ToArray();
     }
 
