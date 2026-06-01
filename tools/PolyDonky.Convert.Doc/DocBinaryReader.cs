@@ -3447,22 +3447,26 @@ public class DocBinaryReader
                     { style.BorderRightPt = brThick; style.BorderRightColor = brColor; return true; }
                     return false;
 
-                // [MS-DOC] §2.9.249 sprmPBrcTop / Bottom / Left / Right (variable length BrcCv).
-                //   첫 4 byte 가 BRC80 호환이라 동일 파서 재사용.
+                // [MS-DOC] §2.9.18 Brc (sprmPBrc* new format, 8 byte) — BRC80 과 구조가 다르다.
+                //   operand[0..2] = cv RGB
+                //   operand[3]    = cvSchemeIndex
+                //   operand[4]    = dptLineWidth (1/8 pt)
+                //   operand[5]    = brcType (0=none, 1=single, ...)
+                //   operand[6..7] = dptSpace + flags
                 case 0xC64E:  // sprmPBrcTop (new)
-                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var ntThick, out var ntColor))
+                    if (TryParseParaBrcNew(operand, out var ntThick, out var ntColor))
                     { style.BorderTopPt = ntThick; style.BorderTopColor = ntColor; return true; }
                     return false;
                 case 0xC64F:  // sprmPBrcLeft (new)
-                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var nlThick, out var nlColor))
+                    if (TryParseParaBrcNew(operand, out var nlThick, out var nlColor))
                     { style.BorderLeftPt = nlThick; style.BorderLeftColor = nlColor; return true; }
                     return false;
                 case 0xC650:  // sprmPBrcBottom (new)
-                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var nbThick, out var nbColor))
+                    if (TryParseParaBrcNew(operand, out var nbThick, out var nbColor))
                     { style.BorderBottomPt = nbThick; style.BorderBottomColor = nbColor; return true; }
                     return false;
                 case 0xC651:  // sprmPBrcRight (new)
-                    if (operand.Length >= 4 && TryParseParaBrc80(operand, out var nrThick, out var nrColor))
+                    if (TryParseParaBrcNew(operand, out var nrThick, out var nrColor))
                     { style.BorderRightPt = nrThick; style.BorderRightColor = nrColor; return true; }
                     return false;
 
@@ -3522,6 +3526,21 @@ public class DocBinaryReader
             if (type == 0 || dpt == 0) return false;
             thicknessPt = dpt / 8.0;
             if (WordPaletteColor(ico) is { } c) colorHex = c.ToHex();
+            return true;
+        }
+
+        // [MS-DOC] §2.9.18 Brc new format (8 byte) → (두께 pt, 색상 hex). brcType=0/dpt=0 이면 false.
+        //   operand[0..2] = cv RGB, [3] = cvSchemeIndex, [4] = dptLineWidth, [5] = brcType.
+        private static bool TryParseParaBrcNew(byte[] op, out double thicknessPt, out string? colorHex)
+        {
+            thicknessPt = 0; colorHex = null;
+            if (op.Length < 8) return false;
+            byte dpt  = op[4];   // 1/8 pt
+            byte type = op[5];
+            if (type == 0 || dpt == 0) return false;
+            thicknessPt = dpt / 8.0;
+            byte r = op[0], g = op[1], b = op[2];
+            colorHex = (r == 0 && g == 0 && b == 0) ? null : $"#{r:X2}{g:X2}{b:X2}";
             return true;
         }
 
