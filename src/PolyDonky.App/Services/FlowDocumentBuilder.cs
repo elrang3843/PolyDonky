@@ -3259,8 +3259,7 @@ public static class FlowDocumentBuilder
             if (Math.Abs(lhf - 1.2) > 0.01)
                 wpfPara.LineHeight = wpfPara.FontSize * lhf;
 
-            if (Math.Abs(style.IndentFirstLineMm) > 0.001)
-                wpfPara.TextIndent = MmToDip(style.IndentFirstLineMm);
+            wpfPara.TextIndent = SafeFirstLineIndentDip(style);
             ApplyQuoteLevelStyle(wpfPara, style.QuoteLevel);
             // 사용자 CSS 4면 보더/배경/padding 으로 OutlineStyle 기본값을 덮어쓴다.
             ApplyParagraphBoxStyle(wpfPara, style);
@@ -3288,8 +3287,7 @@ public static class FlowDocumentBuilder
         if (sTop > 0 || sBottom > 0 || sLeft > 0 || sRight > 0)
             wpfPara.Margin = new Thickness(sLeft, sTop, sRight, sBottom);
 
-        if (Math.Abs(style.IndentFirstLineMm) > 0.001)
-            wpfPara.TextIndent = MmToDip(style.IndentFirstLineMm);
+        wpfPara.TextIndent = SafeFirstLineIndentDip(style);
 
         if (Math.Abs(style.LineHeightFactor - 1.2) > 0.01)
             wpfPara.LineHeight = wpfPara.FontSize * style.LineHeightFactor;
@@ -3300,6 +3298,20 @@ public static class FlowDocumentBuilder
         // CSS 4면 보더 + 배경 + 위/아래 padding (ApplyCodeBlockStyle 이 비어 있는 속성에만 기본값을 채우므로
         // 여기서 덮어 쓰지 않아도 되지만, QuoteLevel 기본값 위에서 CSS 가 이길 수 있도록 그대로 유지).
         ApplyParagraphBoxStyle(wpfPara, style);
+    }
+
+    /// <summary>첫 줄 들여쓰기(TextIndent)를 본문 왼쪽 경계 밖으로 나가지 않게 보정한 DIP 값.
+    /// WPF <c>TextIndent</c> 는 단락 content 영역(Margin.Left 만큼 우측 이동) 기준이라,
+    /// <c>Margin.Left + TextIndent &lt; 0</c> 이면 첫 줄이 페이지 본문 왼쪽 밖으로 나가 글자가 잘린다.
+    /// DOC 의 행잉 인덴트(좌측 +X, 첫 줄 −X)는 정상이지만, 좌측 들여쓰기 없이 첫 줄만 음수인 경우
+    /// (예: Heading 의 sprmPDxaLeft1 만 −값) 잘림이 발생한다. Word 처럼 첫 줄을 본문 경계에 맞춘다.
+    /// Margin.Left 는 <c>max(0, IndentLeftMm)</c> 로 설정되므로 동일 기준으로 클램프.</summary>
+    private static double SafeFirstLineIndentDip(ParagraphStyle s)
+    {
+        double leftMm = s.IndentLeftMm > 0 ? s.IndentLeftMm : 0.0;
+        double flMm   = s.IndentFirstLineMm;
+        if (leftMm + flMm < 0) flMm = -leftMm;   // 첫 줄 시작점이 본문 왼쪽 경계(x=0) 미만이 되지 않게
+        return Math.Abs(flMm) > 0.001 ? MmToDip(flMm) : 0.0;
     }
 
     private static void ApplyParagraphBoxStyle(Wpf.Paragraph wpfPara, ParagraphStyle s)

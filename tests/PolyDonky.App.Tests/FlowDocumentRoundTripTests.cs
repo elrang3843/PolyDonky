@@ -124,6 +124,40 @@ public class FlowDocumentRoundTripTests
     }
 
     [Fact]
+    public void Build_NegativeFirstLineIndent_WithoutLeftIndent_IsClampedToAvoidLeftClipping()
+    {
+        // DOC Heading 의 sprmPDxaLeft1 가 음수(−7.64mm)인데 좌측 들여쓰기가 0 이면
+        // 첫 줄이 본문 왼쪽 경계 밖으로 나가 글자가 잘린다 (CORE-3399PRO-JD4.doc "설치 드라이버").
+        var p = new Paragraph();
+        p.Style.Outline           = OutlineLevel.H3;
+        p.Style.IndentLeftMm      = 0;
+        p.Style.IndentFirstLineMm = -7.64;
+        p.AddText("설치 드라이버");
+
+        var fd = FlowDocumentBuilder.Build(WrapInDocument(p));
+        var wpfPara = (Wpf.Paragraph)fd.Blocks.First();
+
+        // 첫 줄이 페이지 본문 왼쪽 경계(x=0) 밖으로 나가지 않게 클램프.
+        Assert.True(wpfPara.TextIndent >= 0, $"TextIndent={wpfPara.TextIndent} 는 음수면 안 됨");
+    }
+
+    [Fact]
+    public void Build_ProperHangingIndent_IsPreserved()
+    {
+        // 좌측 +X, 첫 줄 −X = 정상 행잉 인덴트 — 클램프되지 않고 보존되어야 한다.
+        var p = new Paragraph();
+        p.Style.IndentLeftMm      = 7.64;
+        p.Style.IndentFirstLineMm = -7.64;
+        p.AddText("hang");
+
+        var fd = FlowDocumentBuilder.Build(WrapInDocument(p));
+        var wpfPara = (Wpf.Paragraph)fd.Blocks.First();
+
+        Assert.True(wpfPara.TextIndent < 0, "행잉 인덴트의 음수 TextIndent 가 보존되어야 함");
+        Assert.Equal(FlowDocumentBuilder.MmToDip(7.64), wpfPara.Margin.Left, precision: 1);
+    }
+
+    [Fact]
     public void RoundTrip_PreservesBoldAndColor()
     {
         var doc = SingleParagraph(text: "강조", style: new RunStyle
