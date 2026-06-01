@@ -3481,17 +3481,24 @@ public class DocBinaryReader
                     return false;
 
                 // [MS-DOC] §2.9.263 sprmPShd (0xC64D, spra=6 variable Shd[New] 10 byte).
-                //   cvFore(4) + cvBack(4) + ipat(2). cvBack byte 0-2 = RGB, byte 3 = cvType (0xFF=auto).
-                //   ipat=1(solid) 또는 일반 pattern 이면 cvBack 을 배경색으로.
+                //   cvFore(4) + cvBack(4) + ipat(2). 실측: cvBack 의 byte 0 이 cvType/cvAuto 플래그
+                //   이고 byte 1~3 이 실제 RGB. 일부 워드 버전은 ipat=0(clear) 이어도 cvBack RGB
+                //   가 명시되어 있으면 음영을 그린다 (Apache POI 호환 해석).
+                //   cvBack byte 0 = 0x00(auto) 이면 무음영, 0xFF 등이면 explicit RGB.
                 case 0xC64D:
                     if (operand.Length >= 10)
                     {
-                        byte cvBackAuto = operand[7];
-                        ushort ipat = BitConverter.ToUInt16(operand, 8);
-                        if (cvBackAuto != 0xFF && ipat != 0)
+                        byte bCvType = operand[4];   // cvBack byte 0: cvType/cvAuto
+                        // byte 0 = 0x00 (auto/none) 이면 음영 없음, 그 외엔 byte 1~3 을 RGB 로.
+                        if (bCvType != 0x00)
                         {
-                            style.BackgroundColor = $"#{operand[4]:X2}{operand[5]:X2}{operand[6]:X2}";
-                            return true;
+                            string hex = $"#{operand[5]:X2}{operand[6]:X2}{operand[7]:X2}";
+                            // 너무 옅은(거의 흰색) 자동 배경은 무시 — 의미 있는 음영만 적용.
+                            if (hex != "#FFFFFF")
+                            {
+                                style.BackgroundColor = hex;
+                                return true;
+                            }
                         }
                     }
                     return false;
