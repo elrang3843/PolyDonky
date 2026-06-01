@@ -274,7 +274,14 @@ public class DocBinaryReader
         uint   FcPlcfAtnRef,
         uint   LcbPlcfAtnRef,
         uint   FcPlcfAtnTxt,
-        uint   LcbPlcfAtnTxt);
+        uint   LcbPlcfAtnTxt,
+        // Phase 4 (목록) — 글머리표/번호 목록 정의.
+        //   FibRgFcLcb97 pair 73: fcPlcfLst @ 0x02E2, lcbPlcfLst @ 0x02E6 (PlfLst — LSTF + LVL 배열).
+        //   FibRgFcLcb97 pair 74: fcPlfLfo  @ 0x02EA, lcbPlfLfo  @ 0x02EE (PlfLfo — LFO 오버라이드 배열).
+        uint   FcPlcfLst,
+        uint   LcbPlcfLst,
+        uint   FcPlfLfo,
+        uint   LcbPlfLfo);
 
     // FIB (File Information Block) — WordDocument stream 의 첫 부분. 크기는 nFib 에 따라 다르지만
     // 우리가 필요한 모든 필드는 첫 0x200 byte 안에 있다.
@@ -385,6 +392,12 @@ public class DocBinaryReader
         uint fcPlcfAtnTxt  = wd.Length >= 0x00C6 ? BitConverter.ToUInt32(wd, 0x00C2) : 0u;
         uint lcbPlcfAtnTxt = wd.Length >= 0x00CA ? BitConverter.ToUInt32(wd, 0x00C6) : 0u;
 
+        // Phase 4 (목록) — PlfLst (pair 73) / PlfLfo (pair 74). 작은 FIB 에는 없을 수 있어 길이 가드.
+        uint fcPlcfLst  = wd.Length >= 0x02E6 ? BitConverter.ToUInt32(wd, 0x02E2) : 0u;
+        uint lcbPlcfLst = wd.Length >= 0x02EA ? BitConverter.ToUInt32(wd, 0x02E6) : 0u;
+        uint fcPlfLfo   = wd.Length >= 0x02EE ? BitConverter.ToUInt32(wd, 0x02EA) : 0u;
+        uint lcbPlfLfo  = wd.Length >= 0x02F2 ? BitConverter.ToUInt32(wd, 0x02EE) : 0u;
+
         return new Fib(tableName, fcMin, ccpText, fcClx, lcbClx, nFib, encrypted, obfuscated,
                        fcPlcfBteChpx, lcbPlcfBteChpx, fcPlcfBtePapx, lcbPlcfBtePapx,
                        fcSttbfFfn, lcbSttbfFfn, fcStshf, lcbStshf, fcPlcfSed, lcbPlcfSed,
@@ -395,7 +408,8 @@ public class DocBinaryReader
                        fcPlcffndRef, lcbPlcffndRef, fcPlcfendRef, lcbPlcfendRef,
                        fcSttbfRMark, lcbSttbfRMark,
                        fcSttbfBkmk, lcbSttbfBkmk, fcPlcfBkf, lcbPlcfBkf, fcPlcfBkl, lcbPlcfBkl,
-                       fcPlcfAtnRef, lcbPlcfAtnRef, fcPlcfAtnTxt, lcbPlcfAtnTxt);
+                       fcPlcfAtnRef, lcbPlcfAtnRef, fcPlcfAtnTxt, lcbPlcfAtnTxt,
+                       fcPlcfLst, lcbPlcfLst, fcPlfLfo, lcbPlfLfo);
     }
 
     // [MS-OFFCRYPTO] EncryptionInfo / EncryptedSummary stream 존재 검사 — fEncrypted 비트가
@@ -2473,6 +2487,42 @@ public class DocBinaryReader
         public (string? FnId, string? EnId, string? CmtId) GetRefAtFc(int fc)
             => _refsByFc.TryGetValue(fc, out var v) ? v : (null, null, null);
 
+        // ─────────────────────────────── 목록 (Phase 4) ────────────────────────────
+        // 한 목록 레벨의 표시 속성. nfc(번호형식) → ListKind + 대소문자, iStartAt → 시작번호.
+        internal readonly record struct ListLevelInfo(
+            ListKind Kind, int StartAt, bool? UpperCase, bool HideBullet);
+
+        // lsid → 레벨별(0..8) 정의. 단순 목록은 길이 1, 다중 레벨은 길이 9.
+        private readonly Dictionary<int, ListLevelInfo[]> _listsByLsid = new();
+        // sprmPIlfo 의 1-based 인덱스 → lsid. [0] 은 사용 안 함 (ilfo 는 1부터).
+        private int[] _lfoLsids = Array.Empty<int>();
+
+        public void SetListTables(Dictionary<int, ListLevelInfo[]> lists, int[] lfoLsids)
+        {
+            _listsByLsid.Clear();
+            foreach (var kv in lists) _listsByLsid[kv.Key] = kv.Value;
+            _lfoLsids = lfoLsids;
+        }
+
+        // 단락의 (ilfo, ilvl) → ListMarker. 해소 불가(목록 없음/범위 밖)면 null.
+        public ListMarker? ResolveListMarker(int ilfo, int ilvl)
+        {
+            // ilfo 는 1-based LFO 인덱스. 0 이하 또는 special(0xF801~) 은 목록 아님.
+            if (ilfo <= 0 || ilfo >= _lfoLsids.Length) return null;
+            int lsid = _lfoLsids[ilfo];
+            if (!_listsByLsid.TryGetValue(lsid, out var levels) || levels.Length == 0) return null;
+            int lv = ilvl < 0 ? 0 : ilvl;
+            var info = lv < levels.Length ? levels[lv] : levels[^1];
+            return new ListMarker
+            {
+                Kind          = info.Kind,
+                Level         = lv,
+                OrderedNumber = info.Kind != ListKind.Bullet ? info.StartAt : null,
+                UpperCase     = info.UpperCase,
+                HideBullet    = info.HideBullet,
+            };
+        }
+
         private FormatStyles(byte[] wd, byte[] table, List<BteEntry> papx, List<BteEntry> chpx,
                              IReadOnlyList<string> fonts, IReadOnlyList<StyleDef?> styles,
                              IReadOnlyList<int> sectionCps, IReadOnlyList<int> sectionFcSepx,
@@ -2504,8 +2554,114 @@ public class DocBinaryReader
             var cmtRefCps = ReadPlcCps(table, (int)fib.FcPlcfAtnRef, (int)fib.LcbPlcfAtnRef, frdSize: 30);
             // Phase 3h-2 — SttbfRMark: extended SttbExtend (fExtend=0xFFFF + cData + cbExtra + entries).
             var rmarkAuthors = ReadSttbExtend(table, (int)fib.FcSttbfRMark, (int)fib.LcbSttbfRMark);
-            return new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx,
+            var fs = new FormatStyles(wd, table, papx, chpx, fonts, styles, sectionCps, sectionFcSepx,
                                     fnRefCps, enRefCps, cmtRefCps, rmarkAuthors);
+            // Phase 4 (목록) — PlfLst / PlfLfo 파싱 후 주입.
+            var (lists, lfoLsids) = ReadListTables(table,
+                (int)fib.FcPlcfLst, (int)fib.LcbPlcfLst, (int)fib.FcPlfLfo, (int)fib.LcbPlfLfo);
+            fs.SetListTables(lists, lfoLsids);
+            return fs;
+        }
+
+        // [MS-DOC] §2.9.131 PlfLst + §2.9.132 PlfLfo 파싱.
+        //   PlfLst @ fcPlcfLst: cLst(2) + rgLstf(cLst × LSTF 28B) + LVL 배열.
+        //     LSTF: lsid(4) @0, tplc(4) @4, rgistdPara(18) @8, A(1) @26[bit0=fSimpleList], grfhic(1) @27.
+        //     각 LSTF 뒤로 LVL 가 (fSimpleList ? 1 : 9) 개. LVL = LVLF(28B) + grpprlPapx + grpprlChpx + xst.
+        //     LVLF: iStartAt(4) @0, nfc(1) @4, flags(1) @5, rgbxchNums(9) @6, ixchFollow(1) @15,
+        //           dxaIndentSav(4) @16, unused(4) @20, cbGrpprlChpx(1) @24, cbGrpprlPapx(1) @25,
+        //           ilvlRestartLim(1) @26, grfhic(1) @27. 뒤이어 papx/chpx grpprl + Xst(cch(2)+cch×2B).
+        //   PlfLfo @ fcPlfLfo: lfoMac(4) + rgLfo(lfoMac × LFO 16B) + rgLfoData.
+        //     LFO: lsid(4) @0, ... clfolvl(1) @12. lsid 가 LSTF.lsid 를 참조.
+        private static (Dictionary<int, ListLevelInfo[]> Lists, int[] LfoLsids) ReadListTables(
+            byte[] table, int fcLst, int lcbLst, int fcLfo, int lcbLfo)
+        {
+            var lists = new Dictionary<int, ListLevelInfo[]>();
+            var lfoLsids = Array.Empty<int>();
+
+            // 1) PlfLst → lsid 별 레벨 정의.
+            if (lcbLst >= 2 && fcLst >= 0 && fcLst + lcbLst <= table.Length)
+            {
+                try
+                {
+                    int pos = fcLst;
+                    int cLst = BitConverter.ToUInt16(table, pos); pos += 2;
+                    int end  = fcLst + lcbLst;
+                    if (cLst > 0 && pos + cLst * 28 <= end)
+                    {
+                        var lstHeaders = new (int Lsid, bool Simple)[cLst];
+                        for (int i = 0; i < cLst; i++)
+                        {
+                            int b = pos + i * 28;
+                            int lsid = BitConverter.ToInt32(table, b);
+                            bool simple = (table[b + 26] & 0x01) != 0;
+                            lstHeaders[i] = (lsid, simple);
+                        }
+                        pos += cLst * 28;
+                        // LVL 배열 — LSTF 순서대로 (fSimpleList ? 1 : 9) 개씩.
+                        for (int i = 0; i < cLst; i++)
+                        {
+                            int nLvl = lstHeaders[i].Simple ? 1 : 9;
+                            var levels = new ListLevelInfo[nLvl];
+                            for (int l = 0; l < nLvl; l++)
+                            {
+                                if (pos + 28 > end) { levels = levels[..l]; break; }
+                                int iStartAt = BitConverter.ToInt32(table, pos);
+                                byte nfc     = table[pos + 4];
+                                byte cbChpx  = table[pos + 24];
+                                byte cbPapx  = table[pos + 25];
+                                pos += 28 + cbPapx + cbChpx;
+                                // xst (Xst): cch(2) + cch × 2B.
+                                if (pos + 2 > end) { levels = levels[..l]; break; }
+                                int cch = BitConverter.ToUInt16(table, pos); pos += 2;
+                                int xstBytes = cch * 2;
+                                if (pos + xstBytes > end) { levels = levels[..l]; break; }
+                                pos += xstBytes;
+                                levels[l] = MapNfc(nfc, iStartAt);
+                            }
+                            if (levels.Length > 0) lists[lstHeaders[i].Lsid] = levels;
+                        }
+                    }
+                }
+                catch { /* 목록은 best-effort — 손상 시 무시하고 본문은 유지 */ }
+            }
+
+            // 2) PlfLfo → 1-based ilfo 인덱스 → lsid.
+            if (lcbLfo >= 4 && fcLfo >= 0 && fcLfo + lcbLfo <= table.Length)
+            {
+                try
+                {
+                    int lfoMac = BitConverter.ToInt32(table, fcLfo);
+                    int rgBase = fcLfo + 4;
+                    if (lfoMac > 0 && rgBase + lfoMac * 16 <= fcLfo + lcbLfo)
+                    {
+                        // 1-based 접근을 위해 길이 lfoMac+1 로 잡고 [0] 은 비움.
+                        lfoLsids = new int[lfoMac + 1];
+                        for (int i = 0; i < lfoMac; i++)
+                            lfoLsids[i + 1] = BitConverter.ToInt32(table, rgBase + i * 16);
+                    }
+                }
+                catch { /* best-effort */ }
+            }
+
+            return (lists, lfoLsids);
+        }
+
+        // MSONFC (번호 형식 코드) → ListKind + 대소문자. iStartAt 은 그대로 전달.
+        private static ListLevelInfo MapNfc(byte nfc, int iStartAt)
+        {
+            int start = iStartAt >= 1 ? iStartAt : 1;
+            return nfc switch
+            {
+                0  => new ListLevelInfo(ListKind.OrderedDecimal, start, null,  false),  // arabic
+                1  => new ListLevelInfo(ListKind.OrderedRoman,   start, true,  false),  // UpperRoman
+                2  => new ListLevelInfo(ListKind.OrderedRoman,   start, false, false),  // LowerRoman
+                3  => new ListLevelInfo(ListKind.OrderedAlpha,   start, true,  false),  // UpperLetter
+                4  => new ListLevelInfo(ListKind.OrderedAlpha,   start, false, false),  // LowerLetter
+                5  => new ListLevelInfo(ListKind.OrderedDecimal, start, null,  false),  // ordinal
+                23 => new ListLevelInfo(ListKind.Bullet,         start, null,  false),  // bullet
+                255 => new ListLevelInfo(ListKind.Bullet,        start, null,  true),   // none — 마커 숨김
+                _  => new ListLevelInfo(ListKind.OrderedDecimal, start, null,  false),
+            };
         }
 
         // Phase 3h-2 — SttbExtend (extended Sttb) 파싱. Format:
@@ -2592,6 +2748,8 @@ public class DocBinaryReader
             short tableWidthTwips = 0;
             byte  tableWidthFts   = 0;
             short tableIndTwips   = 0;
+            int ilfo = 0;   // sprmPIlfo — 1-based LFO 인덱스 (0 = 목록 아님)
+            int ilvl = 0;   // sprmPIlvl — 목록 레벨 (0..8)
 
             // 1. STSH built-in sti → Outline (Heading N → HN).
             if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
@@ -2609,6 +2767,7 @@ public class DocBinaryReader
                     touched |= ApplyParagraphSprms(chainSprms, style);
                     ScanTableProps(chainSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap,
                         ref rowHeightTwips, ref tableWidthTwips, ref tableWidthFts, ref tableIndTwips);
+                    ScanListSprms(chainSprms, ref ilfo, ref ilvl);
                 }
             }
 
@@ -2616,6 +2775,14 @@ public class DocBinaryReader
             touched |= ApplyParagraphSprms(directSprms, style);
             ScanTableProps(directSprms, ref inTable, ref isTtp, ref rgdxa, ref cellProps, ref itap,
                 ref rowHeightTwips, ref tableWidthTwips, ref tableWidthFts, ref tableIndTwips);
+            ScanListSprms(directSprms, ref ilfo, ref ilvl);
+
+            // 4. Phase 4 (목록) — (ilfo, ilvl) → ListMarker. 표 셀 안 단락에도 적용 가능.
+            if (ilfo > 0 && ResolveListMarker(ilfo, ilvl) is { } marker)
+            {
+                style.ListMarker = marker;
+                touched = true;
+            }
 
             // sprmPItap 가 명시 안 되어도 InTable=true / IsTtp=true 면 1-level 표로 간주 — Word 95
             // legacy 호환 + 합성 케이스. itap > 0 이 명시된 경우 (중첩) 는 그대로.
@@ -2738,6 +2905,20 @@ public class DocBinaryReader
             tableWidthTwips = localTblW;
             tableWidthFts  = localTblWFts;
             tableIndTwips  = localTblInd;
+        }
+
+        // Phase 4 (목록) — sprmPIlfo (0x460B, spra=2 2-byte signed) + sprmPIlvl (0x260A, spra=1 1-byte).
+        //   ilfo: 1-based LFO 인덱스. ilvl: 목록 레벨(0..8). 스타일 체인·직접 PAPX 양쪽에서 누적,
+        //   뒤(직접)가 앞(스타일)을 덮어쓴다.
+        private static void ScanListSprms(byte[] grpprl, ref int ilfo, ref int ilvl)
+        {
+            int li = ilfo, lv = ilvl;
+            WalkSprms(grpprl, (sprm, operand) =>
+            {
+                if (sprm == 0x460B && operand.Length >= 2) li = BitConverter.ToInt16(operand, 0);
+                else if (sprm == 0x260A && operand.Length >= 1) lv = operand[0];
+            });
+            ilfo = li; ilvl = lv;
         }
 
         // [MS-DOC] §2.9.16 Brc80 (4 byte border code):

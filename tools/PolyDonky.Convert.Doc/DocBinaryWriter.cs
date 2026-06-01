@@ -78,6 +78,8 @@ public sealed class DocBinaryWriter
     private const int PairFcPlcfBkf     = 22;   // FIB 0x014A / 0x014E
     private const int PairFcPlcfBkl     = 23;   // FIB 0x0152 / 0x0156
     private const int PairFcDop         = 31;   // FIB 0x0192 / 0x0196 — DOP (Document Properties)
+    private const int PairFcPlcfLst     = 73;   // FIB 0x02E2 / 0x02E6 — PlfLst (목록 정의)
+    private const int PairFcPlfLfo      = 74;   // FIB 0x02EA / 0x02EE — PlfLfo (목록 오버라이드)
 
     // FKP 페이지 크기 — [MS-DOC] §2.7 FKP 는 항상 512 byte.
     private const int FkpPageSize = 512;
@@ -258,6 +260,9 @@ public sealed class DocBinaryWriter
         public uint FcStshf,       LcbStshf;
         public uint FcPlcfSed,     LcbPlcfSed;
         public uint FcDop,         LcbDop;
+        // Phase 4 (목록) — PlfLst / PlfLfo. 사용된 (Kind, UpperCase) 조합마다 list 1개 등록.
+        public uint FcPlcfLst,     LcbPlcfLst;
+        public uint FcPlfLfo,      LcbPlfLfo;
         /// <summary>SEPX 의 WordDocument stream 내 위치 — BuildWordDocument 가 append 후 채움.</summary>
         public uint SepxFc;
         /// <summary>첫 번째 섹션의 페이지 설정 — SEPX 에 page width/height/margin sprm 으로 기록.</summary>
@@ -365,7 +370,7 @@ public sealed class DocBinaryWriter
                 {
                     CpStart  = fcStart,
                     CpEnd    = fcStart + 1,
-                    PapxBody = BuildPapxBody(new ParagraphStyle()),
+                    PapxBody = BuildPapxBody(new ParagraphStyle(), this),
                     Runs     = new List<RunInfo>(),
                 });
             }
@@ -430,7 +435,7 @@ public sealed class DocBinaryWriter
             {
                 CpStart  = paraCpStart,
                 CpEnd    = sb.Length,         // includes \r
-                PapxBody = BuildPapxBody(style),
+                PapxBody = BuildPapxBody(style, this),
                 Runs     = runs,
             });
             // 단락 마크에 대해 별도 CHPX 가 필요한 경우는 향후 (Phase 3h-3 paragraph revision 등) — 현재 생략.
@@ -443,6 +448,16 @@ public sealed class DocBinaryWriter
             if (i >= 0) return i;
             Fonts.Add(family);
             return Fonts.Count - 1;
+        }
+
+        // Phase 4 (목록) — 사용된 (Kind, UpperCase) 조합을 list 로 등록하고 1-based ilfo 반환.
+        //   동일 조합은 같은 ilfo 를 재사용한다. lsid = ilfo 로 단순화 (LSTF.lsid == LFO.lsid).
+        public readonly List<(ListKind Kind, bool? UpperCase)> ListDefs = new();
+        public int RegisterList(ListKind kind, bool? upperCase)
+        {
+            int i = ListDefs.FindIndex(d => d.Kind == kind && d.UpperCase == upperCase);
+            if (i < 0) { ListDefs.Add((kind, upperCase)); i = ListDefs.Count - 1; }
+            return i + 1;   // 1-based ilfo
         }
     }
 
@@ -468,10 +483,19 @@ public sealed class DocBinaryWriter
     /// <summary>ParagraphStyle → PAPX grpprl sprm 본문 (istd 제외).
     /// Reader 가 인식하는 sprms: 0x2461 정렬 / 0x845D 좌측 / 0x845E 우측 /
     /// 0x8460 첫줄 들여쓰기 / 0xA413 앞 간격 / 0xA415 뒤 간격 / 0x6412 줄 간격.</summary>
-    private static byte[] BuildPapxBody(ParagraphStyle ps)
+    private static byte[] BuildPapxBody(ParagraphStyle ps, BuildContext ctx)
     {
         var ms = new MemoryStream(32);
         var bw = new BinaryWriter(ms);
+
+        // Phase 4 (목록) — sprmPIlfo (0x460B, spra=2 2-byte) + sprmPIlvl (0x260A, spra=1 1-byte).
+        if (ps.ListMarker is { } marker)
+        {
+            int ilfo = ctx.RegisterList(marker.Kind, marker.UpperCase);
+            WriteSprm2Signed(bw, 0x460B, ilfo);
+            int lvl = Math.Clamp(marker.Level, 0, 8);
+            WriteSprm1(bw, 0x260A, (byte)lvl);
+        }
 
         // sprmPJc80 (0x2461, spra=1, 1-byte): 정렬
         byte align = ps.Alignment switch
@@ -862,8 +886,90 @@ public sealed class DocBinaryWriter
         ms.Write(dop, 0, dop.Length);
         ctx.LcbDop = (uint)dop.Length;
 
+        // 10. Phase 4 (목록) — PlfLst + PlfLfo. 등록된 list 가 있을 때만 기록.
+        if (ctx.ListDefs.Count > 0)
+        {
+            ctx.FcPlcfLst = (uint)ms.Position;
+            byte[] plfLst = BuildPlfLst(ctx.ListDefs);
+            ms.Write(plfLst, 0, plfLst.Length);
+            ctx.LcbPlcfLst = (uint)plfLst.Length;
+
+            ctx.FcPlfLfo = (uint)ms.Position;
+            byte[] plfLfo = BuildPlfLfo(ctx.ListDefs.Count);
+            ms.Write(plfLfo, 0, plfLfo.Length);
+            ctx.LcbPlfLfo = (uint)plfLfo.Length;
+        }
+
         return ms.ToArray();
     }
+
+    // [MS-DOC] §2.9.131 PlfLst — cLst(2) + rgLstf(cLst × LSTF 28B) + LVL 배열.
+    //   각 list 는 fSimpleList=1 (1 LVL) 로 단순화. lsid = index+1.
+    //   LVLF(28B) 의 nfc 가 번호형식, 뒤이은 빈 grpprl + xst(cch=0).
+    private static byte[] BuildPlfLst(IReadOnlyList<(ListKind Kind, bool? UpperCase)> defs)
+    {
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write((ushort)defs.Count);                 // cLst
+
+        // rgLstf — LSTF 28 byte × cLst.
+        for (int i = 0; i < defs.Count; i++)
+        {
+            bw.Write(i + 1);                          // lsid @0
+            bw.Write(0);                              // tplc @4
+            for (int j = 0; j < 9; j++) bw.Write((ushort)0x0FFF);  // rgistdPara @8 (9×2 = 18B, 0x0FFF = nil istd)
+            bw.Write((byte)0x01);                     // A @26 — bit0 fSimpleList=1
+            bw.Write((byte)0x00);                     // grfhic @27
+        }
+
+        // LVL 배열 — list 당 1 LVL (fSimpleList).
+        foreach (var (kind, upper) in defs)
+        {
+            byte nfc = KindToNfc(kind, upper);
+            bw.Write(1);                              // iStartAt @0
+            bw.Write(nfc);                            // nfc @4
+            bw.Write((byte)0);                        // flags @5
+            for (int j = 0; j < 9; j++) bw.Write((byte)0);  // rgbxchNums @6 (9B)
+            bw.Write((byte)0);                        // ixchFollow @15
+            bw.Write(0);                              // dxaIndentSav @16
+            bw.Write(0);                              // unused @20
+            bw.Write((byte)0);                        // cbGrpprlChpx @24
+            bw.Write((byte)0);                        // cbGrpprlPapx @25
+            bw.Write((byte)0);                        // ilvlRestartLim @26
+            bw.Write((byte)0);                        // grfhic @27
+            bw.Write((ushort)0);                      // xst: cch = 0 (마커 문자 없음)
+        }
+
+        return ms.ToArray();
+    }
+
+    // [MS-DOC] §2.9.132 PlfLfo — lfoMac(4) + rgLfo(lfoMac × LFO 16B). clfolvl=0 → rgLfoData 없음.
+    private static byte[] BuildPlfLfo(int count)
+    {
+        using var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(count);                              // lfoMac
+        for (int i = 0; i < count; i++)
+        {
+            bw.Write(i + 1);                          // lsid @0 (LSTF.lsid 와 일치)
+            bw.Write(0); bw.Write(0);                 // reserved @4 (8B)
+            bw.Write((byte)0);                        // clfolvl @12 = 0 (오버라이드 없음)
+            bw.Write((byte)0);                        // ibstFltAutoNum @13
+            bw.Write((byte)0);                        // grfhic @14
+            bw.Write((byte)0);                        // reserved @15
+        }
+        return ms.ToArray();
+    }
+
+    // ListKind + 대소문자 → MSONFC 번호형식 코드. Reader 의 MapNfc 와 역대응.
+    private static byte KindToNfc(ListKind kind, bool? upper) => kind switch
+    {
+        ListKind.Bullet         => 23,
+        ListKind.OrderedDecimal => 0,
+        ListKind.OrderedRoman   => (byte)((upper ?? true) ? 1 : 2),
+        ListKind.OrderedAlpha   => (byte)((upper ?? true) ? 3 : 4),
+        _                       => 0,
+    };
 
     /// <summary>DOP (Document Properties) — [MS-DOC] §2.7.1. Dop97 (500 byte) 변형.
     /// 대부분 0 (= 기본값) 이지만 strict parser 가 존재 자체를 요구하므로 작성. 몇 가지 안전한 기본값만 설정.</summary>
@@ -1133,6 +1239,8 @@ public sealed class DocBinaryWriter
         WritePair(wd, PairFcStshf,       ctx.FcStshf,       ctx.LcbStshf);
         WritePair(wd, PairFcPlcfSed,     ctx.FcPlcfSed,     ctx.LcbPlcfSed);
         WritePair(wd, PairFcDop,         ctx.FcDop,         ctx.LcbDop);
+        WritePair(wd, PairFcPlcfLst,     ctx.FcPlcfLst,     ctx.LcbPlcfLst);
+        WritePair(wd, PairFcPlfLfo,      ctx.FcPlfLfo,      ctx.LcbPlfLfo);
 
         // FibRgCswNew (Word 2000+) — cswNew(2) + nFibNew(2) + cQuickSavesNew(2).
         //   cbRgFcLcb=0xA4 와 nFibNew=0x010C 가 일관된 Word 2003 문서.

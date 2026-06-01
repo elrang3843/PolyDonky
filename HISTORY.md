@@ -56,6 +56,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - DOC 표 열 너비·행 높이·표 폭 정밀 복원: `sprmTDyaRowHeight`(0x9407) → `TableRow.HeightMm`, `sprmTTableWidth`(0xF614) → `Table.WidthMm`, `sprmTTableInd`(0xF661) → `Table.OuterMarginLeftMm` 파싱 추가; 각 행별 `rgdxa`로 `TableCell.WidthMm` 설정 및 가로 병합 셀 너비 합산; 열 정의를 "첫 행" 기준에서 "최대 열 수를 가진 행" 기준으로 변경.
 
 ### Added
+- DOC(Word 97-2003) 글머리표/번호 목록(list) import·export 지원: 기존 `DocBinaryReader`는 목록 sprm을 무시해 불릿·번호가 평범한 단락으로 떨어졌다. (1) FIB의 `PlfLst`(pair 73)·`PlfLfo`(pair 74) 오프셋을 읽고, (2) `PlfLst`(LSTF + LVL)와 `PlfLfo`(LFO)를 파싱해 lsid→레벨별 번호형식(nfc) 매핑을 구성, (3) `sprmPIlfo`(0x460B)·`sprmPIlvl`(0x260A)로 단락의 (목록, 레벨)을 읽어 `ListMarker`(Bullet/Decimal/Roman/Alpha + Level + 시작번호 + 대소문자)로 복원한다. `DocBinaryWriter`도 `BuildPlfLst`/`BuildPlfLfo` + 단락 PAPX의 list sprm을 출력해 라운드트립을 완성(테스트 9종 추가).
 - **이식형(Portable) ZIP 배포 지원**: `scripts/publish-portable.ps1` 스크립트 신설 + `Portable.pubxml` 게시 프로파일 추가. `dotnet publish -p:PublishProfile=Portable` 한 줄로 .NET 10 별도 설치 없이 바로 실행 가능한 win-x64 ZIP 이 생성된다. `PolyDonky.App.csproj` 에 `PublishExternalConverters` MSBuild 타깃 추가 — self-contained publish 시 CLI 변환기 6종(Html/Xml/Docx/Hwpx/Doc/Hwp)을 같은 출력 디렉터리에 자동으로 함께 게시.
 
 ---

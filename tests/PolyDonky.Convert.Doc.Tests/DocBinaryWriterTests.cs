@@ -357,6 +357,71 @@ public class DocBinaryWriterTests
         Assert.InRange(rp.Style.LineHeightFactor, 1.45, 1.55);
     }
 
+    // ── Phase 4: 목록 (PlfLst / PlfLfo + sprmPIlfo/PIlvl) round-trip ───────────
+
+    [Fact]
+    public void Bullet_List_Marker_RoundTrips()
+    {
+        var p = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.Bullet } } };
+        p.AddText("bullet item");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "bullet item");
+        Assert.NotNull(rp.Style.ListMarker);
+        Assert.Equal(ListKind.Bullet, rp.Style.ListMarker!.Kind);
+    }
+
+    [Fact]
+    public void Bullet_List_Level_RoundTrips()
+    {
+        var p = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.Bullet, Level = 2 } } };
+        p.AddText("nested bullet");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "nested bullet");
+        Assert.NotNull(rp.Style.ListMarker);
+        Assert.Equal(2, rp.Style.ListMarker!.Level);
+    }
+
+    [Theory]
+    [InlineData(ListKind.OrderedDecimal, null)]
+    [InlineData(ListKind.OrderedRoman,   true)]
+    [InlineData(ListKind.OrderedRoman,   false)]
+    [InlineData(ListKind.OrderedAlpha,   true)]
+    [InlineData(ListKind.OrderedAlpha,   false)]
+    public void Ordered_List_Kind_RoundTrips(ListKind kind, bool? upper)
+    {
+        var p = new Paragraph { Style = { ListMarker = new ListMarker { Kind = kind, UpperCase = upper } } };
+        p.AddText("ordered item");
+        var doc2 = RoundTrip(DocWith(p));
+        var rp   = FirstParaWithText(doc2, "ordered item");
+        Assert.NotNull(rp.Style.ListMarker);
+        Assert.Equal(kind, rp.Style.ListMarker!.Kind);
+        if (kind is ListKind.OrderedRoman or ListKind.OrderedAlpha)
+            Assert.Equal(upper, rp.Style.ListMarker!.UpperCase);
+    }
+
+    [Fact]
+    public void NonList_Paragraph_Has_No_ListMarker()
+    {
+        var doc2 = RoundTrip(DocWith(Paragraph.Of("plain")));
+        var rp   = FirstParaWithText(doc2, "plain");
+        Assert.Null(rp.Style.ListMarker);
+    }
+
+    [Fact]
+    public void Mixed_List_And_Body_Paragraphs_RoundTrip()
+    {
+        var bullet = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.Bullet } } };
+        bullet.AddText("CH340");
+        var ordered = new Paragraph { Style = { ListMarker = new ListMarker { Kind = ListKind.OrderedDecimal } } };
+        ordered.AddText("step one");
+        var doc2 = RoundTrip(DocWith(Paragraph.Of("intro"), bullet, ordered, Paragraph.Of("outro")));
+
+        Assert.Null(FirstParaWithText(doc2, "intro").Style.ListMarker);
+        Assert.Equal(ListKind.Bullet,         FirstParaWithText(doc2, "CH340").Style.ListMarker?.Kind);
+        Assert.Equal(ListKind.OrderedDecimal, FirstParaWithText(doc2, "step one").Style.ListMarker?.Kind);
+        Assert.Null(FirstParaWithText(doc2, "outro").Style.ListMarker);
+    }
+
     [Fact]
     public void Many_Paragraphs_Spill_To_Multiple_Fkp_Pages()
     {
