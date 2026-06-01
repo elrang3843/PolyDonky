@@ -1824,19 +1824,20 @@ public static class FlowDocumentBuilder
             return new Wpf.BlockUIContainer(wrappedSvg) { Tag = image, Margin = svgMargin };
         }
 
-        WpfMedia.Imaging.BitmapImage? bitmap = null;
+        WpfMedia.Imaging.BitmapSource? bitmap = null;
         try
         {
             // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
             // 그 후엔 원본 MemoryStream 을 즉시 해제해도 안전하다. Freeze 전 시점이 마지막 정리 기회.
             var imgStream = new MemoryStream(image.Data, writable: false);
-            bitmap = new WpfMedia.Imaging.BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
-            bitmap.StreamSource = imgStream;
-            bitmap.EndInit();
+            var bmp = new WpfMedia.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            bmp.StreamSource = imgStream;
+            bmp.EndInit();
             imgStream.Dispose();
-            bitmap.Freeze();
+            bmp.Freeze();
+            bitmap = ApplyImageCrop(bmp, image);
         }
         catch
         {
