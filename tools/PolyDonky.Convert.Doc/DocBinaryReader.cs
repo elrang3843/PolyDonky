@@ -2163,29 +2163,43 @@ public class DocBinaryReader
         // IWPF 의 Page.Header/Footer 는 단일 슬롯이라 odd 우선 매핑 (fallback: even → first).
         // 모든 sections 의 sub-stories 를 처리 — sectionIdx = i / 6 로 doc.Sections 에 분배.
         // sample5.doc 처럼 section 0 헤더가 비어 있고 section 1 에 실제 헤더/푸터가 있는 케이스 지원.
+        // 모든 sub-story 의 셀 그룹을 우선 모은 다음, 우선순위 순(odd > even > first)으로
+        // section 별로 header/footer 슬롯에 분배. 그래야 even footer 가 odd footer 를
+        // 덮어쓰지 않는다 (sample5.doc 의 경우 i=8 even=5자, i=9 odd=128자 진짜 푸터).
+        var collected = new List<(int Sec, int Story, List<List<Paragraph>> Cells)>();
         for (int i = 0; i < n; i++)
         {
             int cpStart = hddBase + subCps[i];
             int cpEnd   = hddBase + subCps[i + 1];
             if (cpEnd <= cpStart || cpEnd > hddEnd) continue;
-            // Phase 3m — Run-rich 단락 추출 (셀별 그룹). 헤더/푸터에 1×N 표가 있으면 각 셀이
-            // left/center/right 슬롯에 해당. 표 없으면 셀 1개에 모두 모임.
             var cellGroups = BuildSubdocCellGroups(wd, table, fib, cpStart, cpEnd, fmt);
-            // 빈 단락만 있는 셀 제거.
-            var nonEmpty = cellGroups
-                .Where(g => g.Any(p => p.Runs.Count > 0)).ToList();
+            var nonEmpty = cellGroups.Where(g => g.Any(p => p.Runs.Count > 0)).ToList();
             if (nonEmpty.Count == 0) continue;
-
             int sectionIdx = i / 6;
             int storyIdx   = i % 6;
             if (sectionIdx >= doc.Sections.Count) sectionIdx = doc.Sections.Count - 1;
-            var page = doc.Sections[sectionIdx].Page;
-            bool isHeader = storyIdx is 0 or 1 or 4;
+            collected.Add((sectionIdx, storyIdx, nonEmpty));
+        }
+
+        // 우선순위: storyIdx 1(odd header), 3(odd footer) 가 가장 먼저.
+        // 그 다음 0(even header), 2(even footer), 마지막 4(first header), 5(first footer).
+        int Priority(int storyIdx) => storyIdx switch
+        {
+            1 or 3 => 0,   // odd: 최우선
+            0 or 2 => 1,   // even
+            4 or 5 => 2,   // first
+            _      => 3,
+        };
+        var ordered = collected.OrderBy(c => Priority(c.Story)).ToList();
+
+        foreach (var (sec, story, cells) in ordered)
+        {
+            var page = doc.Sections[sec].Page;
+            bool isHeader = story is 0 or 1 or 4;
             var slot = isHeader ? page.Header : page.Footer;
             if (!slot.Center.IsEmpty || !slot.Left.IsEmpty || !slot.Right.IsEmpty)
-                continue;  // 이미 채워졌으면 (odd 우선) 덮어쓰지 않음
-
-            DistributeCellsToSlots(nonEmpty, slot);
+                continue;  // 이미 채워졌으면 덮어쓰지 않음
+            DistributeCellsToSlots(cells, slot);
         }
     }
 
