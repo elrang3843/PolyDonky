@@ -153,14 +153,15 @@ public class DocBinaryReader
             var fmt = FormatStyles.Build(wd, table, fib);
             // Phase 3e-2 — Data stream (선택적, 이미지 PICF 가 여기에). 없으면 null.
             fmt.DataStream = ReadAll(root, "Data");
-            // Phase 3f / 3f-3 — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출
-            // (Data stream 도 함께 넘겨 FBSE.foDelay 가 Data stream 안의 BLIP 을 가리키는 케이스 지원).
-            fmt.BStoreImages = ParseBStoreImages(table, fib, fmt.DataStream);
+            // Phase 3f / 3f-3 — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출.
+            //   FBSE.foDelay 는 "delay 스트림" 오프셋인데 문서마다 WordDocument 또는 Data 스트림이다.
+            //   둘 다 넘겨 유효한 OfficeArtBlip 헤더가 있는 쪽에서 추출한다.
+            fmt.BStoreImages = ParseBStoreImages(table, fib, fmt.DataStream, wd);
             BStoreImages = fmt.BStoreImages;
             // Phase 3f-4 — PlcSpaMom 에서 floating shape anchor 목록 추출.
             FspaEntries  = ParseFspaEntries(table, fib);
             // Phase 3f-5 — DggContainer 의 SpContainer 들에서 spid → pib (BStore index) 맵 추출.
-            ShapeImageIndex = ParseShapeImageIndex(table, fib);
+            ShapeImageIndex = ParseShapeImageIndex(table, fib, wd);
             // Phase 3i — Bookmarks 데이터 추출 (BuildDocument 보다 먼저 — char-walk 이 CP-event 를 본다).
             Bookmarks = ParseBookmarks(table, fib);
             fmt.SetBookmarks(Bookmarks);
@@ -350,9 +351,11 @@ public class DocBinaryReader
         uint fcDggInfo  = wd.Length >= 0x022E ? BitConverter.ToUInt32(wd, 0x022A) : 0u;
         uint lcbDggInfo = wd.Length >= 0x0232 ? BitConverter.ToUInt32(wd, 0x022E) : 0u;
 
-        // Phase 3f-4 — PlcSpaMom (FibRgFcLcb97 pair 16). fcPlcSpaMom @ 0x011A, lcbPlcSpaMom @ 0x011E.
-        uint fcPlcSpaMom  = wd.Length >= 0x011E ? BitConverter.ToUInt32(wd, 0x011A) : 0u;
-        uint lcbPlcSpaMom = wd.Length >= 0x0122 ? BitConverter.ToUInt32(wd, 0x011E) : 0u;
+        // Phase 3f-4 — PlcSpaMom (FibRgFcLcb97 pair 40). fcPlcSpaMom @ 0x01DA, lcbPlcSpaMom @ 0x01DE.
+        //   (이전 0x011A/0x011E(pair 16)는 오독 — 실제 .doc 의 PlcfSpa(spid+사각형)는 0x01DA 가 가리킨다.
+        //    CORE-3399PRO-JD4.doc 검증: 0x01DA == 유효 SPA(spid 1025 등), 0x011A == 무관 plex.)
+        uint fcPlcSpaMom  = wd.Length >= 0x01DE ? BitConverter.ToUInt32(wd, 0x01DA) : 0u;
+        uint lcbPlcSpaMom = wd.Length >= 0x01E2 ? BitConverter.ToUInt32(wd, 0x01DE) : 0u;
 
         // Phase 3g — Footnote / Endnote sub-document fields.
         //   FibRgLw97: ccpAtn @ 0x005C, ccpEdn @ 0x0060.
@@ -1476,7 +1479,7 @@ public class DocBinaryReader
     //   이후 nameData(cbName byte) 다음에 임베드 BLIP 가 옵션으로 위치.
     // Phase 3f-3 — 임베드 BLIP 가 없으면 foDelay 가 가리키는 Data stream 의 BLIP 을 탐색.
     private static IReadOnlyList<(string MediaType, byte[] Data)> ParseBStoreImages(
-        byte[] table, Fib fib, byte[]? dataStream)
+        byte[] table, Fib fib, byte[]? dataStream, byte[]? wordDoc)
     {
         if (fib.LcbDggInfo == 0) return Array.Empty<(string, byte[])>();
         int start = (int)fib.FcDggInfo;
@@ -1485,13 +1488,13 @@ public class DocBinaryReader
         int end = (int)endL;
 
         var list = new List<(string, byte[])>();
-        WalkForBStore(table, start, end, dataStream, list, depth: 0);
+        WalkForBStore(table, start, end, dataStream, wordDoc, list, depth: 0);
         return list;
     }
 
     // DggContainer (0xF000) 안에서 BStoreContainer (0xF001) 를 찾아 FBSE 들을 처리.
     private static void WalkForBStore(byte[] data, int start, int end,
-        byte[]? dataStream, List<(string, byte[])> sink, int depth)
+        byte[]? dataStream, byte[]? wordDoc, List<(string, byte[])> sink, int depth)
     {
         if (depth > 8) return;
         int pos = start;
@@ -1509,12 +1512,12 @@ public class DocBinaryReader
             if (recType == 0xF001)
             {
                 // BStoreContainer (container 0xF001). 자식 FBSE 처리.
-                ExtractFbses(data, dataStart, dataEnd, dataStream, sink);
+                ExtractFbses(data, dataStart, dataEnd, dataStream, wordDoc, sink);
             }
             else if (recVer == 0xF)
             {
                 // 다른 컨테이너 — DggContainer / OptContainer 등 — 재귀로 BStore 탐색.
-                WalkForBStore(data, dataStart, dataEnd, dataStream, sink, depth + 1);
+                WalkForBStore(data, dataStart, dataEnd, dataStream, wordDoc, sink, depth + 1);
             }
             pos = dataEnd;
         }
@@ -1522,7 +1525,7 @@ public class DocBinaryReader
 
     // BStoreContainer 안의 FBSE atom 들을 walk 하며 임베드 BLIP 또는 foDelay 가 가리키는 Data stream BLIP 추출.
     private static void ExtractFbses(byte[] data, int start, int end,
-        byte[]? dataStream, List<(string, byte[])> sink)
+        byte[]? dataStream, byte[]? wordDoc, List<(string, byte[])> sink)
     {
         int pos = start;
         while (pos + 8 <= end)
@@ -1545,14 +1548,19 @@ public class DocBinaryReader
                 if (blipStart < dataEnd)
                     blip = TryExtractFromOfficeArt(data, blipStart, dataEnd, bstore: null, depth: 0);
 
-                // (b) Phase 3f-3 — 임베드가 없으면 foDelay 의 Data stream 안에서 BLIP 찾기.
+                // (b) Phase 3f-3 — 임베드가 없으면 foDelay 의 delay stream 안에서 BLIP 찾기.
+                //     delay stream 은 문서마다 WordDocument 또는 Data 스트림 — 둘 다 시도한다.
                 //     foDelay == 0xFFFFFFFF 는 "BLIP 없음" sentinel.
-                if (!blip.HasValue && foDelay != 0xFFFFFFFF && dataStream is not null)
+                if (!blip.HasValue && foDelay != 0xFFFFFFFF)
                 {
                     int doff = (int)foDelay;
-                    if (doff >= 0 && doff < dataStream.Length)
+                    foreach (var delayStream in new[] { wordDoc, dataStream })
+                    {
+                        if (delayStream is null || doff < 0 || doff >= delayStream.Length) continue;
                         blip = TryExtractFromOfficeArt(
-                            dataStream, doff, dataStream.Length, bstore: null, depth: 0);
+                            delayStream, doff, delayStream.Length, bstore: null, depth: 0);
+                        if (blip.HasValue) break;
+                    }
                 }
 
                 if (blip.HasValue) sink.Add(blip.Value);
@@ -1685,15 +1693,32 @@ public class DocBinaryReader
     //     - Sp atom (0xF009, body 8 byte: spid(4) + flags(4)) — shape ID
     //     - OPT atom (0xF00B, body = N 개 property × 6 byte) — pib (id=260, fBid=1) 가 BLIP 인덱스
     //   spid != 0 이고 pib > 0 일 때만 맵에 등록.
-    private static IReadOnlyDictionary<int, int> ParseShapeImageIndex(byte[] table, Fib fib)
+    private static IReadOnlyDictionary<int, int> ParseShapeImageIndex(byte[] table, Fib fib, byte[]? wordDoc)
     {
         var map = new Dictionary<int, int>();
-        if (fib.LcbDggInfo == 0) return map;
-        int start = (int)fib.FcDggInfo;
-        long endL  = (long)start + fib.LcbDggInfo;
-        if (start < 0 || endL > table.Length) return map;
-        WalkSpContainers(table, start, (int)endL, map, depth: 0);
+        // 도형(OfficeArtSpContainer 0xF004)은 fcDggInfo 영역이 아니라 Table/WordDocument 스트림의
+        // OfficeArtDgContainer 안에 흩어져 있다. 컨테이너 경계 추적이 불안정하므로(레코드 사이 패딩·비정렬)
+        // 0xF004 헤더를 바이트 스캔으로 직접 찾아 각 SpContainer 에서 spid(0xF00A)+pib(0xF00B prop260) 추출.
+        ScanSpContainersByteWise(table, map);
+        if (wordDoc is not null) ScanSpContainersByteWise(wordDoc, map);
         return map;
+    }
+
+    // 버퍼 전체를 byte 단위로 훑어 유효한 0xF004 SpContainer 헤더를 찾고 spid→pib 를 map 에 채운다.
+    private static void ScanSpContainersByteWise(byte[] buf, Dictionary<int, int> map)
+    {
+        for (int s = 0; s + 8 <= buf.Length; s++)
+        {
+            if (BitConverter.ToUInt16(buf, s + 2) != 0xF004) continue;
+            ushort verInst = BitConverter.ToUInt16(buf, s);
+            if ((verInst & 0x000F) != 0xF) continue;          // 컨테이너만
+            uint recLen = BitConverter.ToUInt32(buf, s + 4);
+            long dataEnd = (long)s + 8 + recLen;
+            if (recLen < 8 || recLen > 0x100000 || dataEnd > buf.Length) continue;  // sane 범위
+            int spid = ExtractSpid(buf, s + 8, (int)dataEnd);
+            int pib  = ExtractPib(buf, s + 8, (int)dataEnd);
+            if (spid != 0 && pib > 0) map[spid] = pib;
+        }
     }
 
     private static void WalkSpContainers(byte[] data, int start, int end, Dictionary<int, int> map, int depth)
@@ -1723,7 +1748,8 @@ public class DocBinaryReader
         }
     }
 
-    // SpContainer 의 자식 중 Sp atom (0xF009) 을 찾아 spid (body[0..3]) 반환. 없으면 0.
+    // SpContainer 의 자식 중 FSP atom (0xF00A) 을 찾아 spid (body[0..3]) 반환. 없으면 0.
+    //   ([MS-ODRAW] 0xF00A=OfficeArtFSP 가 spid 를 담는다. 0xF009=FSPGR 는 그룹 경계라 spid 없음.)
     private static int ExtractSpid(byte[] data, int start, int end)
     {
         int pos = start;
@@ -1734,7 +1760,7 @@ public class DocBinaryReader
             int dataStart  = pos + 8;
             long dataEnd64 = (long)dataStart + recLen;
             if (dataEnd64 > end) return 0;
-            if (recType == 0xF009 && dataStart + 4 <= dataEnd64)
+            if (recType == 0xF00A && dataStart + 4 <= dataEnd64)
                 return BitConverter.ToInt32(data, dataStart);
             pos = (int)dataEnd64;
         }

@@ -45,7 +45,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
 
 ### Fixed
-- DOC `fcDggInfo`(OfficeArtDggContainer 위치) 를 잘못된 FIB 오프셋에서 읽던 문제 수정 — `0x0312`(pair 79)는 항상 0 을 반환해 문서 전역 그리기 레이어(floating 도형·이미지의 BStore)가 전혀 인식되지 않았다. 실제 .doc 검증 결과 올바른 오프셋은 `0x022A`(pair 50). 수정 후 `OfficeArtBStoreContainer`(0xF001)와 그 안의 FBSE(0xF007) 목록이 정상 인식된다(CORE-3399PRO-JD4.doc: floating 이미지 6개의 BStore 항목 위치 확인). 단, BLIP 바이트가 delay 스트림에 저장된 케이스의 최종 추출(`FBSE.foDelay` → 이미지 데이터)은 후속 과제로 남는다.
+- **DOC floating(부유) 이미지가 전혀 표시되지 않던 문제 수정** — OfficeArt 도형에 박힌 부유 이미지(예: 문서 우상단 보드 사진)가 import 되지 않았다. 원인은 FIB 오프셋 2개 오독 + 2개 파싱 버그였다. (1) `fcDggInfo`(그리기 레이어) 오프셋 `0x0312`→`0x022A`(pair 50) — 잘못된 위치라 항상 0 → BStore(이미지 저장소) 미인식. (2) `fcPlcSpaMom`(부유 도형 앵커·위치) 오프셋 `0x011A`→`0x01DA`(pair 40) — 잘못된 위치라 무관한 plex 를 읽어 spid·좌표가 깨짐. (3) `FBSE.foDelay`(BLIP 바이트 위치)가 가리키는 "delay 스트림" 이 문서마다 WordDocument 또는 Data 스트림이라 양쪽을 시도하도록 수정. (4) `ExtractSpid` 가 spid 를 `0xF009`(FSPGR, spid 없음) 대신 `0xF00A`(FSP) 에서 읽도록 수정 + 도형(0xF004)이 `fcDggInfo` 영역 밖 Table/WordDocument 스트림에 흩어져 있어 전체 바이트 스캔으로 변경. 결과: CORE-3399PRO-JD4.doc 의 부유 이미지 6개(PNG 5·JPEG 1)가 올바른 위치(우상단 등)·크기로 복원된다.
 - 변환 파일 편집 시 글상자·표 내용 소실·튕김 3종 수정:
   ① `ScheduleLivePaginationRefresh`에서 페이지 재구성(needsRebuild=true) 후 `SyncDocumentFromLive` 미호출로 `_viewModel.Document`가 낡은 상태로 남던 문제 — Undo 스냅샷 오염 및 오버레이 내용 소실의 원인
   ② 같은 경로에서 `RebuildOverlays()` 미호출로 글상자·이미지·도형이 새 페이지 기하 기준으로 재배치되지 않아 시각적으로 "튕겨나가던" 문제
