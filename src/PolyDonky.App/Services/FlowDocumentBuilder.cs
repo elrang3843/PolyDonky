@@ -1026,14 +1026,34 @@ public static class FlowDocumentBuilder
             wtable.Columns.Add(new Wpf.TableColumn { Width = width });
         }
 
-        // 열 정의가 전혀 없는 표(예: sprmTDefTable 부재 DOC) 는 WPF 가 콘텐츠 기준 Auto 로 열을
-        // 잡아 긴 셀이 과도하게 줄바꿈되고 표가 비정상적으로 길어진다. 가장 셀이 많은 행 기준으로
-        // 균등 Star 열을 합성해 가용 폭을 고르게 분배한다 (Auto 회피 — 위 주석과 동일 이유).
+        // 열 정의가 전혀 없는 표(예: sprmTDefTable 부재 DOC) 는 WPF Auto 가 가장 긴 줄 기준으로
+        // 열을 잡아 표가 비정상적으로 길어진다. Word 의 "내용 맞춤(AutoFit to Contents)" 을 근사해
+        // 열별 텍스트 분량에 비례한 Star 폭을 합성한다 (균등 분배는 긴 셀이 과도하게 줄바꿈됨).
         if (wtable.Columns.Count == 0)
         {
             int synthCols = table.Rows.Count > 0 ? table.Rows.Max(r => r.Cells.Sum(c => Math.Max(c.ColumnSpan, 1))) : 0;
-            for (int i = 0; i < synthCols; i++)
-                wtable.Columns.Add(new Wpf.TableColumn { Width = new GridLength(1, GridUnitType.Star) });
+            if (synthCols > 0)
+            {
+                var weights = new double[synthCols];
+                foreach (var row in table.Rows)
+                {
+                    int ci = 0;
+                    foreach (var cell in row.Cells)
+                    {
+                        int span = Math.Max(cell.ColumnSpan, 1);
+                        double per = EstimateCellVisualWidth(cell) / span;
+                        for (int k = 0; k < span && ci + k < synthCols; k++)
+                            weights[ci + k] = Math.Max(weights[ci + k], per);
+                        ci += span;
+                    }
+                }
+                for (int i = 0; i < synthCols; i++)
+                {
+                    // 4~48 단위로 클램프 — 한 열이 과도하게 넓거나, 헤더도 안 들어갈 만큼 좁아지는 것 방지.
+                    double w = Math.Clamp(weights[i] <= 0 ? 4 : weights[i], 4, 48);
+                    wtable.Columns.Add(new Wpf.TableColumn { Width = new GridLength(w, GridUnitType.Star) });
+                }
+            }
         }
 
         var rowGroup = new Wpf.TableRowGroup();
@@ -1088,6 +1108,34 @@ public static class FlowDocumentBuilder
     }
 
     /// <summary>표 수준 속성(배경·바깥여백·외곽선·정렬)을 WPF Table 에 적용.</summary>
+    // 열 너비 합성용 — 셀 내용의 대략적 시각 폭(문자 단위). CJK 글자는 라틴의 약 2배 폭으로 친다.
+    // 셀의 모든 단락 중 가장 긴 단락 길이를 채택(열 폭은 가장 긴 줄이 좌우한다).
+    private static double EstimateCellVisualWidth(TableCell cell)
+    {
+        double max = 0;
+        void Visit(IEnumerable<Block> blocks)
+        {
+            foreach (var b in blocks)
+            {
+                switch (b)
+                {
+                    case Paragraph p:
+                        double w = 0;
+                        foreach (var run in p.Runs)
+                            foreach (var ch in run.Text ?? string.Empty)
+                                w += ch >= 0x1100 && ch <= 0xFFE6 ? 2.0 : 1.0;  // CJK/한글/전각 ≈ 2배
+                        if (w > max) max = w;
+                        break;
+                    case ContainerBlock cb:
+                        Visit(cb.Children);
+                        break;
+                }
+            }
+        }
+        Visit(cell.Blocks);
+        return max;
+    }
+
     internal static void ApplyTableLevelPropertiesToWpf(Wpf.Table wtable, Table table)
     {
         // 배경색

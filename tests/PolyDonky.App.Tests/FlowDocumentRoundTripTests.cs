@@ -158,22 +158,19 @@ public class FlowDocumentRoundTripTests
     }
 
     [Fact]
-    public void Build_TableWithoutColumns_SynthesizesEvenStarColumns()
+    public void Build_TableWithoutColumns_SynthesizesContentProportionalStarColumns()
     {
-        // sprmTDefTable 부재 DOC 표처럼 열 정의가 없는 표 — WPF Auto 회피를 위해
-        // 가장 셀 많은 행 기준 균등 Star 열이 합성되어야 한다.
+        // sprmTDefTable 부재 DOC 표처럼 열 정의가 없는 표 — WPF Auto 회피를 위해 Star 열을 합성하고,
+        // Word AutoFit 근사로 내용이 긴 열에 더 큰 폭(Star 가중치)을 부여해야 한다.
         var table = new Table();
-        foreach (var _ in new[] { 0, 1 })
-        {
-            var trow = new TableRow();
-            for (int c = 0; c < 3; c++)
-            {
-                var cell = new TableCell();
-                cell.Blocks.Add(Paragraph.Of($"c{c}"));
-                trow.Cells.Add(cell);
-            }
-            table.Rows.Add(trow);
-        }
+        var trow = new TableRow();
+        var shortCell = new TableCell(); shortCell.Blocks.Add(Paragraph.Of("예"));
+        var longCell  = new TableCell(); longCell.Blocks.Add(Paragraph.Of(
+            "높은 전송 속도 통신, 우수한 안정성 및 내구성 지원하는 매우 긴 평가 문장입니다"));
+        trow.Cells.Add(shortCell);
+        trow.Cells.Add(longCell);
+        table.Rows.Add(trow);
+
         var doc = new PolyDonkyument();
         var sec = new Section();
         sec.Blocks.Add(table);
@@ -182,8 +179,11 @@ public class FlowDocumentRoundTripTests
         var fd = FlowDocumentBuilder.Build(doc);
         var wtable = fd.Blocks.OfType<Wpf.Table>().First();
 
-        Assert.Equal(3, wtable.Columns.Count);
+        Assert.Equal(2, wtable.Columns.Count);
         Assert.All(wtable.Columns, col => Assert.Equal(GridUnitType.Star, col.Width.GridUnitType));
+        // 내용이 긴 열의 Star 가중치가 짧은 열보다 커야 한다 (균등 분배가 아님).
+        Assert.True(wtable.Columns[1].Width.Value > wtable.Columns[0].Width.Value,
+            $"긴 열({wtable.Columns[1].Width.Value}) 이 짧은 열({wtable.Columns[0].Width.Value}) 보다 넓어야 함");
     }
 
     [Fact]
