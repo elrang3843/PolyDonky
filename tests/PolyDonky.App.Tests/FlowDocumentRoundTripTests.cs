@@ -158,6 +158,63 @@ public class FlowDocumentRoundTripTests
     }
 
     [Fact]
+    public void Build_TableWithoutColumns_SynthesizesEvenStarColumns()
+    {
+        // sprmTDefTable 부재 DOC 표처럼 열 정의가 없는 표 — WPF Auto 회피를 위해
+        // 가장 셀 많은 행 기준 균등 Star 열이 합성되어야 한다.
+        var table = new Table();
+        foreach (var _ in new[] { 0, 1 })
+        {
+            var trow = new TableRow();
+            for (int c = 0; c < 3; c++)
+            {
+                var cell = new TableCell();
+                cell.Blocks.Add(Paragraph.Of($"c{c}"));
+                trow.Cells.Add(cell);
+            }
+            table.Rows.Add(trow);
+        }
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(table);
+        doc.Sections.Add(sec);
+
+        var fd = FlowDocumentBuilder.Build(doc);
+        var wtable = fd.Blocks.OfType<Wpf.Table>().First();
+
+        Assert.Equal(3, wtable.Columns.Count);
+        Assert.All(wtable.Columns, col => Assert.Equal(GridUnitType.Star, col.Width.GridUnitType));
+    }
+
+    [Fact]
+    public void Build_TableWithDefaultBorderThickness_DrawsCellBorders()
+    {
+        // DOC 리더가 "맨 표" 에 부여하는 기본 0.5pt 테두리가 셀 보더로 렌더되는지 검증.
+        var table = new Table { BorderThicknessPt = 0.5, BorderColor = "#808080" };
+        var trow = new TableRow();
+        for (int c = 0; c < 2; c++)
+        {
+            var cell = new TableCell();
+            cell.Blocks.Add(Paragraph.Of($"c{c}"));
+            trow.Cells.Add(cell);
+        }
+        table.Rows.Add(trow);
+        var doc = new PolyDonkyument();
+        var sec = new Section();
+        sec.Blocks.Add(table);
+        doc.Sections.Add(sec);
+
+        var fd = FlowDocumentBuilder.Build(doc);
+        var wtable = fd.Blocks.OfType<Wpf.Table>().First();
+        var firstCell = wtable.RowGroups.First().Rows.First().Cells.First();
+
+        // 0.5pt 공통 두께 → 적어도 오른쪽/아래 면은 그려져야 함 (collapse 정책상 내부 top/left 는 0 가능).
+        var t = firstCell.BorderThickness;
+        Assert.True(t.Right > 0 || t.Bottom > 0 || t.Left > 0 || t.Top > 0,
+            $"기본 테두리가 그려지지 않음: {t}");
+    }
+
+    [Fact]
     public void RoundTrip_PreservesBoldAndColor()
     {
         var doc = SingleParagraph(text: "강조", style: new RunStyle

@@ -1026,6 +1026,16 @@ public static class FlowDocumentBuilder
             wtable.Columns.Add(new Wpf.TableColumn { Width = width });
         }
 
+        // 열 정의가 전혀 없는 표(예: sprmTDefTable 부재 DOC) 는 WPF 가 콘텐츠 기준 Auto 로 열을
+        // 잡아 긴 셀이 과도하게 줄바꿈되고 표가 비정상적으로 길어진다. 가장 셀이 많은 행 기준으로
+        // 균등 Star 열을 합성해 가용 폭을 고르게 분배한다 (Auto 회피 — 위 주석과 동일 이유).
+        if (wtable.Columns.Count == 0)
+        {
+            int synthCols = table.Rows.Count > 0 ? table.Rows.Max(r => r.Cells.Sum(c => Math.Max(c.ColumnSpan, 1))) : 0;
+            for (int i = 0; i < synthCols; i++)
+                wtable.Columns.Add(new Wpf.TableColumn { Width = new GridLength(1, GridUnitType.Star) });
+        }
+
         var rowGroup = new Wpf.TableRowGroup();
         wtable.RowGroups.Add(rowGroup);
 

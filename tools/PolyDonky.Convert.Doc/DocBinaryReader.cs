@@ -1112,6 +1112,28 @@ public class DocBinaryReader
             row.Cells = MergeRowCells(row.Cells, cp, toRemove[r], rgdxa);
             if (row.Cells.Count > 0) table.Rows.Add(row);
         }
+
+        ApplyDefaultBordersIfBare(table);
+    }
+
+    // sprmTDefTable(0xD608) 이 없는 문서(도구 생성 .doc 등)는 셀 테두리·열 너비가 전혀 기록되지 않아
+    // 표가 선 없이 렌더된다. Word 는 이런 표를 기본 격자(얇은 단일선)로 보여주므로, 테두리·너비 정보가
+    // 전혀 없는 "맨 표" 에 한해 Word 기본값(0.5pt 회색 격자)을 부여한다.
+    //   판정: 열 정의 없음 + 모든 셀에 면 테두리 없음 + 표 외곽선 없음.
+    //   (sprmTDefTable 이 있어 의도적으로 테두리 없음(none)으로 지정된 표는 Columns 가 채워지므로 제외.)
+    private static void ApplyDefaultBordersIfBare(Table table)
+    {
+        if (table.Rows.Count == 0) return;
+        if (table.Columns.Count > 0) return;
+        if (table.BorderThicknessPt > 0) return;
+        bool anyCellBorder = table.Rows.Any(r => r.Cells.Any(c =>
+            c.BorderTop is not null || c.BorderLeft is not null ||
+            c.BorderBottom is not null || c.BorderRight is not null ||
+            c.BorderThicknessPt > 0));
+        if (anyCellBorder) return;
+
+        table.BorderThicknessPt = 0.5;
+        table.BorderColor       = "#808080";
     }
 
     // 한 행의 row.Cells 에 (테두리·배경 적용 → 세로 흡수 제거 + 가로 병합 + 셀 너비) 처리.
