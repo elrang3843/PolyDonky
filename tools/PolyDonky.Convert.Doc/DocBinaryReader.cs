@@ -173,13 +173,10 @@ public class DocBinaryReader
             DigitalSignature = ParseDigitalSignature(root);
             // Phase 3n-3 — 그 외 알려지지 않은 root storage 들 catch-all 보존 (MsoDataStore 등).
             PreservedRootStorages = ParsePreservedRootStorages(root);
-            // 0x08(drawing anchor) 의 CP → (섹션 인덱스, 그 CP 가 속한 본문 단락의 section.Blocks 인덱스).
-            //   부유 도형을 앵커 단락 페이지로 배치하기 위한 매핑.
-            var drawingAnchors = new Dictionary<int, (int Sec, int Blk)>();
-            var doc = BuildDocument(text, fcs, fmt, OleEmbeds, drawingAnchors);
+            var doc = BuildDocument(text, fcs, fmt, OleEmbeds);
 
             // Phase 3f-6 — FspaEntries + ShapeImageIndex + BStoreImages 결합 → floating ImageBlock 생성.
-            ApplyFloatingShapeImages(doc, drawingAnchors);
+            ApplyFloatingShapeImages(doc);
 
             // Phase 3d — 헤더/푸터 영역 (subdocument) 텍스트 추출 후 doc.Sections[0] 에 매핑.
             ApplyHeaderFooter(wd, table, fib, doc, fmt);
@@ -579,7 +576,7 @@ public class DocBinaryReader
     // Phase 2h — 중첩 표 지원을 위해 Stack<TableState> 기반으로 흐름 일반화.
     // 각 단락의 itap level 에 따라 stack push/pop, level=0 면 본문, level>=1 면 해당 깊이의 표.
     private static PolyDonkyument BuildDocument(string raw, int[] fcs, FormatStyles fmt,
-        IReadOnlyList<OleEmbedEntry> OleEmbeds, Dictionary<int, (int Sec, int Blk)> drawingAnchors)
+        IReadOnlyList<OleEmbedEntry> OleEmbeds)
     {
         var doc     = new PolyDonkyument();
         var section = new Section();
@@ -783,11 +780,7 @@ public class DocBinaryReader
                         }
                     }
                     break;
-                case '\u0008':  // drawing anchor — 부유 도형이 이 CP 에 anchor. 위치 기록 후 제거.
-                    //   이 CP 가 속한 단락은 곧 (다음 \r 에서) section.Blocks[Count] 로 추가된다 →
-                    //   부유 이미지를 그 단락 페이지로 보내기 위해 (섹션, 예정 블록 인덱스) 를 CP 별로 기록.
-                    if (fieldMode != 1)
-                        drawingAnchors[i] = (doc.Sections.Count - 1, section.Blocks.Count);
+                case '\u0008':  // drawing
                     break;
                 case '\t':
                 case '\n':
@@ -1609,18 +1602,16 @@ public class DocBinaryReader
     }
 
     // Phase 3f-6 — FspaEntries 의 각 항목을 ShapeImageIndex → BStoreImages 로 resolve 해
-    //   floating ImageBlock 을 생성.
+    //   floating ImageBlock 을 doc.Sections[0].Blocks 에 추가.
     //   좌표는 twips → mm 변환 (1 inch = 1440 twips = 25.4 mm → / 56.692).
-    //   앵커 CP(fspa.Cp)가 속한 본문 단락을 drawingAnchors 로 찾아 그 섹션의 해당 블록에
-    //   AnchorParagraphBlockIndex 로 연결한다 → 메인 앱 페이지네이션이 그 단락의 실제 페이지로 배치.
-    //   매핑이 없으면(헤더/푸터 등) Sections[0] page 0 로 폴백.
-    private void ApplyFloatingShapeImages(PolyDonkyument doc,
-        Dictionary<int, (int Sec, int Blk)> drawingAnchors)
+    //   AnchorPageIndex 는 0 (페이지 단위 분배는 메인 앱의 페이지네이션 단계에서 처리).
+    private void ApplyFloatingShapeImages(PolyDonkyument doc)
     {
         if (FspaEntries.Count == 0 || ShapeImageIndex.Count == 0
             || BStoreImages.Count == 0 || doc.Sections.Count == 0)
             return;
 
+        var section = doc.Sections[0];
         foreach (var fspa in FspaEntries)
         {
             if (!ShapeImageIndex.TryGetValue(fspa.Spid, out int pib)) continue;
@@ -1632,27 +1623,18 @@ public class DocBinaryReader
             if (widthMm  < 0) widthMm  = 0;
             if (heightMm < 0) heightMm = 0;
 
-            var img = new ImageBlock
+            section.Blocks.Add(new ImageBlock
             {
                 MediaType       = mime,
                 Data            = data,
                 WrapMode        = ImageWrapMode.InFrontOfText,
+                AnchorPageIndex = 0,
                 OverlayXMm      = fspa.XaLeftTwips / 56.692,
                 OverlayYMm      = fspa.YaTopTwips  / 56.692,
                 WidthMm         = widthMm,
                 HeightMm        = heightMm,
                 Description     = $"[floating shape spid={fspa.Spid}]",
-            };
-
-            // 앵커 CP → (섹션, 블록 인덱스). 찾으면 해당 섹션에 추가하고 단락 앵커로 연결.
-            Section target = doc.Sections[0];
-            if (drawingAnchors.TryGetValue(fspa.Cp, out var anchor) && anchor.Sec < doc.Sections.Count)
-            {
-                target = doc.Sections[anchor.Sec];
-                img.AnchorParagraphBlockIndex = anchor.Blk;
-                img.AnchorRelativeYMm         = fspa.YaTopTwips / 56.692;
-            }
-            target.Blocks.Add(img);
+            });
         }
     }
 
