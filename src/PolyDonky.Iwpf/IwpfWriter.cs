@@ -209,13 +209,15 @@ public sealed class IwpfWriter : IDocumentWriter
         // Watermark 는 본문 일부로 함께 보존된다.
         var detached = new PolyDonkyument
         {
-            Metadata   = document.Metadata,
-            Sections   = document.Sections,
-            Styles     = new StyleSheet(),
-            Provenance = new Provenance(),
-            Watermark  = document.Watermark,
-            Footnotes  = document.Footnotes,
-            Endnotes   = document.Endnotes,
+            Metadata      = document.Metadata,
+            Sections      = document.Sections,
+            Styles        = new StyleSheet(),
+            Provenance    = new Provenance(),
+            Watermark     = document.Watermark,
+            Footnotes     = document.Footnotes,
+            Endnotes      = document.Endnotes,
+            OutlineStyles = document.OutlineStyles,
+            Comments      = document.Comments,
         };
         return JsonSerializer.SerializeToUtf8Bytes(detached, JsonDefaults.Options);
     }

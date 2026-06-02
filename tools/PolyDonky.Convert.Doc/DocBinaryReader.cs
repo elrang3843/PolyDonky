@@ -208,6 +208,11 @@ public class DocBinaryReader
             if (summary is { Length: > 0 })
                 ApplySummaryInformation(summary, doc);
 
+            // 헤딩에 multi-level 번호 매김(ilfo>0) 이 연결돼 있던 경우 워드의 chapter numbering
+            // ("2.6 Tables", "2.7 Code Examples" 등) 을 OutlineStyleSet 으로 활성화.
+            //   H1=Decimal, H2=Decimal, H3=Decimal,... → ComputeOutlineNumbers 가 자동으로 "2.7" 생성.
+            if (fmt.HeadingHasNumbering) EnableHeadingChapterNumbering(doc);
+
             return doc;
         }
         finally
@@ -2613,6 +2618,28 @@ public class DocBinaryReader
 
     // Variant 타입: VT_LPSTR (0x001E, CP1252) · VT_LPWSTR (0x001F, UTF-16LE) · VT_FILETIME (0x0040)
     // 만 지원 — 그 외 PID/Variant 는 무시 (메타데이터는 본문 무효화 사유가 되지 않음).
+    // 헤딩 chapter numbering 활성화 — doc.OutlineStyles 의 H1~H6 에 Decimal numbering 설정.
+    //   ComputeOutlineNumbers 가 H1=2, H2=7 단락 앞에 "2.7" 같은 prefix 를 자동 생성한다.
+    private static void EnableHeadingChapterNumbering(PolyDonkyument doc)
+    {
+        var ss = doc.OutlineStyles ?? OutlineStyleSet.CreateDefault();
+        for (int lvl = 1; lvl <= 6; lvl++)
+        {
+            var olv = (OutlineLevel)lvl;
+            var ls  = ss.GetLevel(olv);
+            // 이미 사용자가 명시적으로 다른 NumberingStyle 을 정해놓은 경우는 건드리지 않음.
+            if (ls.Numbering.Style == NumberingStyle.None)
+            {
+                ls.Numbering.Style  = NumberingStyle.Decimal;
+                ls.Numbering.Prefix = "";
+                ls.Numbering.Suffix = lvl == 1 ? " " : "";  // H1 만 끝에 공백, 하위는 점만
+                ls.Numbering.RestartFromHigher = true;
+                ss.SetLevel(olv, ls);
+            }
+        }
+        doc.OutlineStyles = ss;
+    }
+
     private static void ApplySummaryInformation(byte[] data, PolyDonkyument doc)
     {
         try
@@ -2766,6 +2793,9 @@ public class DocBinaryReader
         public IReadOnlyList<int> SectionFcSepx { get; }
         // Phase 3c-2 — SEPX 적용에 필요하므로 보존.
         public byte[] TableBytes { get; }
+        // Phase 헤딩 chapter numbering — 헤딩 단락이 ilfo>0 으로 multi-level 번호 매김에 연결되면
+        //   true. import 끝에 doc.OutlineStyles 의 H1~H6 에 Decimal numbering 활성화 신호.
+        public bool HeadingHasNumbering { get; set; }
         // Phase 3e-2 — Data stream (이미지 PICF 가 들어 있는 OLE2 stream). null = 없음.
         public byte[]? DataStream { get; set; }
         // Phase 3f-2 — OfficeArtBStoreContainer 에서 추출한 공유 BLIP 목록. 1-based 인덱스.
@@ -3171,13 +3201,22 @@ public class DocBinaryReader
             // 4. Phase 4 (목록) — (ilfo, ilvl) → ListMarker. 표 셀 안 단락에도 적용 가능.
             //   ※ 헤딩 단락(Outline > Body)에는 ListMarker 부여 안 함 — 워드의 헤딩 자동 번호
             //     ("2.7 Code Examples" 의 "2.7" 같은 chapter numbering) 는 ListMarker 와 별도
-            //     메커니즘(헤딩 자체 자동 번호) 으로 처리되며, 함께 부여하면 글머리표(•) + 번호(1.)
-            //     + 헤딩 폰트가 모두 표시되는 시각적 중복이 생긴다 (sample5.doc "Code Examples").
-            if (ilfo > 0 && style.Outline == OutlineLevel.Body
-                && ResolveListMarker(ilfo, ilvl) is { } marker)
+            //     메커니즘(OutlineStyleSet.Numbering) 으로 처리된다. 헤딩에 ilfo>0 이면 워드가
+            //     chapter numbering 을 쓰고 있다는 신호 → HeadingHasNumbering 플래그 세팅.
+            if (ilfo > 0)
             {
-                style.ListMarker = marker;
-                touched = true;
+                if (style.Outline == OutlineLevel.Body)
+                {
+                    if (ResolveListMarker(ilfo, ilvl) is { } marker)
+                    {
+                        style.ListMarker = marker;
+                        touched = true;
+                    }
+                }
+                else
+                {
+                    HeadingHasNumbering = true;
+                }
             }
 
             // sprmPItap 가 명시 안 되어도 InTable=true / IsTtp=true 면 1-level 표로 간주 — Word 95
