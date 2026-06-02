@@ -3169,7 +3169,12 @@ public class DocBinaryReader
             ScanListSprms(directSprms, ref ilfo, ref ilvl);
 
             // 4. Phase 4 (목록) — (ilfo, ilvl) → ListMarker. 표 셀 안 단락에도 적용 가능.
-            if (ilfo > 0 && ResolveListMarker(ilfo, ilvl) is { } marker)
+            //   ※ 헤딩 단락(Outline > Body)에는 ListMarker 부여 안 함 — 워드의 헤딩 자동 번호
+            //     ("2.7 Code Examples" 의 "2.7" 같은 chapter numbering) 는 ListMarker 와 별도
+            //     메커니즘(헤딩 자체 자동 번호) 으로 처리되며, 함께 부여하면 글머리표(•) + 번호(1.)
+            //     + 헤딩 폰트가 모두 표시되는 시각적 중복이 생긴다 (sample5.doc "Code Examples").
+            if (ilfo > 0 && style.Outline == OutlineLevel.Body
+                && ResolveListMarker(ilfo, ilvl) is { } marker)
             {
                 style.ListMarker = marker;
                 touched = true;
