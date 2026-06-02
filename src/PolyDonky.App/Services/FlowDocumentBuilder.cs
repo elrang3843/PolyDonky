@@ -414,6 +414,7 @@ public static class FlowDocumentBuilder
                     }
                     target.Add(wpfP);
                     MergeAdjacentBlockquoteMargins(target);
+                    MergeAdjacentBorderedParagraphs(target);
                     break;
                 }
 
@@ -3466,6 +3467,42 @@ public static class FlowDocumentBuilder
         if (curP.Style.QuoteLevel <= 0) return;
         if (curP.Style.QuoteLevel != prevP.Style.QuoteLevel) return;
 
+        var pm = prev.Margin;
+        prev.Margin = new Thickness(pm.Left, pm.Top, pm.Right, 0);
+        var cm = cur.Margin;
+        cur.Margin  = new Thickness(cm.Left, 0, cm.Right, cm.Bottom);
+    }
+
+    /// <summary>같은 단락 보더+배경을 가진 인접 단락의 사이 보더를 제거해 통합 박스로 보이게 한다.
+    /// 워드의 단락 보더 동작과 일치 — 코드 예제 단락 여러 줄이 하나의 박스로 둘러쌓이는 효과.
+    /// 호출 시점: 단락이 target 에 막 추가된 직후. 이전 단락의 BorderBottom 과
+    /// 현재 단락의 BorderTop 을 0 으로 만들고 단락 간 Margin 도 0 으로 줄여 시각 간격 제거.</summary>
+    private static void MergeAdjacentBorderedParagraphs(System.Collections.IList target)
+    {
+        if (target.Count < 2) return;
+        if (target[target.Count - 1] is not Wpf.Paragraph cur) return;
+        if (target[target.Count - 2] is not Wpf.Paragraph prev) return;
+        if (cur.Tag is not Paragraph curP || prev.Tag is not Paragraph prevP) return;
+
+        // 두 단락이 같은 보더+배경 속성을 가졌는지 비교.
+        var cs = curP.Style; var ps = prevP.Style;
+        bool sameBorders = cs.BorderTopPt    == ps.BorderTopPt    &&
+                           cs.BorderBottomPt == ps.BorderBottomPt &&
+                           cs.BorderLeftPt   == ps.BorderLeftPt   &&
+                           cs.BorderRightPt  == ps.BorderRightPt;
+        bool sameBg      = string.Equals(cs.BackgroundColor, ps.BackgroundColor,
+                                          System.StringComparison.OrdinalIgnoreCase);
+        // 의미 있는 보더/배경 가진 단락만 (두 단락 모두 무보더+무배경 이면 처리 안 함).
+        bool anyVisual = cs.BorderTopPt > 0 || cs.BorderBottomPt > 0 ||
+                         cs.BorderLeftPt > 0 || cs.BorderRightPt > 0 ||
+                         !string.IsNullOrEmpty(cs.BackgroundColor);
+        if (!sameBorders || !sameBg || !anyVisual) return;
+
+        // 사이 보더 제거 + 단락 간격 0.
+        var pt = prev.BorderThickness;
+        prev.BorderThickness = new Thickness(pt.Left, pt.Top, pt.Right, 0);
+        var ct = cur.BorderThickness;
+        cur.BorderThickness  = new Thickness(ct.Left, 0, ct.Right, ct.Bottom);
         var pm = prev.Margin;
         prev.Margin = new Thickness(pm.Left, pm.Top, pm.Right, 0);
         var cm = cur.Margin;
