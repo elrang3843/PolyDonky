@@ -115,6 +115,15 @@ public class DocBinaryReader
     public IReadOnlyList<OpaqueStorageInfo> PreservedRootStorages { get; private set; }
         = Array.Empty<OpaqueStorageInfo>();
 
+    // 진단용 — STSH 에서 읽은 (istd, stk, sti, name) 목록.
+    // Program.cs 의 --debug 모드에서 stderr 에 출력해 스타일 이름 확인 가능.
+    public IReadOnlyList<(int Istd, int Stk, int Sti, string? Name)> DiagStyleNames { get; private set; }
+        = Array.Empty<(int, int, int, string?)>();
+
+    // 진단용 — STTB FFN 에서 읽은 폰트 이름 목록.
+    public IReadOnlyList<string> DiagFontNames { get; private set; }
+        = Array.Empty<string>();
+
     public PolyDonkyument Read(Stream input)
     {
         // OpenMcdf 의 RootStorage 는 파일 경로 또는 Seekable Stream 을 받는데, 안전성을 위해
@@ -162,6 +171,9 @@ public class DocBinaryReader
             var (text, fcs) = ExtractTextWithFcs(wd, table, fib);
             // Phase 1b — PAPX/CHPX 바인 테이블을 한 번 로드해서 단락·문자 서식 조회에 재사용.
             var fmt = FormatStyles.Build(wd, table, fib);
+            // 진단 속성 채우기 — --debug 모드에서 Program.cs 가 출력.
+            DiagFontNames  = fmt.Fonts;
+            DiagStyleNames = fmt.StyleDiagList;
             // Phase 3e-2 — Data stream (선택적, 이미지 PICF 가 여기에). 없으면 null.
             fmt.DataStream = ReadAll(root, "Data");
             // Phase 3f / 3f-3 — OfficeArtBStoreContainer 의 FBSE 들에서 공유 BLIP 추출.
@@ -2791,6 +2803,11 @@ public class DocBinaryReader
         private readonly IReadOnlyList<string> _fonts;
         // Phase 1e — STSH (Style Sheet) 의 STD 배열. istd → sti/stk/name. null = 빈 슬롯.
         private readonly IReadOnlyList<StyleDef?> _styles;
+        // 진단용 — DocBinaryReader.DiagFontNames / DiagStyleNames 에 노출.
+        public IReadOnlyList<string> Fonts  => _fonts;
+        // 진단용: (istd, stk, sti, name) 튜플 목록.
+        public IReadOnlyList<(int Istd, int Stk, int Sti, string? Name)> StyleDiagList =>
+            _styles.Select((sd, i) => (i, sd?.Stk ?? 0, sd?.Sti ?? 0, sd?.Name)).ToList();
         // Phase 3c — PlcfSed 에서 추출한 section 경계 CP. 0 부터 시작, 마지막 = ccpText.
         public IReadOnlyList<int> SectionBoundaryCps { get; }
         // Phase 3c-2 — 각 section 의 SED (fcSepx). null = 빈 SED (default 속성 사용).
@@ -3176,12 +3193,27 @@ public class DocBinaryReader
             int ilfo = 0;   // sprmPIlfo — 1-based LFO 인덱스 (0 = 목록 아님)
             int ilvl = 0;   // sprmPIlvl — 목록 레벨 (0..8)
 
-            // 1. STSH built-in sti → Outline (Heading N → HN).
-            if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd && sd.Sti >= 1 && sd.Sti <= 9)
+            // 1a. STSH built-in sti → Outline (Heading N → HN).
+            if (istd >= 0 && istd < _styles.Count && _styles[istd] is { } sd)
             {
-                int level = Math.Min(sd.Sti, 6);
-                style.Outline = (OutlineLevel)level;
-                touched = true;
+                if (sd.Sti >= 1 && sd.Sti <= 9)
+                {
+                    int level = Math.Min(sd.Sti, 6);
+                    style.Outline = (OutlineLevel)level;
+                    touched = true;
+                }
+
+                // 1b. 스타일 이름 → CodeLanguage 감지.
+                //   "Code", "HTML Code", "HTML Preformatted", "Macro Text",
+                //   "Code Text", "Code Example", "Preformatted Text",
+                //   "Computer Text", "Plain Text", "Verbatim",
+                //   "Body Text 3"(Typewriter) 등 모노스페이스 코드 스타일.
+                //   istdBase 체인을 따라 올라가지 않고 직접 이름만 확인 — 빠른 판정.
+                if (IsCodeStyleName(sd.Name))
+                {
+                    style.CodeLanguage = "";
+                    touched = true;
+                }
             }
 
             // 2. Phase 1g — istdBase 체인을 따라 root → leaf 순으로 STD PAPX sprms + 표 sprm 적용.
@@ -3936,10 +3968,43 @@ public class DocBinaryReader
             }
         }
 
-        // [MS-DOC] §2.9.262 SttbfFfn — Word 97+ 의 폰트 이름 STTB. 각 원소는 §2.9.85 FFN.
-        // Extended STTB header (6 byte): 0xFFFF marker + cData(2) + cbExtra(2).
-        // 각 entry: cchData(2 byte, FFN 의 wide-char 수) + FFN(cchData*2 byte) + cbExtra byte.
-        // FFN 내부에서 폰트명(xszFfn) 은 offset 40 부터 null-terminated UTF-16LE.
+        // [MS-DOC] §2.9.262 SttbfFfn — Word 97+ 폰트 이름 STTB. 각 원소는 §2.9.85 FFN.
+        //
+        // ▸ Extended STTB (0xFFFF marker):
+        //     header: FF FF | cData(2) | cbExtra(2) = 6 bytes
+        //     each entry: cchData(2, UTF-16 char count of FFN) + FFN(cchData*2 bytes) + cbExtra
+        //
+        // ▸ Non-extended STTB (cData ≠ 0xFFFF):
+        //     header: cData(2) | cbExtra(2) = 4 bytes
+        //     each entry: cchData(1, BYTE count of FFN) + FFN(cchData bytes) + cbExtra
+        //
+        // FFN 고정 헤더(39 byte):
+        //   cb(1) + bits-word(2) + wWeight(2) + chs(1) + ixchSzAlt(1) + panose(8) + fs(24)
+        //   = 39 bytes → xszFfn(null-terminated UTF-16LE) 는 offset 39 부터.
+        // 단락 스타일 이름이 코드/모노스페이스 블록으로 인식될 때 true 반환.
+        // Word 에는 built-in "Code" sti 가 없으므로 이름 기반으로 감지한다.
+        private static bool IsCodeStyleName(string? name)
+        {
+            if (name is null) return false;
+            // 정확히 일치하는 잘 알려진 코드 스타일 이름 목록.
+            return name.Equals("Code",                  StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Code Text",             StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Code Example",          StringComparison.OrdinalIgnoreCase)
+                || name.Equals("HTML Code",             StringComparison.OrdinalIgnoreCase)
+                || name.Equals("HTML Preformatted",     StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Macro Text",            StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Preformatted Text",     StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Computer Text",         StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Plain Text",            StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Verbatim",              StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Source Code",           StringComparison.OrdinalIgnoreCase)
+                // "Code"로 시작하는 사용자 정의 스타일 (Code Block, Code Fragment 등).
+                || (name.StartsWith("Code ", StringComparison.OrdinalIgnoreCase) && name.Length <= 20);
+        }
+
+        //
+        // ※ PANOSE 는 8 byte (non-extended FFN 레거시) 혹은 10 byte (extended FFN) 인데
+        //   sample5.doc 등 실측 결과 39 byte 고정 헤더가 올바름.
         private static IReadOnlyList<string> ReadSttbfFfn(byte[] table, int fc, int lcb)
         {
             var fonts = new List<string>();
@@ -3951,13 +4016,14 @@ public class DocBinaryReader
             int  cbExtra;
             if (end - pos >= 6 && BitConverter.ToUInt16(table, pos) == 0xFFFF)
             {
+                // Extended STTB: 0xFFFF + cData(2) + cbExtra(2) = 6 bytes
                 extended = true;
                 cbExtra  = BitConverter.ToUInt16(table, pos + 4);
                 pos += 6;
             }
             else if (end - pos >= 4)
             {
-                // 비-extended (legacy) — Word 97+ 에서는 거의 없지만 fallback.
+                // Non-extended STTB: cData(2) + cbExtra(2) = 4 bytes
                 extended = false;
                 cbExtra  = BitConverter.ToUInt16(table, pos + 2);
                 pos += 4;
@@ -3969,20 +4035,25 @@ public class DocBinaryReader
 
             while (pos < end)
             {
-                int hdrLen = extended ? 2 : 1;
+                int hdrLen     = extended ? 2 : 1;
                 if (pos + hdrLen > end) break;
-                int cchData = extended ? BitConverter.ToUInt16(table, pos) : table[pos];
-                int ffnByteLen = cchData * 2;
+
+                int cchData    = extended ? BitConverter.ToUInt16(table, pos) : table[pos];
+                // extended: cchData = UTF-16 char count → byte length = cchData * 2
+                // non-extended: cchData = BYTE count of FFN (cchData * 1)
+                int ffnByteLen = extended ? cchData * 2 : cchData;
                 if (pos + hdrLen + ffnByteLen + cbExtra > end) break;
 
                 int ffnStart = pos + hdrLen;
-                string name = string.Empty;
-                if (ffnByteLen > 40)
+                string name  = string.Empty;
+                // FFN 고정 헤더 39 bytes 이후에 null-terminated UTF-16LE 폰트명이 온다.
+                const int FfnNameOffset = 39;
+                if (ffnByteLen > FfnNameOffset)
                 {
-                    int nameStart = ffnStart + 40;
+                    int nameStart = ffnStart + FfnNameOffset;
                     int nameMax   = ffnStart + ffnByteLen;
                     int nameEnd   = nameStart;
-                    while (nameEnd + 1 < nameMax && BitConverter.ToUInt16(table, nameEnd) != 0)
+                    while (nameEnd + 2 <= nameMax && BitConverter.ToUInt16(table, nameEnd) != 0)
                         nameEnd += 2;
                     if (nameEnd > nameStart)
                         name = Encoding.Unicode.GetString(table, nameStart, nameEnd - nameStart);
