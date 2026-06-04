@@ -328,6 +328,9 @@ internal static class TableRowSplitter
             HeightMm        = src.HeightMm,
             BackgroundColor = src.BackgroundColor,
             VerticalAlign   = src.VerticalAlign,
+            // 복제본이 원본 행을 참조 — FinishTableRowResize 가 이 체인을 따라
+            // 원본 행에 PaddingBottomMm 변경을 반영한다 (fragment 복제본만 수정하면 재빌드 시 소실).
+            SourceRow       = src,
         };
         foreach (var cell in src.Cells)
         {

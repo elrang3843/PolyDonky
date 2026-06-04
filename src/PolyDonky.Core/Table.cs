@@ -167,6 +167,13 @@ public sealed class TableRow
     /// <summary>행 기본 세로 정렬. null 이면 셀별 VerticalAlign 을 따른다.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public CellVerticalAlign? VerticalAlign { get; set; }
+
+    /// <summary>
+    /// 페이지 분할(TableRowSplitter.CloneRow)로 생성된 복제본이 원본 행을 참조.
+    /// 원본 행은 null. 직렬화에서 제외 — 런타임 전용 역참조.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TableRow? SourceRow { get; set; }
 }
 
 public sealed class TableCell

@@ -4243,13 +4243,19 @@ public partial class MainWindow : Window
         _rowRszRtb = null;
         Mouse.OverrideCursor = null;
 
-        // Core 모델에 PaddingBottomMm 반영
+        // Core 모델에 PaddingBottomMm 반영.
+        // 표가 여러 페이지에 걸치면 TableRowSplitter 가 행을 CloneRow 로 복제한다.
+        // 복제본의 Cells 만 수정하면 페이지 리빌드 시 원본 테이블에서 다시 복제되어 변경이 사라진다.
+        // SourceRow 체인을 따라 ORIGINAL(비복제) 행을 찾아 거기에 PaddingBottomMm 를 기록한다.
         if (_rowRszCore != null && _rowRszRow != null)
         {
             int ri = _rowRszRowIdx;
             if (ri >= 0 && ri < _rowRszCore.Rows.Count)
             {
+                // SourceRow 체인을 따라 원본 행 탐색 (단일 페이지 표는 SourceRow=null 이므로 즉시 종료).
                 var coreRow = _rowRszCore.Rows[ri];
+                while (coreRow.SourceRow is { } parent) coreRow = parent;
+
                 int ci = 0;
                 foreach (var wpfCell in _rowRszRow.Cells.Cast<System.Windows.Documents.TableCell>())
                 {
