@@ -4164,17 +4164,20 @@ public partial class MainWindow : Window
             static double? RowBottomY(System.Windows.Documents.TableRow r)
             {
                 if (r.Cells.Count == 0) return null;
-                var rect = r.Cells[0].ContentEnd
-                            .GetCharacterRect(System.Windows.Documents.LogicalDirection.Backward);
-                if (rect.IsEmpty) return null;
 
-                // ContentEnd의 Bottom + 이 행의 모든 셀 중 최대 PaddingBottom
-                // 패딩 조정으로 변경된 행 높이를 반영하기 위함
-                double maxPadBottom = r.Cells
-                    .Cast<System.Windows.Documents.TableCell>()
-                    .Max(c => c.Padding.Bottom);
-
-                return rect.Bottom + maxPadBottom;
+                // 모든 셀의 ContentEnd.Bottom + 각 셀 PaddingBottom 중 최댓값을 반환.
+                // 이전에는 r.Cells[0] 만 봐서 첫 셀보다 다른 셀이 더 높은 행에서
+                // RowBottomY 가 실제 시각적 하단보다 위에 계산되어 SizeNS 커서가 뜨지 않았다.
+                double maxY = double.MinValue;
+                foreach (var cell in r.Cells.Cast<System.Windows.Documents.TableCell>())
+                {
+                    var rect = cell.ContentEnd
+                                   .GetCharacterRect(System.Windows.Documents.LogicalDirection.Backward);
+                    if (rect.IsEmpty) continue;
+                    double y = rect.Bottom + cell.Padding.Bottom;
+                    if (y > maxY) maxY = y;
+                }
+                return maxY > double.MinValue ? maxY : null;
             }
 
             // 이 행의 아래 경계선 (마지막 행도 테이블 아래쪽 경계 드래그 가능)
@@ -4288,8 +4291,11 @@ public partial class MainWindow : Window
                         : null;
 
         // 현재 렌더된 열 너비 스냅샷.
-        // colIdx는 열 인덱스(WPF Columns 기준). colspan을 고려해 해당 열에
-        // ColumnSpan=1인 셀이 있는 행을 찾아 ContentStart.Left를 반환한다.
+        // colIdx 열에서 시작하는(pos == colIdx) 셀의 ContentStart.Left 를 반환한다.
+        // ColumnSpan 제한 없음 — 병합 셀이 있어도 해당 열의 왼쪽 경계를 정확히 측정하기 위해
+        // 어떤 ColumnSpan 이든 시작 위치가 colIdx 인 셀이면 사용한다.
+        // 이전에 ColumnSpan==1 만 허용했을 때는 모든 셀이 병합된 열에서 NaN 을 반환해
+        // 폴백(80 DIP) 으로 떨어지면서 드래그 시 경계선이 반대 방향으로 튀는 버그가 있었다.
         double CellLeft(int colIdx)
         {
             foreach (var r in wpfTable.RowGroups[0].Rows)
@@ -4297,14 +4303,15 @@ public partial class MainWindow : Window
                 int pos = 0;
                 foreach (var c in r.Cells)
                 {
-                    if (pos == colIdx && c.ColumnSpan == 1)
+                    if (pos == colIdx)
                     {
+                        // 이 셀이 colIdx 에서 시작 — ColumnSpan 무관하게 ContentStart.Left 사용.
                         var rect = c.ContentStart.GetCharacterRect(System.Windows.Documents.LogicalDirection.Forward);
                         if (!rect.IsEmpty) return rect.Left;
-                        break;
+                        break;  // 이 행에서 찾지 못하면 다음 행 시도
                     }
                     pos += c.ColumnSpan;
-                    if (pos > colIdx) break;
+                    if (pos > colIdx) break;  // 이 행에서 colIdx 를 이미 지나침
                 }
             }
             return double.NaN;
