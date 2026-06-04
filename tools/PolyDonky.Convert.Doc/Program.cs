@@ -151,6 +151,16 @@ try
         //   IWPF 패키지의 fidelity/capsules/msdoc/ 아래로 저장됨.
         AddDocFidelityCapsules(doc, docReader);
 
+        if (parsed.DebugLog)
+        {
+            Console.Error.WriteLine("[DEBUG] === STTB FFN 폰트 목록 ===");
+            for (int i = 0; i < docReader.DiagFontNames.Count; i++)
+                Console.Error.WriteLine($"  [{i}] {repr(docReader.DiagFontNames[i])}");
+            Console.Error.WriteLine("[DEBUG] === STSH 스타일 목록 ===");
+            foreach (var (istd, stk, sti, name) in docReader.DiagStyleNames)
+                Console.Error.WriteLine($"  [{istd:D3}] stk={stk} sti={sti:D3}  {repr(name)}");
+        }
+
         ConverterProgress.Write(80, "IWPF 로 변환 중");
         using (var ofs = File.Create(outPath))
             new IwpfWriter().Write(doc, ofs);
@@ -210,6 +220,8 @@ finally
     Console.Error.Flush();
     Console.Out.Flush();
 }
+
+static string repr(string? s) => s is null ? "(null)" : $"\"{s}\" [len={s.Length}]";
 
 static void PrintHelp()
 {
