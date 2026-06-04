@@ -29,11 +29,17 @@ Claude Code가 이 저장소에서 작업할 때 참고하는 가이드. 자세�
 ### 1. 정본은 항상 IWPF
 - HWP/DOC/HWPX/DOCX/HTML 등은 **import/export edge format**일 뿐, canonical master는 IWPF다.
 - 내부 편집·검색·분석은 모두 IWPF의 공통 모델 위에서 수행한다.
+- **import 순간 IWPF가 정본이 된다.** fidelity/import-snapshot/ 에 보존된 외부 포맷 데이터는
+  import 시점의 스냅샷일 뿐, 이후 편집 내용을 반영하지 않는다. "외부 포맷이 원본"이라는 표현은
+  오개념이므로 코드·문서·UI 어디에도 쓰지 않는다.
+- fidelity 데이터의 유일한 합법적 용도: ① 변환 품질 검증(diff/regression), ② 앱이 지원하지 않는
+  포맷 고유 기능을 export 시 복원하는 **하이브리드 export** 경로. 편집 데이터의 소스로 쓰지 않는다.
 - "외부 앱이 저장해도 보존 캡슐이 살아남는다"고 기대하지 말 것.
 
 ### 2. 2계층 설계 (반드시)
 1. **의미 계층(공통 문서 모델)** — 편집/검색/분석용. 최소공배수가 아니라 **최대상한(superset)** 으로 잡는다.
-2. **충실도 계층(fidelity capsule + 원본 내장 + provenance map)** — 역변환·무손실 보장용.
+2. **충실도 계층(fidelity capsule + import 스냅샷 + provenance map)** — 하이브리드 export·변환 검증용.
+   편집 정보의 권위 있는 출처는 절대 아니다.
 
 공통 모델만으로는 포맷 고유 기능을 못 살리므로 두 층 모두 필수.
 
@@ -53,15 +59,19 @@ ZIP 기반 OPC 유사 컨테이너. UTF-8, SHA-256 해시, 리소스 분리 저�
 ```
 iwpf/
   manifest.json
-  content/         document.json, styles.json
-  resources/       images/, ole/, fonts/
+  content/               document.json, styles.json
+  resources/             images/, ole/, fonts/
   fidelity/
-    original/      source.doc, source.hwp, ...   ← 원본 파일 내장(무손실 보증)
-    capsules/      msdoc/, hancom/, ooxml/, hwpx/  ← 포맷별 보존 캡슐
-  provenance/      source-map.json   ← 노드 ↔ 원본 위치 매핑
-  render/          layout-snapshot.json, preview.pdf
+    import-snapshot/     source.doc, source.hwp, ...  ← import 시점 스냅샷 (편집 후 stale)
+    capsules/            msdoc/, hancom/, ooxml/, hwpx/ ← 포맷별 보존 캡슐(하이브리드 export용)
+  provenance/            source-map.json   ← 노드 ↔ import 소스 위치 매핑
+  render/                layout-snapshot.json, preview.pdf
   signatures/
 ```
+
+> **fidelity 데이터 주의**: `fidelity/import-snapshot/` 의 파일은 **import 당시** 외부 포맷 그대로이며,
+> 이후 사용자가 편집하면 IWPF 콘텐츠(`content/document.json`)와 내용이 달라진다 — **stale 상태**.
+> 편집 정보의 권위 있는 출처는 오직 `content/document.json` 이다.
 
 ### 공통 모델 필수 항목
 문서 메타데이터 / 섹션·페이지 / 문단·문자 런 / 스타일 계층 / 번호·개요·목차 /
@@ -101,6 +111,9 @@ HWPX export 시 원형에 가깝게 직렬화, DOCX export 시 시각 대체(이
 1. 내부 포맷을 **DOCX XML 그대로** 쓰지 말 것 — HWPX/HWP 특성을 담을 수 없다.
 2. 내부 포맷을 **HTML 기반**으로 잡지 말 것 — 워드프로세서 기능이 계속 새어나간다.
 3. 외부 앱이 저장해도 앱 전용 확장이 보존될 거라고 기대하지 말 것.
+4. **fidelity/import-snapshot/ 을 편집 데이터의 소스로 쓰지 말 것** — import 후 편집이 진행되면
+   스냅샷은 stale 상태다. 모든 편집·내보내기는 `content/document.json` (IWPF Core 모델) 기준.
+   fidelity 데이터를 "원본"이라고 부르거나, 편집 결과를 검증하는 기준으로 삼지 않는다.
 
 ## 변환 품질을 좌우하는 4가지
 
