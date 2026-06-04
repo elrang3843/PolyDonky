@@ -48,7 +48,20 @@ Claude Code가 이 저장소에서 작업할 때 참고하는 가이드. 자세�
 - HWP, HWPX, DOC, DOCX, HTML, HTM 의 read/write 는 **별도의 command-line 컨버터 앱/모듈**로 분리해 호출한다.
 - 다른 형식으로 저장 시 사용자에게 **항상 한 번 더 확인**.
 
-### 4. 변환 품질 목표
+### 4. IWPF 전완전성(Full Editability) — 절대 명제
+> **IWPF로 변환된 모든 개체는 IWPF 규약에 따라 편집·저장이 가능해야 한다.**
+> 이것은 협상 불가능한 장기 목표다.
+
+- import 후 "편집 불가" 상태가 **영구 상태**여서는 안 된다. 기술적 이유로 당장 지원이 어려운
+  경우에만 **OpaqueBlock(보존 섬)** 으로 임시 보관하되, 반드시 후속 단계에서 편집 가능하게 끌어올린다.
+- OpaqueBlock 은 **임시 퇴피 상태**다. 지식·구현이 확보되는 시점에 해당 OpaqueBlock 타입을
+  1급 Block 서브클래스로 승격(promote)해야 한다. 영구적 OpaqueBlock 은 없다.
+- 편집 가능하지 않은 항목이 생겼을 때는 WORK_PLAN.md 의
+  "IWPF 전완전성 추적(Editability Backlog)" 섹션에 즉시 등록한다.
+- 예외: VBA 매크로·전자서명처럼 **보안 정책상** 실행을 차단하는 콘텐츠는 내용 편집이
+  불가하더라도 무관하다. 단, 그 경우에도 삭제·대체·추출은 가능해야 한다.
+
+### 5. 변환 품질 목표
 - 외부 포맷 import 시 원본 레이아웃 **99% 보존** 목표.
 - HWPX ↔ IWPF ↔ DOCX 라운드트립이 주력 시나리오.
 
@@ -87,9 +100,13 @@ iwpf/
 각 노드에 `clean` / `modified` / `opaque` / `degraded` 상태를 기록.
 수정되지 않은 노드는 원본 조각을 재사용하는 **하이브리드 export** 가 가능해야 함.
 
-### Opaque Island 정책
+### Opaque Island 정책 (임시 상태, 영구 아님)
 완전히 이해 못 한 개체는 버리지 말고 **opaque object**로 보존 — 에디터에서는 read-only,
 HWPX export 시 원형에 가깝게 직렬화, DOCX export 시 시각 대체(이미지·텍스트박스).
+
+> **중요**: OpaqueBlock 은 영구 상태가 아니다. 구현 역량이 확보되면 반드시 편집 가능한
+> 1급 Block 서브클래스로 승격해야 한다(원칙 §4 참조). 새 OpaqueBlock 타입이 생길 때마다
+> WORK_PLAN.md 백로그에 등록하고 후속 단계를 계획한다.
 
 ## 개발 단계 (구현 순서)
 
@@ -114,6 +131,9 @@ HWPX export 시 원형에 가깝게 직렬화, DOCX export 시 시각 대체(이
 4. **fidelity/import-snapshot/ 을 편집 데이터의 소스로 쓰지 말 것** — import 후 편집이 진행되면
    스냅샷은 stale 상태다. 모든 편집·내보내기는 `content/document.json` (IWPF Core 모델) 기준.
    fidelity 데이터를 "원본"이라고 부르거나, 편집 결과를 검증하는 기준으로 삼지 않는다.
+5. **"IWPF에서 영구적으로 편집 불가"인 개체를 만들지 말 것** — OpaqueBlock 은 임시 퇴피일 뿐.
+   새 OpaqueBlock 종류가 생기면 반드시 WORK_PLAN.md 백로그에 등록하고 편집 승격 계획을 세운다.
+   기술적 이유로 지금 못 하는 것과, 영원히 안 하기로 결정하는 것은 다르다. 후자는 없다.
 
 ## 변환 품질을 좌우하는 4가지
 

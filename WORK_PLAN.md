@@ -278,3 +278,49 @@ PolyDonky/
 - [x] **App.Tests 검증**: 완료 (2026-05-20)
 - [ ] **H1 MSIX 인스톨러 검증**: Windows 에서 MSIX 설치 → 앱 실행 확인.
 - [ ] **v1.1.0 릴리즈 결정**: `[Unreleased]` 내용 (DOC binary reader/writer, 충실도 캡슐, RTF 개선) 릴리즈 시 명시.
+
+---
+
+## IWPF 전완전성 추적 — Editability Backlog
+
+> **원칙(CLAUDE.md §4)**: IWPF로 변환된 모든 개체는 IWPF 규약에 따라 편집·저장이 가능해야 한다.
+> 아래 항목은 현재 편집이 완전히 지원되지 않는 것들이며, 반드시 해소해야 할 기술 부채다.
+> OpaqueBlock 으로 임시 보관 중인 것은 1급 Block 서브클래스로 승격하는 것이 목표.
+
+### G — 현재 읽기 전용(OpaqueBlock) 상태인 항목
+
+| # | Kind | Format | 설명 | 현재 상태 | 목표 |
+|---|------|--------|------|-----------|------|
+| G-01 | `drawing` (미인식) | DOCX | 이미지·차트·도형으로 변환 못 한 `<w:drawing>` | OpaqueBlock | ShapeObject / ImageBlock 승격 |
+| G-02 | `sdt` (콘텐츠 컨트롤) | DOCX | `<w:sdt>` 구조화된 문서 태그(폼 필드, 반복 섹션 등) | OpaqueBlock | FormBlock 또는 ContainerBlock 승격 |
+| G-03 | 기타 미인식 블록 | DOCX | `default` 분기에 걸리는 알 수 없는 OOXML 요소 | OpaqueBlock | 분석 후 적절한 Block 타입으로 |
+| G-04 | `\object` (OLE) | RTF/DOC | RTF `\object` 그룹 (Excel 차트, Equation 등) | OpaqueBlock | OleBlock 설계 + 시각 대체 렌더링 |
+| G-05 | 미인식 HWP/HWPX 개체 | HWP/HWPX | 파서가 이해 못 한 control/object | OpaqueBlock (계획) | HWP Phase 3 이후 승격 |
+
+### H — 편집 UI는 있으나 일부 기능 미완성인 항목
+
+| # | 항목 | 현재 상태 | 미완성 부분 | 우선순위 |
+|---|------|-----------|-------------|----------|
+| H-01 | 도형(ShapeObject) — 폴리라인/스플라인 | 기본 편집 가능 | 점 개별 이동 편집기 부분 완성 | 중 |
+| H-02 | 수식(LatexSource Run) | 인라인 렌더 | 수식 전용 편집 UI 없음 (텍스트 직접 입력만) | 높음 |
+| H-03 | 변경추적(IsInsertedRevision / IsDeletedRevision) | 데이터 보존 | 수락/거부 UI 없음 | 높음 |
+| H-04 | 주석(CommentId) | 데이터 보존 | 주석 보기·추가·삭제 UI 없음 | 높음 |
+| H-05 | 각주/미주 — 내용 편집 | 렌더·라운드트립 | 본문에서 각주 내용 인라인 편집 불가 | 중 |
+| H-06 | 필드 코드(FieldType) | 렌더 | DATE/TIME/AUTHOR 필드 수동 삽입 UI 없음 | 낮음 |
+| H-07 | TocBlock | 자동 생성 | 목차 스타일 커스터마이즈 UI 없음 | 낮음 |
+| H-08 | 표 — 행 높이(HeightMm) | DOC import | WPF FlowDocument에 HeightMm 미적용 (PaddingBottom으로만 시뮬레이션) | 중 |
+| H-09 | EMF/WMF 이미지 | placeholder 표시 | 편집 불가·렌더 미지원 | 중 |
+| H-10 | 양식·컨트롤(FormBlock 미구현) | — | 아직 Core 모델에 없음 | 낮음 |
+
+### I — 보안 정책상 실행 차단이나 삭제/대체는 가능해야 하는 항목
+
+| # | 항목 | 현재 상태 | 목표 |
+|---|------|-----------|------|
+| I-01 | VBA 매크로(FidelityCapsule) | 격리 보존, 실행 안 함 | 삭제 UI 필요 (현재 삭제 방법 없음) |
+| I-02 | 전자서명(FidelityCapsule) | 격리 보존 | 서명 정보 보기 + "서명 무효화" 경고 UI |
+
+### 작업 우선순위 가이드
+
+1. **즉시** (v1.1.x): H-02(수식 편집), H-03(변경추적 수락/거부), H-04(주석)
+2. **중기** (v1.2): G-02(SDT→FormBlock), H-01(도형 점 편집), H-05(각주 인라인 편집)
+3. **장기** (v2.0): G-04(OLE), H-09(EMF/WMF), H-10(양식/컨트롤), I-01(매크로 삭제 UI)
