@@ -2632,8 +2632,12 @@ public class DocBinaryReader
             {
                 ls.Numbering.Style  = NumberingStyle.Decimal;
                 ls.Numbering.Prefix = "";
-                ls.Numbering.Suffix = lvl == 1 ? " " : "";  // H1 만 끝에 공백, 하위는 점만
+                ls.Numbering.Suffix = "";   // 워드는 "2.1 Title" 형식 — 추가 점·공백 없음
                 ls.Numbering.RestartFromHigher = true;
+                // 워드 호환: H2~H6 는 상위 카운터를 모두 포함 ("2.1", "2.1.3" 등).
+                // H1 은 단일 카운터만 ("2") — 어차피 idx>1 일 때만 ancestor 결합되므로 모두 true 가능.
+                ls.Numbering.IncludeAncestorNumbers = true;
+                ls.Numbering.AncestorSeparator = ".";
                 ss.SetLevel(olv, ls);
             }
         }

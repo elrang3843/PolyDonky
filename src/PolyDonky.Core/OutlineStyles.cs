@@ -18,6 +18,13 @@ public sealed class OutlineNumbering
     public string Prefix { get; set; } = "";
     public string Suffix { get; set; } = ".";
     public bool RestartFromHigher { get; set; } = true;
+
+    /// <summary>워드 chapter numbering ("2.1.3" 형식) 처럼 상위 레벨 카운터를 모두 prefix 로 포함.
+    /// true 이면 H3 단락 = "[H1].[H2].[H3]" + suffix. false 이면 현재 레벨 카운터만 표시.</summary>
+    public bool IncludeAncestorNumbers { get; set; }
+
+    /// <summary>IncludeAncestorNumbers=true 일 때 카운터 사이 구분자. 기본 ".".</summary>
+    public string AncestorSeparator { get; set; } = ".";
 }
 
 public sealed class OutlineBorder

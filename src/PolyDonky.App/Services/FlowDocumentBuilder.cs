@@ -155,9 +155,25 @@ public static class FlowDocumentBuilder
                         counters[idx]++;
                         if (ls.Numbering.RestartFromHigher)
                             for (int i = idx + 1; i < counters.Length; i++) counters[i] = 0;
-                        result[p] = ls.Numbering.Prefix
-                            + FormatOutlineNumber(counters[idx], ls.Numbering.Style)
-                            + ls.Numbering.Suffix + " ";
+                        // 워드 chapter numbering 호환: IncludeAncestorNumbers=true 이면 H1 부터
+                        // 현재 레벨까지의 카운터를 모두 prefix 로 결합 ("2.1.3").
+                        string number;
+                        if (ls.Numbering.IncludeAncestorNumbers && idx > 1)
+                        {
+                            var sb = new System.Text.StringBuilder();
+                            for (int lvl = 1; lvl <= idx; lvl++)
+                            {
+                                if (counters[lvl] == 0) continue;
+                                if (sb.Length > 0) sb.Append(ls.Numbering.AncestorSeparator);
+                                sb.Append(FormatOutlineNumber(counters[lvl], ls.Numbering.Style));
+                            }
+                            number = sb.ToString();
+                        }
+                        else
+                        {
+                            number = FormatOutlineNumber(counters[idx], ls.Numbering.Style);
+                        }
+                        result[p] = ls.Numbering.Prefix + number + ls.Numbering.Suffix + " ";
                     }
                     break;
                 }
