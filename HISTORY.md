@@ -27,22 +27,28 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### 버전 정책 (중요)
 
-- **저장소의 모든 빌드는 사용자가 명시적으로 "릴리즈" 를 지시하기 전까지 테스트 버전으로 관리합니다.**
-- **테스트 빌드 태그**: `1.0.0-test.<n>` (SemVer pre-release 식별자).
-  - 예: `1.0.0-test.1`, `1.0.0-test.2`, ...
-  - 테스트 빌드의 변경 내역도 동일한 헤더(`## [1.0.0-test.N] - YYYY-MM-DD`)로 기록할 수 있고, 별도 컷이 필요 없는 작은 변경은 `[Unreleased]` 에 누적합니다.
-- **최초 정식 릴리스는 `1.0.0`** 입니다.
-  - 사용자의 명시적 릴리스 지시(예: "릴리즈하자", "1.0.0 으로 컷하자")가 있을 때만,
-    `[Unreleased]` 의 내용을 `## [1.0.0] - YYYY-MM-DD` 로 승격하고 git tag `v1.0.0` 을 생성합니다.
-  - 자동화/AI/기여자가 임의로 정식 버전 헤더를 만들거나 `v1.0.0` 태그를 붙이지 않습니다.
-- **1.0.0 이후**는 일반 [SemVer](https://semver.org/lang/ko/) 규칙(`1.0.1` / `1.1.0` / `2.0.0` ...)을 따릅니다.
-- 정식·테스트 빌드 태그가 만들어지기 전, 순수 사양·문서 단계의 작업은 본 파일 하단의 `## [Pre-release]` 섹션에 날짜별로 누적 기록합니다.
+- **프로젝트는 이미 정식 릴리스 단계입니다** — `1.0.0`(2026-05-20) 이후 `1.0.1` · `1.1.0` 을 거쳐
+  현재 `1.2.0` 까지 정식 릴리스되었습니다. 모든 변경은 [SemVer](https://semver.org/lang/ko/) 규칙
+  (`1.2.1` / `1.3.0` / `2.0.0` ...)을 따릅니다.
+  - **PATCH**(`x.y.Z`) — 하위호환 버그 수정만.
+  - **MINOR**(`x.Y.0`) — 하위호환 기능 추가(버그 수정 동반 가능).
+  - **MAJOR**(`X.0.0`) — IWPF 포맷·공개 API 의 하위호환을 깨는 변경.
+- **릴리스 컷은 메인테이너(사용자)의 명시적 지시가 있을 때만** 진행합니다.
+  - 지시가 있을 때 `[Unreleased]` 의 내용을 `## [X.Y.Z] - YYYY-MM-DD` 로 승격하고
+    git tag `vX.Y.Z` 를 생성합니다. 자동화/AI/기여자가 임의로 정식 버전 헤더를 만들거나
+    릴리스 태그를 붙이지 않습니다.
+  - 외부 배포 전 검증이 필요하면 `X.Y.Z-test.<n>` (SemVer pre-release) 로 먼저 컷한 뒤
+    검증 통과 시 정식 버전으로 승격할 수 있습니다.
 
 ---
 
 ## [Unreleased]
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
+
+---
+
+## [1.2.0] - 2026-06-05
 
 ### Fixed
 - **페이지를 넘는 표의 행 높이 드래그 결과가 저장되지 않는 문제 수정** (`Core/Table.cs`, `Pagination/TableRowSplitter.cs`, `Views/MainWindow.xaml.cs`): `TableRowSplitter.CloneRow` 가 각 페이지 조각(fragment) 의 행과 셀을 딥-카피로 복제한다. 드래그로 `PaddingBottomMm` 을 변경해도 복제본만 바뀌고, 다음 페이지 리빌드 시 원본 테이블에서 다시 복제되어 변경이 소실됐다. `TableRow.SourceRow` 역참조 프로퍼티(JsonIgnore) 를 추가하고, `CloneRow` 에서 `SourceRow = src` 를 설정한다. `FinishTableRowResize` 는 `SourceRow` 체인을 따라 원본(비복제) 행을 찾아 `PaddingBottomMm` 을 반영 — 이후 리빌드 시 원본에서 복제가 이루어지므로 변경이 정상 유지된다. 단일 페이지 표는 `SourceRow = null` 이므로 기존 동작 무변경.
@@ -76,6 +82,7 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - **수식 편집 컨텍스트 메뉴**: 본문에서 수식을 우클릭하면 "수식 편집", "수식 삭제" 항목이 나타남. `EquationWindow` 에 편집 모드(기존 IUC 제자리 교체) 생성자 추가 (`EquationWindow.xaml.cs`, `MainWindow.xaml.cs`).
 - **주석(Comment) 편집 UI**: 우클릭 → "주석 추가/편집/삭제" 메뉴 및 `CommentEditDialog` 다이얼로그 신설. 주석 참조 Run 에 노란 배경 하이라이트 (`FlowDocumentBuilder`, `CommentEditDialog.xaml.cs`, `MainWindow.xaml.cs`).
 - **EMF/WMF 메타파일 렌더링**: DOC/DOCX import 시 읽어들인 EMF·WMF 바이너리를 `System.Drawing.Imaging.Metafile` 로 오프스크린 렌더링 후 BitmapSource 로 변환해 표시. 이전에는 "[이미지]" placeholder 로만 보였음 (`FlowDocumentBuilder`).
+- **표 셀·행 속성 편집 항목 확충**: 모델·렌더러에는 있었으나 속성 창에서 편집할 수 없던 항목들을 다이얼로그에 추가했다. (1) 셀 속성 창에 **세로 정렬**(위/가운데/아래)·**셀 너비(mm)** 추가, (2) 행 속성 창에 **배경색**·**세로 정렬 기본값**(자동/위/가운데/아래, 셀 개별 설정보다 우선) 추가 (`CellPropertiesWindow`, `RowPropertiesWindow`). 외곽선 종류(실선/파선/점선/이중선/일점쇄)는 기존 `BorderSideEditor` 의 면별 설정으로 이미 편집 가능.
 
 ### Fixed
 - **FlowDocumentParser Round-Trip 손실 수정**: `ParseInline` 의 `case Wpf.Run r` 경로에서 `p.AddText()` 가 `RunStyle` 만 복사해 `IsInsertedRevision`, `IsDeletedRevision`, `RevisionAuthor`, `RevisionDate`, `CommentId`, `BookmarkStart`, `BookmarkEnd` 가 저장/편집 후 소실됐다. Tag 원본 Run 에서 직접 복원하도록 수정 (`FlowDocumentParser.cs`).
