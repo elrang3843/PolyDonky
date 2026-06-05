@@ -1,9 +1,10 @@
 <Window x:Class="PolyDonky.App.Views.RowPropertiesWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctrl="clr-namespace:PolyDonky.App.Controls"
         Title="행 속성"
-        Width="400" SizeToContent="Height"
-        MinWidth="350" MinHeight="200"
+        Width="420" SizeToContent="Height"
+        MinWidth="380" MinHeight="200"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
@@ -15,7 +16,11 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />  <!-- 높이 -->
             <RowDefinition Height="10" />
-            <RowDefinition Height="Auto" />  <!-- 머리글 -->
+            <RowDefinition Height="Auto" />  <!-- 배경색 -->
+            <RowDefinition Height="10" />
+            <RowDefinition Height="Auto" />  <!-- 세로 정렬 기본값 -->
+            <RowDefinition Height="10" />
+            <RowDefinition Height="Auto" />  <!-- 옵션(머리글) -->
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />  <!-- 버튼 -->
         </Grid.RowDefinitions>
@@ -25,13 +30,28 @@
             <TextBox x:Name="HeightBox" Height="32" Padding="8" FontSize="12" />
         </GroupBox>
 
-        <!-- ── 머리글 여부 ───────────────────────────────────────────────── -->
-        <GroupBox Grid.Row="2" Header="옵션" Padding="8,4,8,8">
+        <!-- ── 배경색 ──────────────────────────────────────────────────── -->
+        <GroupBox Grid.Row="2" Header="배경색" Padding="8,4,8,8">
+            <ctrl:ColorPickerBox x:Name="RowBgColorPicker" AllowEmpty="True" />
+        </GroupBox>
+
+        <!-- ── 세로 정렬 기본값 ─────────────────────────────────────────── -->
+        <GroupBox Grid.Row="4" Header="세로 정렬 기본값 (셀 개별 설정보다 우선)" Padding="8,4,8,8">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="RVAlignAutoRadio"   Content="자동(_A)"    IsChecked="True" Margin="0,0,12,0" />
+                <RadioButton x:Name="RVAlignTopRadio"    Content="위(_T)"                        Margin="0,0,12,0" />
+                <RadioButton x:Name="RVAlignMiddleRadio" Content="가운데(_M)"                    Margin="0,0,12,0" />
+                <RadioButton x:Name="RVAlignBottomRadio" Content="아래(_B)"                      Margin="0,0,0,0" />
+            </StackPanel>
+        </GroupBox>
+
+        <!-- ── 옵션 ─────────────────────────────────────────────────────── -->
+        <GroupBox Grid.Row="6" Header="옵션" Padding="8,4,8,8">
             <CheckBox x:Name="IsHeaderCheck" Content="머리글 행" VerticalAlignment="Center" />
         </GroupBox>
 
         <!-- ── 버튼 ─────────────────────────────────────────────────────── -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Name="OkButton" Content="확인(_O)" Width="100" Margin="0,0,5,0" />
             <Button Name="CancelButton" Content="취소(_C)" Width="100" />
         </StackPanel>

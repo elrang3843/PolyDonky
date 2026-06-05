@@ -37,6 +37,15 @@ public partial class CellPropertiesWindow : Window
             default:                    AlignLeftRadio.IsChecked    = true; break;
         }
 
+        switch (_cell.VerticalAlign)
+        {
+            case CellVerticalAlign.Middle: VAlignMiddleRadio.IsChecked = true; break;
+            case CellVerticalAlign.Bottom: VAlignBottomRadio.IsChecked = true; break;
+            default:                       VAlignTopRadio.IsChecked    = true; break;
+        }
+
+        CellWidthBox.Text = _cell.WidthMm > 0 ? _cell.WidthMm.ToString("F1") : "0";
+
         PadTopBox.Text    = _cell.PaddingTopMm    > 0 ? _cell.PaddingTopMm.ToString("F1")    : "0";
         PadBottomBox.Text = _cell.PaddingBottomMm > 0 ? _cell.PaddingBottomMm.ToString("F1") : "0";
         PadLeftBox.Text   = _cell.PaddingLeftMm   > 0 ? _cell.PaddingLeftMm.ToString("F1")   : "0";
@@ -69,6 +78,14 @@ public partial class CellPropertiesWindow : Window
 
     private void OnOkClick(object sender, RoutedEventArgs e)
     {
+        if (!TryParseNonNegMm(CellWidthBox.Text, out double cellWidth))
+        {
+            MessageBox.Show(this, "셀 너비는 0 이상의 숫자(mm)로 입력하세요.", "셀 속성",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            CellWidthBox.Focus();
+            return;
+        }
+
         if (!TryParseNonNegMm(PadTopBox.Text,    out double padTop)    ||
             !TryParseNonNegMm(PadBottomBox.Text, out double padBottom) ||
             !TryParseNonNegMm(PadLeftBox.Text,   out double padLeft)   ||
@@ -109,6 +126,12 @@ public partial class CellPropertiesWindow : Window
                         : AlignRightRadio.IsChecked   == true ? CellTextAlign.Right
                         : AlignJustifyRadio.IsChecked == true ? CellTextAlign.Justify
                         : CellTextAlign.Left;
+
+        _cell.VerticalAlign = VAlignMiddleRadio.IsChecked == true ? CellVerticalAlign.Middle
+                            : VAlignBottomRadio.IsChecked == true ? CellVerticalAlign.Bottom
+                            : CellVerticalAlign.Top;
+
+        _cell.WidthMm = cellWidth;
 
         _cell.PaddingTopMm    = padTop;
         _cell.PaddingBottomMm = padBottom;

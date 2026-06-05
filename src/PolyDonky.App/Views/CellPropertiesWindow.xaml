@@ -16,7 +16,11 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />  <!-- 배경색 -->
             <RowDefinition Height="10" />
-            <RowDefinition Height="Auto" />  <!-- 텍스트 정렬 -->
+            <RowDefinition Height="Auto" />  <!-- 가로 정렬 -->
+            <RowDefinition Height="10" />
+            <RowDefinition Height="Auto" />  <!-- 세로 정렬 -->
+            <RowDefinition Height="10" />
+            <RowDefinition Height="Auto" />  <!-- 셀 너비 -->
             <RowDefinition Height="10" />
             <RowDefinition Height="Auto" />  <!-- 여백 -->
             <RowDefinition Height="10" />
@@ -30,8 +34,8 @@
             <ctrl:ColorPickerBox x:Name="BgColorPicker" AllowEmpty="True" />
         </GroupBox>
 
-        <!-- ── 텍스트 정렬 ─────────────────────────────────────────────── -->
-        <GroupBox Grid.Row="2" Header="텍스트 정렬" Padding="8,4,8,8">
+        <!-- ── 가로 정렬 ─────────────────────────────────────────────── -->
+        <GroupBox Grid.Row="2" Header="가로 정렬" Padding="8,4,8,8">
             <StackPanel Orientation="Horizontal">
                 <RadioButton x:Name="AlignLeftRadio"    Content="왼쪽(_L)"    IsChecked="True" Margin="0,0,12,0" />
                 <RadioButton x:Name="AlignCenterRadio"  Content="가운데(_C)"                    Margin="0,0,12,0" />
@@ -40,8 +44,31 @@
             </StackPanel>
         </GroupBox>
 
+        <!-- ── 세로 정렬 ─────────────────────────────────────────────── -->
+        <GroupBox Grid.Row="4" Header="세로 정렬" Padding="8,4,8,8">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="VAlignTopRadio"    Content="위(_T)"      IsChecked="True" Margin="0,0,12,0" />
+                <RadioButton x:Name="VAlignMiddleRadio" Content="가운데(_M)"                   Margin="0,0,12,0" />
+                <RadioButton x:Name="VAlignBottomRadio" Content="아래(_B)"                     Margin="0,0,0,0" />
+            </StackPanel>
+        </GroupBox>
+
+        <!-- ── 셀 너비 (mm) ───────────────────────────────────────────────── -->
+        <GroupBox Grid.Row="6" Header="셀 너비 (mm, 0=열 정의 따름)" Padding="8,4,8,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="52" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0" x:Name="CellWidthBox"
+                         Text="0" TextAlignment="Right" VerticalContentAlignment="Center" />
+                <TextBlock Grid.Column="1" Text=" mm" VerticalAlignment="Center"
+                           Foreground="{DynamicResource OnSurfaceMuted}" />
+            </Grid>
+        </GroupBox>
+
         <!-- ── 여백 (mm) ───────────────────────────────────────────────── -->
-        <GroupBox Grid.Row="4" Header="여백 (mm)" Padding="8,4,8,8">
+        <GroupBox Grid.Row="8" Header="여백 (mm)" Padding="8,4,8,8">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -71,7 +98,7 @@
         </GroupBox>
 
         <!-- ── 테두리 — 공통 + 면별 ────────────────────────────────────────── -->
-        <GroupBox Grid.Row="6" Header="테두리" Padding="8,4,8,8">
+        <GroupBox Grid.Row="10" Header="테두리" Padding="8,4,8,8">
             <StackPanel>
                 <!-- 공통값 — 면별 미지정 시 적용 -->
                 <Grid>
@@ -113,7 +140,7 @@
         </GroupBox>
 
         <!-- ── 버튼 ─────────────────────────────────────────────────────── -->
-        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="12" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="확인(_O)"
                     Width="88" Height="30"
                     IsDefault="True"
