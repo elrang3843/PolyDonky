@@ -504,7 +504,20 @@ public static class FlowDocumentParser
                 // Tag 에 원본 Run 이 있으면 그 RunStyle 을 base 로 두고 변경된 속성만 덮어쓴다.
                 var seed = r.Tag is Run original ? Clone(original.Style) : Clone(baseStyle);
                 ExtractRunStyle(r, seed);
-                p.AddText(r.Text, seed);
+                // AddText 는 RunStyle 만 복사한다. 변경추적·주석·책갈피 등 비-스타일 메타 필드는
+                // Tag 원본에서 직접 복원해야 라운드트립 시 유실되지 않는다.
+                var newRun = new Run { Text = r.Text, Style = seed };
+                if (r.Tag is Run origMeta)
+                {
+                    newRun.IsInsertedRevision = origMeta.IsInsertedRevision;
+                    newRun.IsDeletedRevision  = origMeta.IsDeletedRevision;
+                    newRun.RevisionAuthor     = origMeta.RevisionAuthor;
+                    newRun.RevisionDate       = origMeta.RevisionDate;
+                    newRun.CommentId          = origMeta.CommentId;
+                    newRun.BookmarkStart      = origMeta.BookmarkStart;
+                    newRun.BookmarkEnd        = origMeta.BookmarkEnd;
+                }
+                p.Runs.Add(newRun);
                 break;
             }
             case Wpf.InlineUIContainer iuc:

@@ -1841,7 +1841,13 @@ public static class FlowDocumentBuilder
             return new Wpf.BlockUIContainer(wrappedSvg) { Tag = image, Margin = svgMargin };
         }
 
+        // EMF/WMF 메타파일: System.Drawing.Imaging.Metafile 로 오프스크린 렌더링.
+        // UseWindowsForms=true 가 System.Drawing.Common 을 이미 포함하므로 추가 패키지 불필요.
         WpfMedia.Imaging.BitmapSource? bitmap = null;
+        if (IsMetafileData(image.MediaType, image.Data))
+            bitmap = TryRenderMetafile(image.Data, image.WidthMm, image.HeightMm);
+
+        if (bitmap is null)
         try
         {
             // OnLoad + 명시 Dispose: EndInit 단계에서 BitmapImage 가 내부 캐시로 데이터를 복사하므로
@@ -3657,6 +3663,42 @@ public static class FlowDocumentBuilder
 
         wpfRun.Tag = run;
 
+        // ── 변경추적 시각화 ──────────────────────────────────────────────────────
+        // 삽입 revision → 초록 밑줄, 삭제 revision → 빨간 취소선.
+        // 기존 RunStyle 에서 이미 Foreground 가 지정된 경우에는 색상을 덮어쓰지 않는다.
+        if (run.IsInsertedRevision)
+        {
+            var insDec = new TextDecorationCollection();
+            foreach (var d in TextDecorations.Underline) insDec.Add(d);
+            if (wpfRun.TextDecorations is { Count: > 0 } prevDec)
+                foreach (var d in prevDec) insDec.Add(d);
+            wpfRun.TextDecorations = insDec;
+            if (run.Style.Foreground is null)
+                wpfRun.Foreground = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0x0A, 0x84, 0x0A));
+            var insTip = "삽입된 텍스트";
+            if (run.RevisionAuthor is { Length: > 0 } ra)  insTip += $" — {ra}";
+            if (run.RevisionDate   is { } rd)               insTip += $" ({rd:yyyy-MM-dd})";
+            wpfRun.ToolTip = insTip;
+        }
+        else if (run.IsDeletedRevision)
+        {
+            var delDec = new TextDecorationCollection();
+            foreach (var d in TextDecorations.Strikethrough) delDec.Add(d);
+            if (wpfRun.TextDecorations is { Count: > 0 } prevDec2)
+                foreach (var d in prevDec2) delDec.Add(d);
+            wpfRun.TextDecorations = delDec;
+            if (run.Style.Foreground is null)
+                wpfRun.Foreground = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromRgb(0xCC, 0x00, 0x00));
+            var delTip = "삭제된 텍스트";
+            if (run.RevisionAuthor is { Length: > 0 } ra2) delTip += $" — {ra2}";
+            if (run.RevisionDate   is { } rd2)              delTip += $" ({rd2:yyyy-MM-dd})";
+            wpfRun.ToolTip = delTip;
+        }
+
+        // 주석 참조 런: 노란 배경 하이라이트 (모델 배경색이 없을 때만 적용).
+        if (run.CommentId is { Length: > 0 } && run.Style.Background is null)
+            wpfRun.Background = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(100, 0xFF, 0xEC, 0x00));
+
         // URL 이 있으면 WPF Hyperlink 로 감쌈 — Tag 에 원본 Run 보관(파서 라운드트립용).
         if (run.Url is { Length: > 0 } url)
         {
@@ -3950,5 +3992,67 @@ public static class FlowDocumentBuilder
             tb.Background = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(bg.A, bg.R, bg.G, bg.B));
         if (s.FontVariantSmallCaps)
             Wpf.Typography.SetCapitals(tb, System.Windows.FontCapitals.SmallCaps);
+    }
+
+    // ── EMF / WMF 메타파일 렌더링 ─────────────────────────────────────────────
+
+    /// <summary>
+    /// MediaType 또는 데이터 매직 바이트로 EMF/WMF 여부를 판단한다.
+    /// </summary>
+    private static bool IsMetafileData(string mediaType, byte[] data)
+    {
+        if (data.Length < 4) return false;
+        var mt = mediaType.ToLowerInvariant();
+        if (mt.Contains("emf") || mt.Contains("wmf") || mt.Contains("metafile"))
+            return true;
+        // EMF 헤더: RecordType = EMR_HEADER = 1 (DWORD LE)
+        if (data[0] == 0x01 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x00)
+            return true;
+        // WMF placeable 헤더 매직: 0x9AC6CDD7 (LE → D7 CD C6 9A)
+        if (data[0] == 0xD7 && data[1] == 0xCD && data[2] == 0xC6 && data[3] == 0x9A)
+            return true;
+        return false;
+    }
+
+    /// <summary>
+    /// System.Drawing.Imaging.Metafile 로 오프스크린 렌더링 후 WPF BitmapSource 로 변환.
+    /// PNG 경유 변환으로 P/Invoke(DeleteObject) 없이 처리한다.
+    /// 실패 시 null 반환 — 호출자가 placeholder 로 폴백.
+    /// </summary>
+    private static WpfMedia.Imaging.BitmapSource? TryRenderMetafile(
+        byte[] data, double widthMm, double heightMm)
+    {
+        try
+        {
+            const double PxPerMm = 96.0 / 25.4;
+            int w = Math.Max(1, (int)Math.Round(widthMm  > 0 ? widthMm  * PxPerMm : 200));
+            int h = Math.Max(1, (int)Math.Round(heightMm > 0 ? heightMm * PxPerMm : 150));
+
+            using var ms   = new MemoryStream(data, false);
+            using var meta = new System.Drawing.Imaging.Metafile(ms);
+            using var bmp  = new System.Drawing.Bitmap(w, h,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using var g    = System.Drawing.Graphics.FromImage(bmp);
+            g.Clear(System.Drawing.Color.White);
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode     = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawImage(meta, new System.Drawing.Rectangle(0, 0, w, h));
+
+            // System.Drawing.Bitmap → WPF BitmapSource via PNG round-trip (P/Invoke 불필요).
+            using var pngStream = new MemoryStream();
+            bmp.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
+            pngStream.Position = 0;
+
+            var wpfBmp = new WpfMedia.Imaging.BitmapImage();
+            wpfBmp.BeginInit();
+            wpfBmp.CacheOption  = WpfMedia.Imaging.BitmapCacheOption.OnLoad;
+            wpfBmp.StreamSource = pngStream;
+            wpfBmp.EndInit();
+            return wpfBmp;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

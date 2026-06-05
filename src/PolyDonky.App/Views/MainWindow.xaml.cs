@@ -4008,6 +4008,293 @@ public partial class MainWindow : Window
         return (null, false);
     }
 
+    // ── 수식 / 변경추적 / 주석 캐럿 탐색 ───────────────────────────────────
+
+    private static (WpfDocs.InlineUIContainer iuc, PolyDonky.Core.Run run)?
+        FindEquationAtCaret(RichTextBox editor)
+    {
+        var tp = editor.CaretPosition;
+        foreach (var dir in new[] { WpfDocs.LogicalDirection.Backward, WpfDocs.LogicalDirection.Forward })
+        {
+            var adj = tp.GetAdjacentElement(dir);
+            if (adj is WpfDocs.InlineUIContainer iuc &&
+                iuc.Tag is PolyDonky.Core.Run run && run.LatexSource is { Length: > 0 })
+                return (iuc, run);
+        }
+        return null;
+    }
+
+    private static WpfDocs.Run? FindRevisionRunAtCaret(RichTextBox editor)
+    {
+        if (editor.CaretPosition.Parent is WpfDocs.Run wr &&
+            wr.Tag is PolyDonky.Core.Run core &&
+            (core.IsInsertedRevision || core.IsDeletedRevision))
+            return wr;
+        return null;
+    }
+
+    private static (string commentId, WpfDocs.Run wpfRun)?
+        FindCommentAtCaret(RichTextBox editor)
+    {
+        if (editor.CaretPosition.Parent is WpfDocs.Run wr &&
+            wr.Tag is PolyDonky.Core.Run core &&
+            core.CommentId is { Length: > 0 } cid)
+            return (cid, wr);
+        return null;
+    }
+
+    // ── 수식 편집/삭제 ───────────────────────────────────────────────────────
+
+    private void EditEquationFromMenu(
+        WpfDocs.InlineUIContainer iuc, PolyDonky.Core.Run equationRun)
+    {
+        var dlg = new EquationWindow(iuc, equationRun) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+        // IUC.Child 와 Tag 는 EquationWindow.ReplaceEquationInIuc 가 이미 갱신한 상태.
+        BeginUndoableAction();
+        RebuildAfterInlineChange();
+    }
+
+    private void DeleteEquationFromMenu(WpfDocs.InlineUIContainer iuc)
+    {
+        BeginUndoableAction();
+        if (iuc.Parent is WpfDocs.Paragraph para)
+            para.Inlines.Remove(iuc);
+        else if (iuc.Parent is WpfDocs.Span span)
+            span.Inlines.Remove(iuc);
+        RebuildAfterInlineChange();
+    }
+
+    // ── 변경추적 수락/거부 ───────────────────────────────────────────────────
+
+    private void AcceptRevision(WpfDocs.Run wpfRun)
+    {
+        if (wpfRun.Tag is not PolyDonky.Core.Run core) return;
+        BeginUndoableAction();
+        if (core.IsInsertedRevision)
+        {
+            // 삽입 수락: 삽입 표시만 제거, 텍스트는 유지
+            core.IsInsertedRevision = false;
+            core.RevisionAuthor     = null;
+            core.RevisionDate       = null;
+        }
+        else if (core.IsDeletedRevision)
+        {
+            // 삭제 수락: 해당 Run 을 FlowDocument 에서 제거
+            if (wpfRun.Parent is WpfDocs.Paragraph para)
+                para.Inlines.Remove(wpfRun);
+        }
+        RebuildAfterInlineChange();
+    }
+
+    private void RejectRevision(WpfDocs.Run wpfRun)
+    {
+        if (wpfRun.Tag is not PolyDonky.Core.Run core) return;
+        BeginUndoableAction();
+        if (core.IsInsertedRevision)
+        {
+            // 삽입 거부: 해당 Run 을 FlowDocument 에서 제거
+            if (wpfRun.Parent is WpfDocs.Paragraph para)
+                para.Inlines.Remove(wpfRun);
+        }
+        else if (core.IsDeletedRevision)
+        {
+            // 삭제 거부: 삭제 표시만 제거, 텍스트는 유지
+            core.IsDeletedRevision = false;
+            core.RevisionAuthor    = null;
+            core.RevisionDate      = null;
+        }
+        RebuildAfterInlineChange();
+    }
+
+    private bool HasAnyRevisions()
+    {
+        if (_viewModel is null) return false;
+        foreach (var sec in _viewModel.Document.Sections)
+            foreach (var b in sec.Blocks)
+                if (b is PolyDonky.Core.Paragraph p &&
+                    p.Runs.Any(r => r.IsInsertedRevision || r.IsDeletedRevision))
+                    return true;
+        return false;
+    }
+
+    private void AcceptAllRevisions()
+    {
+        if (_viewModel is null) return;
+        BeginUndoableAction();
+        foreach (var sec in _viewModel.Document.Sections)
+            foreach (var b in sec.Blocks)
+                if (b is PolyDonky.Core.Paragraph p)
+                {
+                    // 삭제된 Run 목록 수집 후 제거 (반복 중 수정 방지)
+                    var toRemove = p.Runs.Where(r => r.IsDeletedRevision).ToList();
+                    foreach (var r in toRemove) p.Runs.Remove(r);
+                    // 삽입된 Run: 표시만 제거
+                    foreach (var r in p.Runs.Where(r => r.IsInsertedRevision))
+                    {
+                        r.IsInsertedRevision = false;
+                        r.RevisionAuthor     = null;
+                        r.RevisionDate       = null;
+                    }
+                }
+        // 모델이 직접 수정됐으므로 SetupPageEditors 로 FlowDocument 재빌드
+        var fresh = _viewModel.Document;
+        _currentPaginatedDoc = PaginateDoc(fresh);
+        SetupPageEditors();
+        RebuildOverlays();
+        _viewModel.MarkDirty();
+    }
+
+    private void RejectAllRevisions()
+    {
+        if (_viewModel is null) return;
+        BeginUndoableAction();
+        foreach (var sec in _viewModel.Document.Sections)
+            foreach (var b in sec.Blocks)
+                if (b is PolyDonky.Core.Paragraph p)
+                {
+                    var toRemove = p.Runs.Where(r => r.IsInsertedRevision).ToList();
+                    foreach (var r in toRemove) p.Runs.Remove(r);
+                    foreach (var r in p.Runs.Where(r => r.IsDeletedRevision))
+                    {
+                        r.IsDeletedRevision = false;
+                        r.RevisionAuthor    = null;
+                        r.RevisionDate      = null;
+                    }
+                }
+        var fresh = _viewModel.Document;
+        _currentPaginatedDoc = PaginateDoc(fresh);
+        SetupPageEditors();
+        RebuildOverlays();
+        _viewModel.MarkDirty();
+    }
+
+    // ── 주석 추가/편집/삭제 ──────────────────────────────────────────────────
+
+    private void OpenCommentAdd()
+    {
+        if (_viewModel is null) return;
+        var author = _viewModel.Document.Metadata.Author ?? string.Empty;
+        var dlg = new CommentEditDialog(author) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+
+        var editor = GetActiveTextEditor();
+        if (editor.Selection.IsEmpty && editor.CaretPosition.Parent is not WpfDocs.Run)
+            return;
+
+        BeginUndoableAction();
+
+        var commentId = "cmt-" + Guid.NewGuid().ToString("N")[..8];
+        var entry = new PolyDonky.Core.CommentEntry
+        {
+            Id     = commentId,
+            Author = dlg.ResultAuthor,
+            Date   = DateTimeOffset.Now,
+            Blocks = new List<PolyDonky.Core.Block>
+            {
+                PolyDonky.Core.Paragraph.Of(dlg.ResultContent),
+            },
+        };
+        _viewModel.Document.Comments.Add(entry);
+
+        // 선택 영역이 있으면 선택된 Run 들에 CommentId 달기, 없으면 캐럿 위치 Run
+        if (!editor.Selection.IsEmpty)
+        {
+            var selStart = editor.Selection.Start;
+            var selEnd   = editor.Selection.End;
+            var tp = selStart;
+            while (tp is not null && tp.CompareTo(selEnd) < 0)
+            {
+                if (tp.Parent is WpfDocs.Run wr && wr.Tag is PolyDonky.Core.Run cr)
+                    cr.CommentId = commentId;
+                tp = tp.GetNextContextPosition(WpfDocs.LogicalDirection.Forward);
+            }
+        }
+        else if (editor.CaretPosition.Parent is WpfDocs.Run caretRun &&
+                 caretRun.Tag is PolyDonky.Core.Run caretCore)
+        {
+            caretCore.CommentId = commentId;
+        }
+
+        RebuildAfterInlineChange();
+    }
+
+    private void OpenCommentEdit(string commentId)
+    {
+        if (_viewModel is null) return;
+        var entry = _viewModel.Document.Comments.FirstOrDefault(c => c.Id == commentId);
+        if (entry is null) return;
+
+        var dlg = new CommentEditDialog(entry) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+
+        BeginUndoableAction();
+        entry.Author = dlg.ResultAuthor;
+        entry.Date   = DateTimeOffset.Now;
+        entry.Blocks = new List<PolyDonky.Core.Block>
+        {
+            PolyDonky.Core.Paragraph.Of(dlg.ResultContent),
+        };
+        _viewModel.MarkDirty();
+    }
+
+    private void DeleteComment(string commentId, WpfDocs.Run wpfRun)
+    {
+        if (_viewModel is null) return;
+        BeginUndoableAction();
+
+        // 모델에서 주석 항목 제거
+        var entry = _viewModel.Document.Comments.FirstOrDefault(c => c.Id == commentId);
+        if (entry is not null) _viewModel.Document.Comments.Remove(entry);
+
+        // FlowDocument 내 모든 CommentId 참조 제거
+        foreach (var rtb in PageEditorHost.PageEditors)
+            ClearCommentIdInDocument(rtb.Document, commentId);
+
+        RebuildAfterInlineChange();
+    }
+
+    private static void ClearCommentIdInDocument(
+        WpfDocs.FlowDocument fd, string commentId)
+    {
+        foreach (var b in fd.Blocks)
+            ClearCommentIdInBlock(b, commentId);
+    }
+
+    private static void ClearCommentIdInBlock(WpfDocs.Block b, string commentId)
+    {
+        switch (b)
+        {
+            case WpfDocs.Paragraph para:
+                foreach (var inline in para.Inlines)
+                    if (inline is WpfDocs.Run wr && wr.Tag is PolyDonky.Core.Run cr &&
+                        cr.CommentId == commentId)
+                        cr.CommentId = null;
+                break;
+            case WpfDocs.Section sec:
+                foreach (var child in sec.Blocks) ClearCommentIdInBlock(child, commentId);
+                break;
+            case WpfDocs.Table table:
+                foreach (var rg in table.RowGroups)
+                    foreach (var row in rg.Rows)
+                        foreach (var cell in row.Cells)
+                            foreach (var cb in cell.Blocks)
+                                ClearCommentIdInBlock(cb, commentId);
+                break;
+        }
+    }
+
+    // ── 인라인 변경 후 리빌드 ────────────────────────────────────────────────
+
+    private void RebuildAfterInlineChange()
+    {
+        var fresh = ParseAllPageEditors();
+        _currentPaginatedDoc = PaginateDoc(fresh);
+        SetupPageEditors();
+        RebuildOverlays();
+        _viewModel?.MarkDirty();
+    }
+
     // ── 표 열 너비 드래그 리사이즈 ────────────────────────────────────────────
 
     private bool TryHitTableColumnBorder(Point pt,
@@ -4674,6 +4961,62 @@ public partial class MainWindow : Window
             var miEnInsert = new System.Windows.Controls.MenuItem { Header = "미주 삽입(_N)" };
             miEnInsert.Click += OnInsertEndnote;
             menu.Items.Add(miEnInsert);
+        }
+
+        // ── 수식 컨텍스트 ────────────────────────────────────────────────────
+        var eqAtCaret = FindEquationAtCaret(BodyEditor);
+        if (eqAtCaret.HasValue)
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var miEqEdit = new System.Windows.Controls.MenuItem { Header = "수식 편집(_E)..." };
+            miEqEdit.Click += (_, _) => EditEquationFromMenu(eqAtCaret.Value.iuc, eqAtCaret.Value.run);
+            menu.Items.Add(miEqEdit);
+            var miEqDel = new System.Windows.Controls.MenuItem { Header = "수식 삭제(_D)" };
+            miEqDel.Click += (_, _) => DeleteEquationFromMenu(eqAtCaret.Value.iuc);
+            menu.Items.Add(miEqDel);
+        }
+
+        // ── 변경추적 컨텍스트 ────────────────────────────────────────────────
+        var revRun = FindRevisionRunAtCaret(BodyEditor);
+        if (revRun is not null)
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var miAccept = new System.Windows.Controls.MenuItem { Header = "변경 수락(_A)" };
+            miAccept.Click += (_, _) => AcceptRevision(revRun);
+            menu.Items.Add(miAccept);
+            var miReject = new System.Windows.Controls.MenuItem { Header = "변경 거부(_R)" };
+            miReject.Click += (_, _) => RejectRevision(revRun);
+            menu.Items.Add(miReject);
+        }
+        else if (HasAnyRevisions())
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var miAcceptAll = new System.Windows.Controls.MenuItem { Header = "모든 변경 수락(_A)" };
+            miAcceptAll.Click += (_, _) => AcceptAllRevisions();
+            menu.Items.Add(miAcceptAll);
+            var miRejectAll = new System.Windows.Controls.MenuItem { Header = "모든 변경 거부(_R)" };
+            miRejectAll.Click += (_, _) => RejectAllRevisions();
+            menu.Items.Add(miRejectAll);
+        }
+
+        // ── 주석 컨텍스트 ────────────────────────────────────────────────────
+        var cmtAtCaret = FindCommentAtCaret(BodyEditor);
+        if (cmtAtCaret.HasValue)
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var miCmtEdit = new System.Windows.Controls.MenuItem { Header = "주석 편집(_C)..." };
+            miCmtEdit.Click += (_, _) => OpenCommentEdit(cmtAtCaret.Value.commentId);
+            menu.Items.Add(miCmtEdit);
+            var miCmtDel = new System.Windows.Controls.MenuItem { Header = "주석 삭제(_X)" };
+            miCmtDel.Click += (_, _) => DeleteComment(cmtAtCaret.Value.commentId, cmtAtCaret.Value.wpfRun);
+            menu.Items.Add(miCmtDel);
+        }
+        else
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var miCmtAdd = new System.Windows.Controls.MenuItem { Header = "주석 추가(_C)..." };
+            miCmtAdd.Click += (_, _) => OpenCommentAdd();
+            menu.Items.Add(miCmtAdd);
         }
 
         var miFormatPara = new System.Windows.Controls.MenuItem

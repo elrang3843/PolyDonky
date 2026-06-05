@@ -9,14 +9,36 @@ namespace PolyDonky.App.Views;
 
 public partial class EquationWindow : Window
 {
-    private readonly RichTextBox _editor;
+    private readonly RichTextBox? _editor;
 
+    // 편집 모드 전용 상태
+    private bool _isEditMode;
+    private InlineUIContainer? _iucToEdit;
+    private CoreRun? _runToEdit;
+
+    /// <summary>수식 삽입 모드 — RichTextBox 캐럿 위치에 새 수식을 삽입한다.</summary>
     public EquationWindow(RichTextBox editor)
     {
         InitializeComponent();
         _editor = editor;
         BuildQuickPalette();
         SourceText.Text = @"E = mc^2";
+        UpdatePreview();
+        Loaded += (_, _) => SourceText.Focus();
+    }
+
+    /// <summary>수식 편집 모드 — 기존 InlineUIContainer 의 수식을 교체한다.</summary>
+    public EquationWindow(InlineUIContainer iucToEdit, CoreRun runToEdit)
+    {
+        InitializeComponent();
+        _isEditMode  = true;
+        _iucToEdit   = iucToEdit;
+        _runToEdit   = runToEdit;
+        BuildQuickPalette();
+        SourceText.Text     = runToEdit.LatexSource ?? string.Empty;
+        RbDisplay.IsChecked = runToEdit.IsDisplayEquation;
+        Title               = "수식 편집";
+        BtnOk.Content       = "적용(_A)";
         UpdatePreview();
         Loaded += (_, _) => SourceText.Focus();
     }
@@ -101,9 +123,34 @@ public partial class EquationWindow : Window
             return;
         }
 
-        InsertEquationInline(_editor, src, isDisplay: RbDisplay.IsChecked == true);
+        bool isDisplay = RbDisplay.IsChecked == true;
+        if (_isEditMode && _iucToEdit is not null && _runToEdit is not null)
+            ReplaceEquationInIuc(_iucToEdit, _runToEdit, src, isDisplay);
+        else if (_editor is not null)
+            InsertEquationInline(_editor, src, isDisplay);
+
         DialogResult = true;
         Close();
+    }
+
+    /// <summary>
+    /// 기존 수식 InlineUIContainer 를 제자리에서 교체한다.
+    /// 새 Image 를 생성해 oldIuc.Child 를 교체하고, Tag(Core.Run) 의 LatexSource 를 갱신한다.
+    /// </summary>
+    private static void ReplaceEquationInIuc(
+        InlineUIContainer oldIuc, CoreRun runToEdit, string newLatex, bool isDisplay)
+    {
+        var img = FlowDocumentBuilder.RenderEquationToImage(newLatex, isDisplay ? 18.0 : 14.0);
+        if (img is null) return;
+
+        runToEdit.LatexSource       = newLatex;
+        runToEdit.IsDisplayEquation = isDisplay;
+
+        var (open, close) = isDisplay ? (@"\[", @"\]") : (@"\(", @"\)");
+        runToEdit.Text    = $"{open}{newLatex}{close}";
+
+        oldIuc.Child = img;
+        // Tag 는 이미 runToEdit 를 가리키므로 재설정 불필요 (FlowDocumentParser 가 그대로 회수)
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();

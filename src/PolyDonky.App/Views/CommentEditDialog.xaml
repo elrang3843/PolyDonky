@@ -1,0 +1,72 @@
+<Window x:Class="PolyDonky.App.Views.CommentEditDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="주석"
+        Width="460" Height="320"
+        MinWidth="340" MinHeight="240"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        FontFamily="{DynamicResource UiFont}"
+        Background="{DynamicResource Surface}"
+        Foreground="{DynamicResource OnSurface}">
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 작성자 -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="60" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="작성자" VerticalAlignment="Center" />
+            <TextBox   Grid.Column="1" x:Name="AuthorBox" />
+        </Grid>
+
+        <!-- 날짜 (읽기 전용 표시) -->
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="60" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="날짜" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" x:Name="DateLabel"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource OnSurfaceMuted}" />
+        </Grid>
+
+        <!-- 주석 내용 -->
+        <Grid Grid.Row="2" Margin="0,0,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Text="내용" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <TextBox   Grid.Row="1" x:Name="ContentBox"
+                       AcceptsReturn="True"
+                       TextWrapping="Wrap"
+                       VerticalScrollBarVisibility="Auto" />
+        </Grid>
+
+        <!-- 버튼 -->
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button Content="확인(_O)"
+                    Width="80" Height="28"
+                    Click="OnOkClick"
+                    IsDefault="True"
+                    Margin="0,0,8,0" />
+            <Button Content="취소"
+                    Width="80" Height="28"
+                    Click="OnCancelClick"
+                    IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>

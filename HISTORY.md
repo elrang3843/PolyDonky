@@ -72,6 +72,13 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 - DOC 표 열 너비·행 높이·표 폭 정밀 복원: `sprmTDyaRowHeight`(0x9407) → `TableRow.HeightMm`, `sprmTTableWidth`(0xF614) → `Table.WidthMm`, `sprmTTableInd`(0xF661) → `Table.OuterMarginLeftMm` 파싱 추가; 각 행별 `rgdxa`로 `TableCell.WidthMm` 설정 및 가로 병합 셀 너비 합산; 열 정의를 "첫 행" 기준에서 "최대 열 수를 가진 행" 기준으로 변경.
 
 ### Added
+- **변경추적(Track Changes) UI**: 삽입 revision → 초록 밑줄, 삭제 revision → 빨간 취소선으로 시각화. 우클릭 컨텍스트 메뉴에 "변경 수락/거부(개별)" 및 "모든 변경 수락/거부" 항목 추가 (`FlowDocumentBuilder`, `MainWindow.xaml.cs`).
+- **수식 편집 컨텍스트 메뉴**: 본문에서 수식을 우클릭하면 "수식 편집", "수식 삭제" 항목이 나타남. `EquationWindow` 에 편집 모드(기존 IUC 제자리 교체) 생성자 추가 (`EquationWindow.xaml.cs`, `MainWindow.xaml.cs`).
+- **주석(Comment) 편집 UI**: 우클릭 → "주석 추가/편집/삭제" 메뉴 및 `CommentEditDialog` 다이얼로그 신설. 주석 참조 Run 에 노란 배경 하이라이트 (`FlowDocumentBuilder`, `CommentEditDialog.xaml.cs`, `MainWindow.xaml.cs`).
+- **EMF/WMF 메타파일 렌더링**: DOC/DOCX import 시 읽어들인 EMF·WMF 바이너리를 `System.Drawing.Imaging.Metafile` 로 오프스크린 렌더링 후 BitmapSource 로 변환해 표시. 이전에는 "[이미지]" placeholder 로만 보였음 (`FlowDocumentBuilder`).
+
+### Fixed
+- **FlowDocumentParser Round-Trip 손실 수정**: `ParseInline` 의 `case Wpf.Run r` 경로에서 `p.AddText()` 가 `RunStyle` 만 복사해 `IsInsertedRevision`, `IsDeletedRevision`, `RevisionAuthor`, `RevisionDate`, `CommentId`, `BookmarkStart`, `BookmarkEnd` 가 저장/편집 후 소실됐다. Tag 원본 Run 에서 직접 복원하도록 수정 (`FlowDocumentParser.cs`).
 - DOC(Word 97-2003) 글머리표/번호 목록(list) import·export 지원: 기존 `DocBinaryReader`는 목록 sprm을 무시해 불릿·번호가 평범한 단락으로 떨어졌다. (1) FIB의 `PlfLst`(pair 73)·`PlfLfo`(pair 74) 오프셋을 읽고, (2) `PlfLst`(LSTF + LVL)와 `PlfLfo`(LFO)를 파싱해 lsid→레벨별 번호형식(nfc) 매핑을 구성, (3) `sprmPIlfo`(0x460B)·`sprmPIlvl`(0x260A)로 단락의 (목록, 레벨)을 읽어 `ListMarker`(Bullet/Decimal/Roman/Alpha + Level + 시작번호 + 대소문자)로 복원한다. `DocBinaryWriter`도 `BuildPlfLst`/`BuildPlfLfo` + 단락 PAPX의 list sprm을 출력해 라운드트립을 완성(테스트 9종 추가).
 - **이식형(Portable) ZIP 배포 지원**: `scripts/publish-portable.ps1` 스크립트 신설 + `Portable.pubxml` 게시 프로파일 추가. `dotnet publish -p:PublishProfile=Portable` 한 줄로 .NET 10 별도 설치 없이 바로 실행 가능한 win-x64 ZIP 이 생성된다. `PolyDonky.App.csproj` 에 `PublishExternalConverters` MSBuild 타깃 추가 — self-contained publish 시 CLI 변환기 6종(Html/Xml/Docx/Hwpx/Doc/Hwp)을 같은 출력 디렉터리에 자동으로 함께 게시.
 
