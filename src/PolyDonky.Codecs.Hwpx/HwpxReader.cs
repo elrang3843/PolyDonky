@@ -451,14 +451,19 @@ public sealed class HwpxReader : IDocumentReader
                                  && !insideHeaderFooter.Contains(d)
                                  && !insideTextBox.Contains(d))
                         .ToList();
+                    // 표 자손(insideTable)의 텍스트는 제외해야 표 hosting 단락 판별이 정확해진다.
                     bool hasRealText = elem.Descendants().Any(d =>
                         !insideHeaderFooter.Contains(d)
                      && !insideTextBox.Contains(d)
+                     && !insideTable.Contains(d)
                      && ((d.Name.LocalName == "t"   && !string.IsNullOrWhiteSpace(d.Value))
                       || d.Name.LocalName == "tab"
                       || d.Name.LocalName == "lineBreak"));
-                    bool isHostingParagraph = (embeddedShapes.Count > 0 || embeddedPics.Count > 0)
-                                             && !hasRealText;
+                    // 표(tbl)을 직접 포함하는 단락: 표는 ReadTable 이 별도 처리하므로 이 단락은 건너뜀.
+                    bool hasTblDirectly = elem.Descendants()
+                        .Any(d => d.Name.LocalName == "tbl" && !insideTable.Contains(d));
+                    bool isHostingParagraph = !hasRealText
+                        && (hasTblDirectly || embeddedShapes.Count > 0 || embeddedPics.Count > 0);
                     if (!isHostingParagraph)
                     {
                         section.Blocks.Add(ReadParagraph(elem, ctx));
@@ -976,6 +981,9 @@ public sealed class HwpxReader : IDocumentReader
             if (sl is not null)
                 foreach (var d in sl.DescendantsAndSelf()) hfDescInPara.Add(d);
         }
+        // 표(tbl) 전체도 제외 — 섹션 레벨에서 ReadTable 이 별도로 처리하므로 단락 순회에서는 건너뜀.
+        foreach (var tbl in wp.Descendants().Where(e => e.Name.LocalName == "tbl"))
+            foreach (var d in tbl.DescendantsAndSelf()) hfDescInPara.Add(d);
 
         foreach (var elem in wp.Descendants())
         {
@@ -1114,6 +1122,9 @@ public sealed class HwpxReader : IDocumentReader
             if (sl is not null)
                 foreach (var d in sl.DescendantsAndSelf()) skipDescendants.Add(d);
         }
+        // 표(tbl) 안의 텍스트도 건너뜀 — ReadTable 이 셀 본문을 별도로 수집.
+        foreach (var tbl in run.Descendants().Where(e => e.Name.LocalName == "tbl"))
+            foreach (var d in tbl.DescendantsAndSelf()) skipDescendants.Add(d);
 
         var sb = new StringBuilder();
         foreach (var elem in run.Descendants())

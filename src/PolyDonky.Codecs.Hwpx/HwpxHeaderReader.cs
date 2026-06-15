@@ -124,6 +124,19 @@ internal static class HwpxHeaderReader
                         rs.FontFamily = family;
                     }
                     break;
+                case "ratio":
+                    // 장평(글자폭 비율). hangul 기준, 없으면 latin 참조.
+                    if (TryGetIntAttr(child, "hangul", out var ratioHangul) && ratioHangul is > 0 and not 100)
+                        rs.WidthPercent = ratioHangul;
+                    else if (TryGetIntAttr(child, "latin", out var ratioLatin) && ratioLatin is > 0 and not 100)
+                        rs.WidthPercent = ratioLatin;
+                    break;
+                case "spacing":
+                    // 자간(글자 사이 간격). hangul 기준, pt 단위 → LetterSpacingPx 변환.
+                    // HWPX spacing 단위는 0.01 pt. 1 pt = 1.333... px(96 DPI).
+                    if (TryGetIntAttr(child, "hangul", out var spHangul) && spHangul != 0)
+                        rs.LetterSpacingPx = spHangul / 100.0 * (96.0 / 72.0);
+                    break;
             }
         }
 

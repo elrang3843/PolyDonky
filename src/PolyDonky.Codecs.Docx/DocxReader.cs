@@ -868,6 +868,15 @@ public sealed class DocxReader : IDocumentReader
             }
         }
 
+        // 장평 (w:w) — 글자 가로 폭 비율 (100 = 표준).
+        if (rPr.CharacterScale?.Val?.Value is { } charScale && Math.Abs(charScale - 100) > 0.5)
+            style.WidthPercent = charScale;
+
+        // 자간 (w:spacing) — 글자 사이 간격 (단위: 20분의 1 pt = 1 DXA).
+        // 양수 = 넓힘, 음수 = 좁힘. IWPF LetterSpacingPx 는 px 단위.
+        if (rPr.Spacing?.Val?.Value is { } spacingTwips && spacingTwips != 0)
+            style.LetterSpacingPx = spacingTwips / 20.0 * (96.0 / 72.0);
+
         return style;
     }
 

@@ -21,6 +21,22 @@ public sealed class PageGeometry
     /// <summary>페이지 사이 시각적 갭 (DIP). 회색 배경이 노출되는 영역.</summary>
     public const double InterPageGapDip = 10.0;
 
+    /// <summary>
+    /// 표·글상자 오른쪽 끝의 안전 여백 (DIP).
+    /// 유효 영역은 페이지 오른쪽 여백 경계보다 이 값만큼 안쪽까지다.
+    /// 이 상수를 FlowDocumentBuilder.BuildTable, AddTextBoxOverlay, PopulateOverlayCanvases 가 공유한다.
+    /// </summary>
+    public const double RightSafetyDip = 4.0;
+
+    /// <summary>
+    /// 표 colSum 이 fd.PageWidth 보다 이만큼 작아야 마지막 컬럼 셀의 오른쪽 외곽선이 그려진다 (DIP).
+    /// 원인: RichTextBox 가 Document.PagePadding 을 {5,0,5,0} 으로 강제해 콘텐츠 폭 = fd.PageWidth − 10
+    /// 이 되고, 표가 그 콘텐츠 폭에 근접하면 WPF 가 마지막 셀 오른쪽 보더를 클립/누락한다.
+    /// 실제 신청서 표(병합·면별 테두리 포함)로 픽셀 측정한 임계: 마진 16 DIP 부족 / 18 DIP 충분.
+    /// (PagePadding 10 + 콘텐츠 측정 반올림 누적 ~8). FlowDocumentBuilder.BuildTable 이 사용.
+    /// </summary>
+    public const double TableRenderMarginDip = 18.0;
+
     public double PageWidthDip   { get; }
     public double PageHeightDip  { get; }
     public double PadLeftDip     { get; }

@@ -114,6 +114,10 @@ public sealed class PerPageEditorHost : Canvas
             double yPos = pageTopY[slice.PageIndex] + sliceGeo.PadTopDip;
 
             // 본문 RTB
+            // 참고: RichTextBox 는 Document.PagePadding 을 자체 기본값 {5,0,5,0} 으로 강제하므로
+            // 콘텐츠 표현 폭 = fd.PageWidth − 10 DIP 다. 표가 이 콘텐츠 폭을 넘으면 마지막 컬럼
+            // 오른쪽 외곽선이 클립되므로, BuildTable 이 표 colSum 을 fd.PageWidth − TableRenderMarginDip
+            // 이하로 축소해 둔다 (PerPageDocumentSplitter / FlowDocumentBuilder.BuildTable 참조).
             var rtb = new RichTextBox
             {
                 Document      = slice.FlowDocument,

@@ -164,9 +164,15 @@ public static class PageViewBuilder
                 {
                     case TextBoxObject tb:
                     {
+                        // 유효 영역 상한: 페이지 오른쪽 여백보다 RightSafetyDip 안쪽.
+                        var (xDip, _) = geo.ToAbsoluteDip(oop.AnchorPageIndex, oop.XMm, oop.YMm);
+                        double tbW = FlowDocumentBuilder.MmToDip(tb.WidthMm);
+                        double maxTbW = geo.PageWidthDip - geo.PadRightDip
+                                        - PageGeometry.RightSafetyDip - xDip;
+                        if (maxTbW > 0 && tbW > maxTbW) tbW = maxTbW;
                         var ov = new TextBoxOverlay(tb)
                         {
-                            Width            = FlowDocumentBuilder.MmToDip(tb.WidthMm),
+                            Width            = tbW,
                             Height           = FlowDocumentBuilder.MmToDip(tb.HeightMm),
                             IsHitTestVisible = false,
                         };

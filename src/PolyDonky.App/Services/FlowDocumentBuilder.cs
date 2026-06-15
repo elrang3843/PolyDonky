@@ -1022,11 +1022,14 @@ public static class FlowDocumentBuilder
 
         ApplyTableLevelPropertiesToWpf(wtable, table);
 
-        // 열 너비 합이 가용 너비를 초과하면 비례 스케일 다운.
-        // availableWidthDip > 0 이면 가용 너비에서 4px 여유를 빼고 기준, 아니면 제약 없음.
+        // 열 너비 합이 콘텐츠 폭을 초과하면 비례 스케일 다운.
+        // RichTextBox 가 Document.PagePadding 을 {5,0,5,0} 으로 강제하므로 실제 콘텐츠 폭 = fd.PageWidth − 10 DIP.
+        // 표 colSum 이 이 콘텐츠 폭을 넘으면 WPF 가 마지막 컬럼 셀의 오른쪽 외곽선을 클립한다.
+        // 따라서 colSum 이 availableWidthDip − TableRenderMarginDip(=18) 이하가 되도록 축소해
+        // 마지막 컬럼 오른쪽 세로 외곽선이 항상 콘텐츠 폭 안에 렌더되게 한다(실측 임계).
         double totalColWidthDip = table.Columns.Sum(c => MmToDip(c.WidthMm));
         double scale = 1.0;
-        double constraintDip = (availableWidthDip > 0 ? availableWidthDip - 4 : 0);
+        double constraintDip = (availableWidthDip > 0 ? availableWidthDip - PageGeometry.TableRenderMarginDip : 0);
         if (constraintDip > 0 && totalColWidthDip > constraintDip)
             scale = constraintDip / totalColWidthDip;
 
@@ -1169,8 +1172,9 @@ public static class FlowDocumentBuilder
             table.OuterMarginRightMm  > 0 ? MmToDip(table.OuterMarginRightMm)  : 0,
             table.OuterMarginBottomMm > 0 ? MmToDip(table.OuterMarginBottomMm) : 0);
 
-        // 표 외곽선 — Wpf.Table 자체의 BorderBrush/Thickness 는 셀 외곽선과 겹치므로 0 으로 둔다.
-        // 외곽선은 가장자리 셀이 자기 면(top/bottom/left/right) 으로 직접 그린다 (ApplyCellPropertiesToWpf).
+        // 표 외곽선 — WPF FlowDocument 의 Table.BorderThickness 는 (비균일/균일 모두) 렌더되지 않고,
+        // 마지막 컬럼 셀의 오른쪽 바깥 면도 그려지지 않는다. left/top/bottom 외곽선은 가장자리 셀이
+        // 자기 면으로 정상 렌더하므로, 표 오른쪽 외곽선만 BuildTable 의 더미 컬럼 기법으로 보완한다.
         wtable.BorderBrush     = null;
         wtable.BorderThickness = new Thickness(0);
     }
@@ -1338,8 +1342,10 @@ public static class FlowDocumentBuilder
                     FontStyle = para.FontStyle,
                 };
 
-                // 단락의 inlines 를 TextBlock 에 복사
-                foreach (var inline in para.Inlines)
+                // 단락의 inlines 를 TextBlock 에 복사.
+                // CopyInline 내부에서 iuc.Child = null 을 수행하면 TextElementCollection 버전이
+                // 올라가 열거자가 무효화되므로 먼저 스냅샷을 만든다.
+                foreach (var inline in para.Inlines.ToList())
                     tb.Inlines.Add(CopyInline(inline));
 
                 stack.Children.Add(tb);
@@ -1404,7 +1410,7 @@ public static class FlowDocumentBuilder
                 FontStyle = span.FontStyle,
                 TextDecorations = span.TextDecorations,
             };
-            foreach (var child in span.Inlines)
+            foreach (var child in span.Inlines.ToList())
                 newSpan.Inlines.Add(CopyInline(child));
             return newSpan;
         }
@@ -1421,13 +1427,16 @@ public static class FlowDocumentBuilder
                 FontStyle = link.FontStyle,
                 TextDecorations = link.TextDecorations,
             };
-            foreach (var child in link.Inlines)
+            foreach (var child in link.Inlines.ToList())
                 newLink.Inlines.Add(CopyInline(child));
             return newLink;
         }
         else if (inline is Wpf.InlineUIContainer iuc)
         {
-            return new Wpf.InlineUIContainer(iuc.Child) { Tag = iuc.Tag };
+            // UIElement는 논리 부모가 하나뿐이므로 기존 컨테이너에서 분리 후 이동.
+            var child = iuc.Child;
+            iuc.Child = null;
+            return new Wpf.InlineUIContainer(child) { Tag = iuc.Tag };
         }
         else
         {

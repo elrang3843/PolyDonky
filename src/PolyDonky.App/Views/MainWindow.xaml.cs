@@ -8741,6 +8741,18 @@ public partial class MainWindow : Window
         PlaceOverlay(overlay, model);
         overlay.Width  = model.WidthMm  * TextBoxOverlay.DipsPerMm;
         overlay.Height = model.HeightMm * TextBoxOverlay.DipsPerMm;
+        // 유효 영역 상한: 페이지 오른쪽 여백보다 RightSafetyDip 안쪽.
+        if (_pageGeometry is { } pgSafe)
+        {
+            double left = System.Windows.Controls.Canvas.GetLeft(overlay);
+            if (!double.IsNaN(left))
+            {
+                double maxW = pgSafe.PageWidthDip - pgSafe.PadRightDip
+                              - Services.PageGeometry.RightSafetyDip - left;
+                if (maxW > 0 && overlay.Width > maxW)
+                    overlay.Width = maxW;
+            }
+        }
 
         overlay.Selected += (_, _) => SelectOverlay(overlay);
         // 마지막 포커스 추적 — 사용자가 메뉴(서식 → 글자 속성 등) 를 누르면 포커스가 메뉴로

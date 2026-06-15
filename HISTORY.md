@@ -27,9 +27,9 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 
 ### 버전 정책 (중요)
 
-- **프로젝트는 이미 정식 릴리스 단계입니다** — `1.0.0`(2026-05-20) 이후 `1.0.1` · `1.1.0` 을 거쳐
-  현재 `1.2.0` 까지 정식 릴리스되었습니다. 모든 변경은 [SemVer](https://semver.org/lang/ko/) 규칙
-  (`1.2.1` / `1.3.0` / `2.0.0` ...)을 따릅니다.
+- **프로젝트는 이미 정식 릴리스 단계입니다** — `1.0.0`(2026-05-20) 이후 `1.0.1` · `1.1.0` · `1.2.0` 을 거쳐
+  현재 `1.2.1` 까지 정식 릴리스되었습니다. 모든 변경은 [SemVer](https://semver.org/lang/ko/) 규칙
+  (`1.2.2` / `1.3.0` / `2.0.0` ...)을 따릅니다.
   - **PATCH**(`x.y.Z`) — 하위호환 버그 수정만.
   - **MINOR**(`x.Y.0`) — 하위호환 기능 추가(버그 수정 동반 가능).
   - **MAJOR**(`X.0.0`) — IWPF 포맷·공개 API 의 하위호환을 깨는 변경.
@@ -45,6 +45,17 @@ PolyDonky의 모든 의미 있는 변경 사항을 이 파일에 기록합니다
 ## [Unreleased]
 
 > 다음 릴리스에 들어갈 변경 사항을 여기에 기록합니다.
+
+---
+
+## [1.2.1] - 2026-06-15
+
+### Fixed
+- **표 오른쪽 세로 외곽선이 화면에 그려지지 않던 문제 수정** (`src/PolyDonky.App/Services/FlowDocumentBuilder.cs` `BuildTable`, `Services/PageGeometry.cs`): `RichTextBox`는 `Document.PagePadding` 을 자체 기본값 `{5,0,5,0}` 으로 **강제**(외부에서 0으로 바꿔도 레이아웃 시 복원)하므로 **콘텐츠 표현 폭 = `fd.PageWidth` − 10 DIP** 가 된다. 표 colSum 이 이 콘텐츠 폭에 근접하면 WPF 가 **마지막 컬럼 셀의 오른쪽 외곽선을 클립/누락**한다(셀 사이 내부 세로선·왼쪽·위·아래 외곽선은 정상). 신청서 표는 178mm 로 본문(180mm)에 근접해 오른쪽 선만 사라졌다(DOC 는 단위 반올림으로 표가 더 축소돼 증상이 가려졌을 뿐 동일 원인). 순수 WPF Table 및 실제 신청서 표를 전체 파이프라인으로 비트맵 렌더 + 픽셀 분석해 임계를 실측(마진 16 DIP 부족 / 18 DIP 충분)했고, `BuildTable` 의 열 스케일 기준을 `availableWidthDip − TableRenderMarginDip(18 DIP)` 으로 바꿔 표 colSum 이 항상 콘텐츠 폭보다 충분히 작게 축소되도록 했다. 본문에 근접한 표는 폭이 ~3–5mm 줄지만 모든 표의 오른쪽 외곽선이 항상 렌더된다. (표 레벨 `BorderThickness`·더미 컬럼·셀 두께 강제는 모두 무효임을 픽셀로 확인 — WPF 한계상 표를 콘텐츠 폭보다 작게 두는 것이 유일한 해법.)
+- **표·글상자 오른쪽 4 DIP 안전 영역** (`Services/FlowDocumentBuilder.cs`, `Views/MainWindow.xaml.cs`, `Views/PageViewBuilder.cs`, `Services/PageGeometry.cs`): 글상자(`TextBoxOverlay`)는 `AddTextBoxOverlay`·`PopulateOverlayCanvases`에서 `overlay.Width`를 `pageWidthDip − padRightDip − RightSafetyDip − xDip`로 상한 설정해, 오른쪽 끝이 페이지 오른쪽 여백보다 4 DIP 안쪽에 머물게 한다. 유효 영역 상수(4 DIP)를 `PageGeometry.RightSafetyDip`으로 단일 정의해 공유.
+- **세로 정렬(Middle/Bottom)이 있는 표 셀 열기 시 `InvalidOperationException` 크래시 2종 수정** (`src/PolyDonky.App/Services/FlowDocumentBuilder.cs` `CopyInline`): (1) `ApplyVerticalAlignmentToCell`이 기존 블록을 StackPanel/Grid 구조로 재구성할 때 `InlineUIContainer.Child`(UIElement)를 `new InlineUIContainer(iuc.Child)`로 공유 → WPF 논리 트리는 UIElement 부모를 하나만 허용하므로 `지정한 요소가 이미 다른 요소의 논리 자식입니다` 발생. `iuc.Child = null`로 기존 컨테이너에서 먼저 분리 후 새 컨테이너에 이동(move)하도록 수정. (2) `iuc.Child = null` 수행 시 WPF가 부모 `Span/Paragraph.Inlines`의 버전 카운터를 갱신해 `foreach` 열거자 무효화 → `컬렉션이 수정되었습니다` 발생. `para.Inlines`, `span.Inlines`, `link.Inlines` 세 곳 모두 반복 전 `.ToList()`로 스냅샷을 만들어 불변 복사본을 순회하도록 수정.
+- **DOCX/HWPX import 시 장평(글자폭 비율)·자간이 무시되던 문제 수정** (`src/PolyDonky.Codecs.Docx/DocxReader.cs`, `src/PolyDonky.Codecs.Hwpx/HwpxHeaderReader.cs`): DOCX의 `<w:w w:val="80"/>` (CharacterScale)과 HWPX의 `<hh:ratio hangul="80"/>` 가 각각 `DocxReader.ReadRunStyle`, `HwpxHeaderReader.ParseCharPr` 에서 누락되어 `Run.Style.WidthPercent`가 항상 100(기본값)으로 저장됐다. `FlowDocumentBuilder`는 `WidthPercent`를 이미 `ScaleTransform`으로 적용하므로, 장평 80% 설정 시 실제 너비보다 25% 넓게 렌더되어 줄바꿈 위치가 원본과 달라졌다. DOCX는 `rPr.CharacterScale?.Val`을, HWPX는 `<ratio hangul=…>` 요소를 읽어 `WidthPercent`에 저장하도록 수정. 자간(DOCX `w:spacing`, HWPX `<spacing hangul=…>`)도 같은 방식으로 `LetterSpacingPx` 에 반영.
+- **HWPX import 시 최상위 표 안의 텍스트가 외부 단락에 중복 출력되던 문제 수정** (`src/PolyDonky.Codecs.Hwpx/HwpxReader.cs`): HWPX는 최상위 표를 `<hp:p><hp:run><hp:tbl>` 구조로 저장하는데, 섹션 파서의 `insideTable` 집합이 `tbl` 자손만 포함하고 `tbl` 자체는 제외해 외부 `<hp:p>`가 통과됐다. `ReadParagraph`와 `ReadRun`의 `descendants` 순회가 `<hp:tbl>` 내부 텍스트를 `skipDescendants`/`hfDescInPara`에서 누락, 표 셀 텍스트가 외부 단락에도 복사됐다. 세 곳 수정: ① 섹션 리더의 `hasRealText` 검사에 `!insideTable.Contains(d)` 추가, ② 직속 `<hp:tbl>`을 포함하는 단락을 표 hosting paragraph로 판별해 건너뜀, ③ `ReadParagraph`·`ReadRun` 양쪽에서 `tbl.DescendantsAndSelf()`를 제외 집합에 추가. 블록 수가 54→42개로 줄고 표 셀 텍스트 중복이 사라짐.
 
 ---
 
